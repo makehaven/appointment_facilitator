@@ -192,15 +192,22 @@ class AppointmentStats {
     return isset($definitions[$field_name]);
   }
 
-  protected function formatDateForQuery(DrupalDateTime $value, bool $include_time): string {
-    return $include_time ? $value->format('Y-m-d\TH:i:s') : $value->format('Y-m-d');
+  protected function formatDateForQuery(DrupalDateTime $value, bool $using_range_field): string|int {
+    return $using_range_field ? $value->getTimestamp() : $value->format('Y-m-d');
   }
 
   protected function extractDate(NodeInterface $node): ?DrupalDateTime {
     if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
-      $value = $node->get('field_appointment_timerange')->value;
-      if ($value) {
-        return DrupalDateTime::createFromFormat('Y-m-d\TH:i:s', $value) ?: NULL;
+      $item = $node->get('field_appointment_timerange')->first();
+      $value = $item->value;
+      if ($value !== NULL && $value !== '') {
+        $timezone = $item->timezone ?: date_default_timezone_get();
+        try {
+          return DrupalDateTime::createFromTimestamp((int) $value, new \DateTimeZone($timezone));
+        }
+        catch (\Exception $e) {
+          // Fall through to the legacy date field.
+        }
       }
     }
     if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {

@@ -116,23 +116,305 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
  * @see https://www.drupal.org/project/smart_date/issues/3422612
  */
 function appointment_facilitator_entity_form_display_alter(&$form_display, $context) {
-  if ($context['entity_type'] == 'node' && $context['bundle'] == 'appointment') {
-    if ($component = $form_display->getComponent('field_appointment_date')) {
-      // The specific widget can vary, but they all use the same settings.
-      $smart_date_widgets = [
-        'smartdate_inline',
-        'smartdate_default',
-        'smartdate_timestamp',
-      ];
-      if (in_array($component['type'], $smart_date_widgets)) {
-        if (empty($component['settings']['default_duration_increments'])) {
-          $component['settings']['default_duration_increments'] = '1, 5, 10, 15, 30, 45, 60';
-        }
-        if (empty($component['settings']['default_duration'])) {
-          $component['settings']['default_duration'] = 60;
-        }
-        $form_display->setComponent('field_appointment_date', $component);
+  if ($context['entity_type'] !== 'node' || $context['bundle'] !== 'appointment') {
+    return;
+  }
+
+  $smart_date_widgets = [
+    'smartdate_inline',
+    'smartdate_default',
+    'smartdate_timestamp',
+  ];
+  $fields = [
+    'field_appointment_timerange',
+    'field_appointment_date',
+  ];
+
+  foreach ($fields as $field_name) {
+    if (!$component = $form_display->getComponent($field_name)) {
+      continue;
+    }
+    if (!in_array($component['type'], $smart_date_widgets, TRUE)) {
+      continue;
+    }
+    $updated = FALSE;
+    if (empty($component['settings']['default_duration_increments'])) {
+      $component['settings']['default_duration_increments'] = '1, 5, 10, 15, 30, 45, 60';
+      $updated = TRUE;
+    }
+    if (empty($component['settings']['default_duration'])) {
+      $component['settings']['default_duration'] = 60;
+      $updated = TRUE;
+    }
+    if ($updated) {
+      $form_display->setComponent($field_name, $component);
+    }
+  }
+}
+
+/**
+ * Implements hook_node_presave().
+ */
+function appointment_facilitator_node_presave(NodeInterface $node) {
+  if ($node->bundle() !== 'appointment') {
+    return;
+  }
+  _appointment_facilitator_populate_timerange_from_slots($node);
+}
+
+/**
+ * Populates the Smart Date timerange from legacy slot selections.
+ */
+function _appointment_facilitator_populate_timerange_from_slots(NodeInterface $node): void {
+  if (!$node->hasField('field_appointment_timerange') || !$node->hasField('field_appointment_slot')) {
+    return;
+  }
+  if (!$node->get('field_appointment_timerange')->isEmpty()) {
+    // Do not overwrite existing data unless the field is empty.
+    return;
+  }
+  if ($node->get('field_appointment_slot')->isEmpty()) {
+    return;
+  }
+
+  $base_date = _appointment_facilitator_resolve_base_date($node);
+  if (!$base_date) {
+    return;
+  }
+
+  $slot_offsets = _appointment_facilitator_extract_slot_offsets($node);
+  if (!$slot_offsets) {
+    return;
+  }
+
+  $base_start = _appointment_facilitator_resolve_slot_base_time($node, $base_date);
+  if (!$base_start instanceof \DateTimeImmutable) {
+    return;
+  }
+
+  sort($slot_offsets);
+  $min_offset = min($slot_offsets);
+  $max_offset = max($slot_offsets);
+  $duration_minutes = ($max_offset - $min_offset) + 30;
+
+  $appointment_start = $base_start->modify('+' . $min_offset . ' minutes');
+  $appointment_end = $appointment_start->modify('+' . $duration_minutes . ' minutes');
+  $timezone = $appointment_start->getTimezone()->getName();
+
+  $field = $node->get('field_appointment_timerange');
+  $field_type = $field->getFieldDefinition()->getType();
+  $start_timestamp = $appointment_start->getTimestamp();
+  $end_timestamp = $appointment_end->getTimestamp();
+
+  if ($field_type === 'smartdate') {
+    $field->setValue([[
+      'value' => $start_timestamp,
+      'end_value' => $end_timestamp,
+      'duration' => $duration_minutes,
+      'timezone' => $timezone,
+    ]]);
+  }
+  else {
+    $start_string = $appointment_start->format('Y-m-d\TH:i:s');
+    $end_string = $appointment_end->format('Y-m-d\TH:i:s');
+    $field->setValue([[
+      'value' => $start_string,
+      'end_value' => $end_string,
+    ]]);
+  }
+
+  if ($node->hasField('field_host_start_time') && $node->get('field_host_start_time')->isEmpty()) {
+    $node->set('field_host_start_time', $base_start->format('Y-m-d\TH:i:s'));
+  }
+}
+
+/**
+ * Returns the slot offset map used by legacy checkboxes.
+ */
+function _appointment_facilitator_slot_offset_map(): array {
+  return [
+    '1' => 0,
+    '1-5' => 30,
+    '2' => 60,
+    '2-5' => 90,
+    '3' => 120,
+    '3-5' => 150,
+  ];
+}
+
+/**
+ * Converts selected slot values to minute offsets.
+ */
+function _appointment_facilitator_extract_slot_offsets(NodeInterface $node): array {
+  $map = _appointment_facilitator_slot_offset_map();
+  $offsets = [];
+  foreach ($node->get('field_appointment_slot')->getValue() as $selection) {
+    $value = $selection['value'] ?? NULL;
+    if ($value !== NULL && isset($map[$value])) {
+      $offsets[] = $map[$value];
+    }
+  }
+  sort($offsets);
+  return array_values(array_unique($offsets));
+}
+
+/**
+ * Resolves the base start time for a facilitator shift.
+ */
+function _appointment_facilitator_resolve_slot_base_time(NodeInterface $node, string $base_date): ?\DateTimeImmutable {
+  $timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $request = \Drupal::service('request_stack')->getCurrentRequest();
+  $candidates = [];
+
+  if ($request) {
+    $param = $request->query->get('start_time');
+    if (!$param) {
+      $param = $request->request->get('start_time');
+    }
+    if (!empty($param)) {
+      $candidates[] = $param;
+    }
+  }
+
+  if ($node->hasField('field_host_start_time') && !$node->get('field_host_start_time')->isEmpty()) {
+    $candidates[] = $node->get('field_host_start_time')->value;
+  }
+
+  foreach ($candidates as $raw_time) {
+    $parsed = _appointment_facilitator_parse_slot_time($base_date, (string) $raw_time, $timezone);
+    if ($parsed instanceof \DateTimeImmutable) {
+      return $parsed;
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Parses a time string into a DateTimeImmutable using the supplied date.
+ */
+function _appointment_facilitator_parse_slot_time(string $base_date, string $time_value, string $timezone): ?\DateTimeImmutable {
+  $time_value = trim($time_value);
+  if ($time_value === '') {
+    return NULL;
+  }
+
+  try {
+    $base_timezone = new \DateTimeZone($timezone);
+    $base_day = new \DateTimeImmutable($base_date . ' 00:00:00', $base_timezone);
+  }
+  catch (\Exception $e) {
+    return NULL;
+  }
+
+  if (is_numeric($time_value)) {
+    try {
+      return (new \DateTimeImmutable('@' . (int) $time_value))->setTimezone($base_timezone);
+    }
+    catch (\Exception $e) {
+      return NULL;
+    }
+  }
+
+  // Full ISO string with timezone.
+  if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})$/i', $time_value)) {
+    try {
+      return new \DateTimeImmutable($time_value);
+    }
+    catch (\Exception $e) {
+      // Fall through.
+    }
+  }
+
+  if (preg_match('/^\d{4}-\d{2}-\d{2}/', $time_value)) {
+    try {
+      return new \DateTimeImmutable($time_value, $base_timezone);
+    }
+    catch (\Exception $e) {
+      return NULL;
+    }
+  }
+
+  if (preg_match('/^(\d{1,2}):(\d{2})(am|pm)$/i', $time_value, $matches)) {
+    $hours = (int) $matches[1];
+    $minutes = (int) $matches[2];
+    $ampm = strtolower($matches[3]);
+    if ($ampm === 'pm' && $hours < 12) {
+      $hours += 12;
+    }
+    elseif ($ampm === 'am' && $hours === 12) {
+      $hours = 0;
+    }
+    return $base_day->setTime($hours, $minutes);
+  }
+
+  if (preg_match('/^(\d{1,2}):(\d{2})$/', $time_value, $matches)) {
+    return $base_day->setTime((int) $matches[1], (int) $matches[2]);
+  }
+
+  try {
+    return new \DateTimeImmutable($base_date . ' ' . $time_value, $base_timezone);
+  }
+  catch (\Exception $e) {
+    try {
+      $parsed = new \DateTimeImmutable($time_value, $base_timezone);
+      return $base_day->setTime((int) $parsed->format('H'), (int) $parsed->format('i'), (int) $parsed->format('s'));
+    }
+    catch (\Exception $e2) {
+      \Drupal::logger('appointment_facilitator')->warning('Unable to parse start_time "@time" for @date.', [
+        '@time' => $time_value,
+        '@date' => $base_date,
+      ]);
+      return NULL;
+    }
+  }
+}
+
+/**
+ * Attempts to determine the appointment date for slot calculations.
+ */
+function _appointment_facilitator_resolve_base_date(NodeInterface $node): ?string {
+  if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
+    $normalized = _appointment_facilitator_normalize_date($node->get('field_appointment_date')->value);
+    if ($normalized) {
+      return $normalized;
+    }
+  }
+
+  $request = \Drupal::service('request_stack')->getCurrentRequest();
+  if ($request) {
+    $candidates = [];
+    $structured_date = $request->request->get('field_appointment_date');
+    if (is_array($structured_date)) {
+      $candidates[] = $structured_date[0]['value'] ?? NULL;
+    }
+    $candidates[] = $request->query->get('date');
+    $candidates[] = $request->request->get('date');
+    foreach ($candidates as $candidate) {
+      $normalized = _appointment_facilitator_normalize_date($candidate);
+      if ($normalized) {
+        return $normalized;
       }
     }
   }
+
+  return NULL;
+}
+
+/**
+ * Normalizes various date inputs to Y-m-d.
+ */
+function _appointment_facilitator_normalize_date(?string $value): ?string {
+  if ($value === NULL) {
+    return NULL;
+  }
+  $value = trim($value);
+  if ($value === '') {
+    return NULL;
+  }
+  $timestamp = strtotime($value);
+  if ($timestamp === FALSE) {
+    return NULL;
+  }
+  return date('Y-m-d', $timestamp);
 }

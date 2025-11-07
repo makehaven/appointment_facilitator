@@ -76,14 +76,26 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
   }
 
   // === 2. Field Instance ===
-  if (!FieldConfig::loadByName($entity_type, $bundle, $field_storage_name)) {
-    FieldConfig::create([
+  $field_instance = FieldConfig::loadByName($entity_type, $bundle, $field_storage_name);
+  $instance_needs_save = FALSE;
+  if (!$field_instance) {
+    $field_instance = FieldConfig::create([
       'field_name' => $field_storage_name,
       'entity_type' => $entity_type,
       'bundle' => $bundle,
       'label' => 'Appointment Time (Range)',
       'settings' => [],
-    ])->save();
+    ]);
+    $instance_needs_save = TRUE;
+  }
+
+  if (!empty($field_instance->get('default_value'))) {
+    $field_instance->set('default_value', []);
+    $instance_needs_save = TRUE;
+  }
+
+  if ($instance_needs_save) {
+    $field_instance->save();
   }
 
   $em = \Drupal::entityTypeManager();
@@ -136,19 +148,45 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
   if ($vd = $em->getStorage('entity_view_display')->load('node.appointment.default')) {
     $target_formatter = $smart_date_enabled ? 'smartdate_default' : 'daterange_default';
     $component = $vd->getComponent($field_storage_name);
+    $needs_save = FALSE;
     // Only update if component is missing or has the wrong type.
     if (!$component || $component['type'] !== $target_formatter) {
       $new_component = [
         'type' => $target_formatter,
         'label' => $component['label'] ?? 'above',
         'weight' => $component['weight'] ?? -10,
-        'settings' => $component['settings'] ?? ($target_formatter === 'smartdate_default' ? [
-          'format_type' => 'medium',
-          'separator' => '-',
-          'display_all_day' => FALSE,
-        ] : []),
+        'settings' => $component['settings'] ?? [],
       ];
-      $vd->setComponent($field_storage_name, $new_component)->save();
+      $component = $new_component;
+      $needs_save = TRUE;
+    }
+
+    if ($target_formatter === 'smartdate_default') {
+      $smart_date_view_defaults = [
+        'format' => 'default',
+        'separator' => ' - ',
+        'display_all_day' => FALSE,
+        'parts' => ['start', 'end'],
+      ];
+      $component_settings = $component['settings'] ?? [];
+      foreach ($smart_date_view_defaults as $key => $value) {
+        $current = $component_settings[$key] ?? NULL;
+        if ($key === 'parts') {
+          $is_missing = !is_array($current) || !$current;
+        }
+        else {
+          $is_missing = $current === NULL || $current === '';
+        }
+        if ($is_missing) {
+          $component_settings[$key] = $value;
+          $needs_save = TRUE;
+        }
+      }
+      $component['settings'] = $component_settings;
+    }
+
+    if ($needs_save) {
+      $vd->setComponent($field_storage_name, $component)->save();
     }
   }
 }
@@ -382,5 +420,32 @@ function appointment_facilitator_update_9009() {
  * Update: Ensure timerange field and displays are correctly configured.
  */
 function appointment_facilitator_update_9010() {
+  _appointment_facilitator_ensure_timerange_and_displays();
+}
+
+/**
+ * Update: Ensure Smart Date defaults exist on the timerange field.
+ */
+function appointment_facilitator_update_9011() {
+  _appointment_facilitator_ensure_timerange_and_displays();
+}
+
+/**
+ * Update: Remove Smart Date default values so the field stays empty by default.
+ */
+function appointment_facilitator_update_9012() {
+  _appointment_facilitator_ensure_timerange_and_displays();
+  if ($field = FieldConfig::loadByName('node', 'appointment', 'field_appointment_timerange')) {
+    if (!empty($field->get('default_value'))) {
+      $field->set('default_value', []);
+      $field->save();
+    }
+  }
+}
+
+/**
+ * Update: Ensure Smart Date formatter displays both start and end times.
+ */
+function appointment_facilitator_update_9013() {
   _appointment_facilitator_ensure_timerange_and_displays();
 }
