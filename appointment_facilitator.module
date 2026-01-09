@@ -1,9 +1,8 @@
 <?php
 
+use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\node\NodeInterface;
-use Drupal\Core\Url;
-use Drupal\Core\Link;
 
 /**
  * Compute effective capacity for an appointment node.
@@ -75,36 +74,19 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   ];
 
   // Gate the Join CTA.
-  if ($account->isAnonymous()) {
-    return;
-  }
-  if (!$entity->hasField('field_appointment_attendees')) {
+  if ($account->isAnonymous() || !$entity->hasField('field_appointment_attendees')) {
     return;
   }
 
-  $conf = \Drupal::config('appointment_facilitator.settings');
-  $show_always = (bool) $conf->get('show_always_join_cta');
-
-  if (!$show_always && $effective_capacity <= 1) {
-    return;
+  $form = \Drupal::formBuilder()->getForm(JoinAppointmentForm::class, $entity);
+  if ($form) {
+    $build['appointment_join'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['appointment-join-cta']],
+      'form' => $form,
+      '#weight' => -50,
+    ];
   }
-
-  $attendees = $entity->get('field_appointment_attendees')->referencedEntities();
-  $remaining = max(0, $effective_capacity - count($attendees));
-  if ($remaining <= 0) {
-    return;
-  }
-
-  // Add the Join CTA.
-  $url = Url::fromRoute('appointment_facilitator.join', ['node' => $entity->id()]);
-  $link = Link::fromTextAndUrl(t('Join this appointment'), $url)->toString();
-  $build['appointment_join'] = [
-    '#type' => 'container',
-    '#attributes' => ['class' => ['appointment-join-cta']],
-    'remaining' => ['#markup' => '<div><strong>' . t('Seats left') . ':</strong> ' . (int) $remaining . '</div>'],
-    'cta' => ['#markup' => '<div class="join-btn">' . $link . '</div>'],
-    '#weight' => -50,
-  ];
 }
 
 /**

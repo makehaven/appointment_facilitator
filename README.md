@@ -82,6 +82,7 @@ This module provides a solid foundation for a flexible appointment system. Futur
     -   Email notifications for joining, reminders, and cancellations.
     -   Calendar (iCal) integrations for attendees.
 -   **Permissions:** The join workflow could be tied into a more granular permission system.
+-   **Facilitator tools:** Facilitators can visit `/appointment/my-next/cancel` (or use the “Cancel my next appointment” link in their account menu) to mark their next scheduled session as canceled. The tool also clears attendees so facilitators can handle last‑minute conflicts without digging through the full Smart Date UI.
 
 ## Reporting
 

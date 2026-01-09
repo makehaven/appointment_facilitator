@@ -1,7 +1,8 @@
 appointment_facilitator.join:
   path: '/appointment/{node}/join'
   defaults:
-    _controller: '\Drupal\appointment_facilitator\Controller\JoinController::join'
+    _form: '\Drupal\appointment_facilitator\Form\JoinAppointmentForm'
+    _title: 'Join appointment'
   requirements:
     _entity_access: 'node.view'
     _user_is_logged_in: 'TRUE'
@@ -22,3 +23,11 @@ appointment_facilitator.stats:
     _title: 'Facilitator appointment stats'
   requirements:
     _permission: 'view appointment facilitator reports'
+
+appointment_facilitator.cancel_next:
+  path: '/appointment/my-next/cancel'
+  defaults:
+    _form: '\Drupal\appointment_facilitator\Form\CancelUpcomingAppointmentForm'
+    _title: 'Cancel my next appointment'
+  requirements:
+    _permission: 'cancel own facilitator appointments'

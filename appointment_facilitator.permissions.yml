@@ -2,3 +2,7 @@ view appointment facilitator reports:
   title: 'View facilitator appointment reports'
   description: 'View aggregated statistics for facilitator appointments and badge sessions.'
   restrict access: true
+
+cancel own facilitator appointments:
+  title: 'Cancel own upcoming facilitator appointments'
+  description: 'Allow facilitators to cancel their next scheduled appointment.'
