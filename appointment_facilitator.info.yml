@@ -2,7 +2,7 @@ name: Facilitator Appointments
 type: module
 description: Range-based appointments with capacity and attendees (non-breaking). Ships the appointment content type and key views.
 core_version_requirement: ^10 || ^11
-package: Custom
+package: Makerspace
 dependencies:
   - drupal:node
   - drupal:user
@@ -12,3 +12,4 @@ dependencies:
   - smart_date:smart_date
   - drupal:comment
   - drupal:datetime
+configure: appointment_facilitator.settings
