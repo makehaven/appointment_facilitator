@@ -7,6 +7,7 @@ use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\node\NodeInterface;
+use Drupal\smart_date_recur\Entity\SmartDateRule;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -32,12 +33,20 @@ class AppointmentStats {
       'total_appointments' => 0,
       'total_badge_appointments' => 0,
       'total_badges' => 0,
+      'total_attendees' => 0,
+      'total_feedback' => 0,
+      'feedback_rate' => 0,
       'cancelled_total' => 0,
       'facilitators' => [],
       'purpose_totals' => [],
       'result_totals' => [],
       'status_totals' => [],
       'badge_ids' => [],
+      'facilitator_rate_averages' => [
+        'appointments_per_week' => 0,
+        'appointments_per_month' => 0,
+        'feedback_rate' => 0,
+      ],
     ];
 
     $storage = $this->entityTypeManager->getStorage('node');
@@ -45,6 +54,11 @@ class AppointmentStats {
       ->accessCheck(FALSE)
       ->condition('type', 'appointment')
       ->condition('status', 1);
+
+    $host_filter = isset($options['host_id']) ? (int) $options['host_id'] : NULL;
+    $use_facilitator_terms = !empty($options['use_facilitator_terms']);
+    $now_ts = \Drupal::time()->getRequestTime();
+    $term_cache = [];
 
     $date_field = $this->resolveDateField();
     $using_range_field = $date_field === 'field_appointment_timerange';
@@ -72,6 +86,10 @@ class AppointmentStats {
     $include_cancelled = !empty($options['include_cancelled']);
     if (!$include_cancelled && $this->fieldExists('field_appointment_status')) {
       $query->condition('field_appointment_status.value', 'canceled', '<>');
+    }
+
+    if ($host_filter) {
+      $query->condition('field_appointment_host.target_id', $host_filter);
     }
 
     try {
@@ -107,12 +125,18 @@ class AppointmentStats {
       }
 
       $host_id = $this->extractHostId($node) ?? 0;
+      if ($host_filter !== NULL && $host_id !== $host_filter) {
+        continue;
+      }
       if (!isset($summary['facilitators'][$host_id])) {
         $summary['facilitators'][$host_id] = [
           'uid' => $host_id,
           'appointments' => 0,
           'badge_sessions' => 0,
           'badges' => 0,
+          'attendees' => 0,
+          'feedback' => 0,
+          'feedback_rate' => 0,
           'purpose_counts' => [],
           'result_counts' => [],
           'status_counts' => [],
@@ -120,7 +144,31 @@ class AppointmentStats {
           'latest' => NULL,
           'cancelled' => 0,
           'day_map' => [],
+          'term_start' => NULL,
+          'term_end' => NULL,
+          'term_elapsed_weeks' => NULL,
+          'term_elapsed_months' => NULL,
+          'appointments_per_week' => NULL,
+          'appointments_per_month' => NULL,
         ];
+      }
+
+      if ($use_facilitator_terms) {
+        if (!array_key_exists($host_id, $term_cache)) {
+          $term_cache[$host_id] = $this->getFacilitatorTermRange($host_id);
+        }
+        $term_range = $term_cache[$host_id];
+        if ($term_range) {
+          $summary['facilitators'][$host_id]['term_start'] = $term_range['start'];
+          $summary['facilitators'][$host_id]['term_end'] = $term_range['end'];
+          $term_date = $this->extractDate($node);
+          if ($term_date) {
+            $appointment_ts = $term_date->getTimestamp();
+            if ($appointment_ts < $term_range['start_ts'] || $appointment_ts > $term_range['effective_end_ts']) {
+              continue;
+            }
+          }
+        }
       }
 
       $summary['total_appointments']++;
@@ -138,6 +186,15 @@ class AppointmentStats {
       if ($status === 'canceled') {
         $summary['cancelled_total']++;
         $summary['facilitators'][$host_id]['cancelled']++;
+      }
+
+      $attendees = $this->countAttendees($node);
+      $summary['total_attendees'] += $attendees;
+      $summary['facilitators'][$host_id]['attendees'] += $attendees;
+
+      if ($this->hasFeedback($node)) {
+        $summary['total_feedback']++;
+        $summary['facilitators'][$host_id]['feedback']++;
       }
 
       $badge_ids = $this->extractBadgeIds($node);
@@ -167,11 +224,64 @@ class AppointmentStats {
       }
     }
 
+    $rate_accumulator = [
+      'appointments_per_week' => [],
+      'appointments_per_month' => [],
+      'feedback_rate' => [],
+    ];
+
     foreach ($summary['facilitators'] as &$facilitator) {
       $facilitator['appointment_day_count'] = isset($facilitator['day_map']) ? count($facilitator['day_map']) : 0;
       unset($facilitator['day_map']);
+      if ($facilitator['appointments'] > 0) {
+        $facilitator['feedback_rate'] = round(($facilitator['feedback'] / $facilitator['appointments']) * 100, 1);
+      }
+
+      $range = NULL;
+      if ($use_facilitator_terms && $facilitator['term_start'] instanceof \DateTimeInterface && $facilitator['term_end'] instanceof \DateTimeInterface) {
+        $range = [
+          'start' => $facilitator['term_start']->getTimestamp(),
+          'end' => min($facilitator['term_end']->getTimestamp(), $now_ts),
+        ];
+      }
+      elseif ($start && $end) {
+        $range = [
+          'start' => $start->getTimestamp(),
+          'end' => $end->getTimestamp(),
+        ];
+      }
+
+      if ($range && $range['end'] >= $range['start']) {
+        $elapsed = $this->calculateElapsedWindows($range['start'], $range['end']);
+        $facilitator['term_elapsed_weeks'] = $elapsed['weeks'];
+        $facilitator['term_elapsed_months'] = $elapsed['months'];
+        $facilitator['appointments_per_week'] = $elapsed['weeks'] > 0
+          ? round($facilitator['appointments'] / $elapsed['weeks'], 2)
+          : NULL;
+        $facilitator['appointments_per_month'] = $elapsed['months'] > 0
+          ? round($facilitator['appointments'] / $elapsed['months'], 2)
+          : NULL;
+      }
+
+      if ($facilitator['appointments_per_week'] !== NULL) {
+        $rate_accumulator['appointments_per_week'][] = $facilitator['appointments_per_week'];
+      }
+      if ($facilitator['appointments_per_month'] !== NULL) {
+        $rate_accumulator['appointments_per_month'][] = $facilitator['appointments_per_month'];
+      }
+      $rate_accumulator['feedback_rate'][] = $facilitator['feedback_rate'];
     }
     unset($facilitator);
+
+    if ($summary['total_appointments'] > 0) {
+      $summary['feedback_rate'] = round(($summary['total_feedback'] / $summary['total_appointments']) * 100, 1);
+    }
+
+    foreach ($rate_accumulator as $key => $values) {
+      if ($values) {
+        $summary['facilitator_rate_averages'][$key] = round(array_sum($values) / count($values), 2);
+      }
+    }
 
     return $summary;
   }
@@ -246,6 +356,155 @@ class AppointmentStats {
       }
     }
     return $ids;
+  }
+
+  protected function countAttendees(NodeInterface $node): int {
+    $count = 1;
+    if (!$node->hasField('field_appointment_attendees') || $node->get('field_appointment_attendees')->isEmpty()) {
+      return $count;
+    }
+    $author_id = $node->getOwnerId();
+    foreach ($node->get('field_appointment_attendees')->getValue() as $item) {
+      $target = $item['target_id'] ?? NULL;
+      if ($target && (int) $target !== (int) $author_id) {
+        $count++;
+      }
+    }
+    return $count;
+  }
+
+  protected function hasFeedback(NodeInterface $node): bool {
+    if (!$node->hasField('field_appointment_feedback') || $node->get('field_appointment_feedback')->isEmpty()) {
+      return FALSE;
+    }
+    $value = trim((string) $node->get('field_appointment_feedback')->value);
+    return $value !== '';
+  }
+
+  protected function calculateElapsedWindows(int $start_ts, int $end_ts): array {
+    $elapsed_seconds = max(0, $end_ts - $start_ts);
+    $elapsed_days = max(1, (int) ceil($elapsed_seconds / 86400));
+    $weeks = max(1, round($elapsed_days / 7, 2));
+    $months = max(1, round($elapsed_days / 30.4375, 2));
+    return [
+      'weeks' => $weeks,
+      'months' => $months,
+    ];
+  }
+
+  public function getFacilitatorTermRange(int $uid): ?array {
+    if ($uid <= 0) {
+      return NULL;
+    }
+    if (!\Drupal::moduleHandler()->moduleExists('profile')) {
+      return NULL;
+    }
+    $bundle = \Drupal::config('appointment_facilitator.settings')->get('facilitator_profile_bundle') ?: 'coordinator';
+    $account = $this->entityTypeManager->getStorage('user')->load($uid);
+    if (!$account) {
+      return NULL;
+    }
+    $profiles = $this->entityTypeManager->getStorage('profile')->loadByUser($account, $bundle);
+    if (!$profiles) {
+      return NULL;
+    }
+
+    $profile = NULL;
+    if (is_object($profiles)) {
+      $profile = $profiles;
+    }
+    elseif (is_array($profiles)) {
+      $first_key = array_key_first($profiles);
+      $profile = $first_key !== NULL ? $profiles[$first_key] : NULL;
+    }
+    elseif ($profiles instanceof \Traversable) {
+      foreach ($profiles as $item) {
+        $profile = $item;
+        break;
+      }
+    }
+    elseif (is_scalar($profiles)) {
+      $profile = $this->entityTypeManager->getStorage('profile')->load($profiles);
+    }
+
+    if (!$profile || !is_object($profile) || !$profile->hasField('field_coordinator_hours') || $profile->get('field_coordinator_hours')->isEmpty()) {
+      return NULL;
+    }
+
+    $now_ts = \Drupal::time()->getRequestTime();
+    $candidates = [];
+    foreach ($profile->get('field_coordinator_hours')->getValue() as $item) {
+      $start_ts = $item['value'] ?? NULL;
+      $end_ts = $item['end_value'] ?? NULL;
+      $timezone = $item['timezone'] ?? date_default_timezone_get();
+      $rrule_id = $item['rrule'] ?? NULL;
+      if ($rrule_id && class_exists(SmartDateRule::class)) {
+        $rule = SmartDateRule::load((int) $rrule_id);
+        if ($rule) {
+          $start_ts = (int) $rule->get('start')->value;
+          $end_ts = (int) $rule->get('end')->value;
+          $timezone = $rule->getTimeZone() ?? $timezone;
+        }
+      }
+      if (!$start_ts || !$end_ts) {
+        continue;
+      }
+      $candidates[] = [
+        'start_ts' => (int) $start_ts,
+        'end_ts' => (int) $end_ts,
+        'timezone' => $timezone,
+      ];
+    }
+
+    if (!$candidates) {
+      return NULL;
+    }
+
+    $current = [];
+    $past = [];
+    $future = [];
+    foreach ($candidates as $candidate) {
+      if ($candidate['start_ts'] <= $now_ts && $candidate['end_ts'] >= $now_ts) {
+        $current[] = $candidate;
+      }
+      elseif ($candidate['end_ts'] < $now_ts) {
+        $past[] = $candidate;
+      }
+      else {
+        $future[] = $candidate;
+      }
+    }
+
+    $chosen = NULL;
+    if ($current) {
+      usort($current, static fn($a, $b) => $b['start_ts'] <=> $a['start_ts']);
+      $chosen = $current[0];
+    }
+    elseif ($past) {
+      usort($past, static fn($a, $b) => $b['end_ts'] <=> $a['end_ts']);
+      $chosen = $past[0];
+    }
+    elseif ($future) {
+      usort($future, static fn($a, $b) => $a['start_ts'] <=> $b['start_ts']);
+      $chosen = $future[0];
+    }
+
+    if (!$chosen) {
+      return NULL;
+    }
+
+    $timezone = new \DateTimeZone($chosen['timezone'] ?: date_default_timezone_get());
+    $start = (new \DateTimeImmutable('@' . $chosen['start_ts']))->setTimezone($timezone);
+    $end = (new \DateTimeImmutable('@' . $chosen['end_ts']))->setTimezone($timezone);
+    $effective_end_ts = min($chosen['end_ts'], $now_ts);
+
+    return [
+      'start' => $start,
+      'end' => $end,
+      'start_ts' => $chosen['start_ts'],
+      'end_ts' => $chosen['end_ts'],
+      'effective_end_ts' => $effective_end_ts,
+    ];
   }
 
 }

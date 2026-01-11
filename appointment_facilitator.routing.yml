@@ -24,6 +24,14 @@ appointment_facilitator.stats:
   requirements:
     _permission: 'view appointment facilitator reports'
 
+appointment_facilitator.self_stats:
+  path: '/facilitator/stats'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\FacilitatorStatsController::overview'
+    _title: 'My facilitator stats'
+  requirements:
+    _permission: 'view own facilitator stats'
+
 appointment_facilitator.cancel_next:
   path: '/appointment/my-next/cancel'
   defaults:

@@ -121,7 +121,7 @@ function appointment_facilitator_entity_form_display_alter(&$form_display, $cont
     }
     $updated = FALSE;
     if (empty($component['settings']['default_duration_increments'])) {
-      $component['settings']['default_duration_increments'] = '1, 5, 10, 15, 30, 45, 60';
+      $component['settings']['default_duration_increments'] = "1\n5\n10\n15\n30\n45\n60";
       $updated = TRUE;
     }
     if (empty($component['settings']['default_duration'])) {
@@ -130,6 +130,40 @@ function appointment_facilitator_entity_form_display_alter(&$form_display, $cont
     }
     if ($updated) {
       $form_display->setComponent($field_name, $component);
+    }
+  }
+}
+
+/**
+ * Implements hook_navigation_menu_link_tree_alter().
+ *
+ * Normalizes icon options to arrays to avoid merge errors in the navigation
+ * menu builder.
+ */
+function appointment_facilitator_navigation_menu_link_tree_alter(array &$tree): void {
+  _appointment_facilitator_normalize_navigation_menu_icons($tree);
+}
+
+/**
+ * Recursively normalize navigation menu link icon options.
+ */
+function _appointment_facilitator_normalize_navigation_menu_icons(array &$tree): void {
+  foreach ($tree as $item) {
+    if (!isset($item->link)) {
+      continue;
+    }
+    $url = $item->link->getUrlObject();
+    $icon = $url->getOption('icon');
+    if ($icon !== NULL && !is_array($icon)) {
+      if (is_string($icon) && $icon !== '') {
+        $url->setOption('icon', ['icon_id' => $icon]);
+      }
+      else {
+        $url->setOption('icon', []);
+      }
+    }
+    if (!empty($item->subtree)) {
+      _appointment_facilitator_normalize_navigation_menu_icons($item->subtree);
     }
   }
 }

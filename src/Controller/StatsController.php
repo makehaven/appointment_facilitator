@@ -71,10 +71,12 @@ class StatsController extends ControllerBase {
   public function overview(): array {
     $request = $this->requestStack->getCurrentRequest();
     $filters = $this->buildFilters($request);
+    $use_facilitator_terms = empty($filters['start']) && empty($filters['end']);
 
     $summary = $this->statsHelper->summarize($filters['start'], $filters['end'], [
       'purpose' => $filters['purpose'] ?? NULL,
       'include_cancelled' => $filters['include_cancelled'] ?? FALSE,
+      'use_facilitator_terms' => $use_facilitator_terms,
     ]);
 
     $badge_labels = $this->loadBadgeLabels(array_keys($summary['badge_ids']));
@@ -97,7 +99,7 @@ class StatsController extends ControllerBase {
         '#items' => $this->buildSummaryItems($summary, $purpose_labels, $result_labels, $status_labels),
         '#attributes' => ['class' => ['appointment-facilitator-summary']],
       ],
-      'definitions' => $this->buildDefinitions(),
+      'definitions' => $this->buildDefinitions($use_facilitator_terms),
       'table' => [
         '#type' => 'table',
         '#header' => $header,
@@ -108,7 +110,7 @@ class StatsController extends ControllerBase {
     ];
   }
 
-  protected function buildDefinitions(): array {
+  protected function buildDefinitions(bool $use_facilitator_terms): array {
     $items = [
       Markup::create($this->t('<strong>Badge sessions</strong>: Appointments where at least one badge was selected.')),
       Markup::create($this->t('<strong>Badges selected</strong>: Total number of badge selections across those appointments (one appointment can add several).')),
@@ -116,6 +118,9 @@ class StatsController extends ControllerBase {
       Markup::create($this->t('<strong>Result mix (set)</strong>: Percentages ignore appointments without a recorded result; counts are shown in parentheses.')),
       Markup::create($this->t('<strong>Cancelled</strong>: Appointments whose status is <em>canceled</em>.')),
     ];
+    if ($use_facilitator_terms) {
+      $items[] = Markup::create($this->t('<strong>Per-week / per-month</strong>: Based on the facilitator’s current or most recent term, capped at today (future time does not reduce averages).'));
+    }
 
     return [
       '#theme' => 'item_list',
@@ -214,7 +219,19 @@ class StatsController extends ControllerBase {
   }
 
   protected function resolveSort(Request $request): array {
-    $sortable = ['name', 'appointments', 'badge_sessions', 'badges', 'appointment_day_count', 'cancelled', 'latest'];
+    $sortable = [
+      'name',
+      'appointments',
+      'badge_sessions',
+      'badges',
+      'attendees',
+      'feedback_rate',
+      'appointments_per_week',
+      'appointments_per_month',
+      'appointment_day_count',
+      'cancelled',
+      'latest',
+    ];
     $sort = $request->query->get('sort');
     if (!in_array($sort, $sortable, TRUE)) {
       $sort = 'appointments';
@@ -232,8 +249,12 @@ class StatsController extends ControllerBase {
     $columns = [
       'name' => $this->t('Facilitator'),
       'appointments' => $this->t('Appointments'),
+      'attendees' => $this->t('Attendees'),
       'badge_sessions' => $this->t('Badge sessions'),
       'badges' => $this->t('Badges selected'),
+      'feedback_rate' => $this->t('Feedback %'),
+      'appointments_per_week' => $this->t('Per week'),
+      'appointments_per_month' => $this->t('Per month'),
       'appointment_day_count' => $this->t('Active days'),
       'cancelled' => $this->t('Cancelled'),
       'purpose' => $this->t('Purpose mix'),
@@ -243,7 +264,18 @@ class StatsController extends ControllerBase {
       'latest' => $this->t('Latest appointment'),
     ];
 
-    $sortable = ['name', 'appointments', 'badge_sessions', 'badges', 'appointment_day_count', 'cancelled'];
+    $sortable = [
+      'name',
+      'appointments',
+      'attendees',
+      'badge_sessions',
+      'badges',
+      'feedback_rate',
+      'appointments_per_week',
+      'appointments_per_month',
+      'appointment_day_count',
+      'cancelled',
+    ];
 
     $header = [];
     foreach ($columns as $key => $label) {
@@ -292,6 +324,10 @@ class StatsController extends ControllerBase {
 
         case 'badge_sessions':
         case 'badges':
+        case 'attendees':
+        case 'feedback_rate':
+        case 'appointments_per_week':
+        case 'appointments_per_month':
         case 'appointment_day_count':
         case 'cancelled':
         case 'appointments':
@@ -337,8 +373,12 @@ class StatsController extends ControllerBase {
       $rows[] = [
         'name' => ['data' => $name_render],
         'appointments' => ['data' => $data['appointments']],
+        'attendees' => ['data' => $data['attendees']],
         'badge_sessions' => ['data' => $data['badge_sessions']],
         'badges' => ['data' => $data['badges']],
+        'feedback_rate' => ['data' => $this->formatPercent($data['feedback_rate'])],
+        'appointments_per_week' => ['data' => $this->formatRate($data['appointments_per_week'])],
+        'appointments_per_month' => ['data' => $this->formatRate($data['appointments_per_month'])],
         'appointment_day_count' => ['data' => $data['appointment_day_count']],
         'cancelled' => ['data' => $data['cancelled']],
         'purpose' => ['data' => $this->formatDistributionList($data['purpose_counts'], $purpose_labels)],
@@ -377,9 +417,16 @@ class StatsController extends ControllerBase {
   protected function buildSummaryItems(array $summary, array $purpose_labels, array $result_labels, array $status_labels): array {
     $items = [];
     $items[] = $this->t('Appointments: @count', ['@count' => $summary['total_appointments']]);
+    $items[] = $this->t('Attendees served: @count', ['@count' => $summary['total_attendees']]);
     $items[] = $this->t('Badge sessions: @count', ['@count' => $summary['total_badge_appointments']]);
     $items[] = $this->t('Badges selected: @count', ['@count' => $summary['total_badges']]);
     $items[] = $this->t('Cancelled appointments: @count', ['@count' => $summary['cancelled_total']]);
+    if ($summary['total_appointments'] > 0) {
+      $items[] = $this->t('Feedback completion: @rate% (@count)', [
+        '@rate' => $summary['feedback_rate'],
+        '@count' => $summary['total_feedback'],
+      ]);
+    }
 
     if ($summary['purpose_totals']) {
       $items[] = Markup::create($this->t('Purpose mix: @list', ['@list' => $this->formatDistribution($summary['purpose_totals'], $purpose_labels)]));
@@ -392,6 +439,24 @@ class StatsController extends ControllerBase {
     }
 
     return $items;
+  }
+
+  protected function formatRate($value): string {
+    if ($value === NULL) {
+      return (string) $this->t('—');
+    }
+    if ($value === 0 || $value === '0' || $value === 0.0) {
+      return '0';
+    }
+    return (string) $value;
+  }
+
+  protected function formatPercent($value): string {
+    if ($value === NULL) {
+      return (string) $this->t('—');
+    }
+    $value = (float) $value;
+    return $value . '%';
   }
 
   protected function formatResultPercentages(array $counts, array $labels, bool $as_list = FALSE): string|array {

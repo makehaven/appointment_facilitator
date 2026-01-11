@@ -18,6 +18,8 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
   $entity_type = 'node';
   $bundle = 'appointment';
   $target_type = $smart_date_enabled ? 'smartdate' : 'daterange';
+  $smart_date_duration = 60;
+  $smart_date_duration_increments = "15\n30\n45\n60\n90\n120";
 
   // === 1. Field Storage ===
   $storage = FieldStorageConfig::loadByName($entity_type, $field_storage_name);
@@ -39,10 +41,10 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
     if ($smart_date_enabled) {
       $settings['end_field'] = TRUE;
       if (!isset($settings['default_duration'])) {
-        $settings['default_duration'] = 60;
+        $settings['default_duration'] = $smart_date_duration;
       }
       if (!isset($settings['default_duration_increments'])) {
-        $settings['default_duration_increments'] = '15,30,45,60,90,120';
+        $settings['default_duration_increments'] = $smart_date_duration_increments;
       }
     }
     else {
@@ -63,8 +65,8 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
     // Storage does not exist, create it.
     $settings = ['end_field' => TRUE];
     if ($smart_date_enabled) {
-      $settings['default_duration'] = 60;
-      $settings['default_duration_increments'] = '15,30,45,60,90,120';
+      $settings['default_duration'] = $smart_date_duration;
+      $settings['default_duration_increments'] = $smart_date_duration_increments;
     }
     FieldStorageConfig::create([
       'field_name' => $field_storage_name,
@@ -89,7 +91,25 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
     $instance_needs_save = TRUE;
   }
 
-  if (!empty($field_instance->get('default_value'))) {
+  $default_value = $field_instance->get('default_value');
+  if ($smart_date_enabled) {
+    $duration_defaults = [
+      'default_duration' => $smart_date_duration,
+      'default_duration_increments' => $smart_date_duration_increments,
+    ];
+    $duration_config = [];
+    if (is_array($default_value) && !empty($default_value)) {
+      $duration_config = $default_value[0] ?? [];
+    }
+    $duration_config = array_intersect_key($duration_config, $duration_defaults);
+    $duration_config = array_merge($duration_defaults, $duration_config);
+    $expected_default = [$duration_config];
+    if ($default_value !== $expected_default) {
+      $field_instance->set('default_value', $expected_default);
+      $instance_needs_save = TRUE;
+    }
+  }
+  elseif (!empty($default_value)) {
     $field_instance->set('default_value', []);
     $instance_needs_save = TRUE;
   }
@@ -116,8 +136,8 @@ function _appointment_facilitator_ensure_timerange_and_displays() {
 
     if ($smart_date_enabled) {
       $smart_date_widget_defaults = [
-        'default_duration' => 60,
-        'default_duration_increments' => '15,30,45,60,90,120',
+        'default_duration' => $smart_date_duration,
+        'default_duration_increments' => $smart_date_duration_increments,
       ];
       // Forcefully apply defaults if they are missing or null. This is more
       // robust than the array union operator, which doesn't handle nulls.
@@ -435,12 +455,6 @@ function appointment_facilitator_update_9011() {
  */
 function appointment_facilitator_update_9012() {
   _appointment_facilitator_ensure_timerange_and_displays();
-  if ($field = FieldConfig::loadByName('node', 'appointment', 'field_appointment_timerange')) {
-    if (!empty($field->get('default_value'))) {
-      $field->set('default_value', []);
-      $field->save();
-    }
-  }
 }
 
 /**
@@ -448,4 +462,52 @@ function appointment_facilitator_update_9012() {
  */
 function appointment_facilitator_update_9013() {
   _appointment_facilitator_ensure_timerange_and_displays();
+}
+
+/**
+ * Update: Ensure Smart Date defaults exist for appointment timerange.
+ */
+function appointment_facilitator_update_9014() {
+  _appointment_facilitator_ensure_timerange_and_displays();
+}
+
+/**
+ * Update: Fix corrupt menu link icons by converting strings to arrays.
+ */
+function appointment_facilitator_update_9015() {
+  $uuids = [
+    'eac63ca7-87ef-4012-925e-07783bd8732c',
+    'e8595dd8-9dbd-4f60-a6cb-2d0cf2ac84a2',
+    '67a3cd8a-5324-4658-b47d-555ee69ddddb',
+    '38f19038-eb9d-416f-890c-42e777c591aa',
+    '6fd08545-4cec-463f-a66f-14f0d41dc278',
+    '795d8796-c397-496d-8550-cf646c6e3591',
+    'b5f59fbb-73f4-4f35-a3ba-fa605c4231e5',
+    '36e23dae-e454-42ce-b120-1458f53826bb',
+    '458293fb-3304-4957-b8b1-156ee2e79b75',
+  ];
+
+  $storage = \Drupal::entityTypeManager()->getStorage('menu_link_content');
+  $entities = $storage->loadByProperties(['uuid' => $uuids]);
+  $count = 0;
+
+  foreach ($entities as $entity) {
+    $options = $entity->link->options;
+    // Check if the 'icon' option is set and not an array.
+    if (isset($options['icon']) && !is_array($options['icon'])) {
+      $icon = $options['icon'];
+      // Convert string icon to array format or empty array.
+      if (is_string($icon) && $icon !== '') {
+        $options['icon'] = ['icon_id' => $icon];
+      }
+      else {
+        $options['icon'] = [];
+      }
+      $entity->link->options = $options;
+      $entity->save();
+      $count++;
+    }
+  }
+
+  return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
 }
