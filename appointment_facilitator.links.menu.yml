@@ -12,13 +12,6 @@ appointment_facilitator.stats:
   route_name: appointment_facilitator.stats
   weight: 100
 
-appointment_facilitator.cancel_next:
-  title: 'Cancel my next appointment'
-  description: 'Quickly cancel your next facilitator session'
-  route_name: appointment_facilitator.cancel_next
-  menu_name: account
-  weight: 50
-
 appointment_facilitator.self_stats:
   title: 'My facilitator stats'
   description: 'View your appointment stats'
