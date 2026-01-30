@@ -509,58 +509,30 @@ function appointment_facilitator_update_9015() {
     }
   }
 
-    return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
+  return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
+}
 
-  }
+/**
+ * Update: Fix ALL corrupt menu link icons by unsetting invalid string options.
+ */
+function appointment_facilitator_update_9016() {
+  $storage = \Drupal::entityTypeManager()->getStorage('menu_link_content');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->execute();
 
-  
+  $entities = $storage->loadMultiple($ids);
+  $count = 0;
 
-  /**
-
-   * Update: Fix ALL corrupt menu link icons by unsetting invalid string options.
-
-   */
-
-  function appointment_facilitator_update_9016() {
-
-    $storage = \Drupal::entityTypeManager()->getStorage('menu_link_content');
-
-    $ids = $storage->getQuery()
-
-      ->accessCheck(FALSE)
-
-      ->execute();
-
-  
-
-    $entities = $storage->loadMultiple($ids);
-
-    $count = 0;
-
-  
-
-    foreach ($entities as $entity) {
-
-      $options = $entity->link->options;
-
-      if (isset($options['icon']) && !is_array($options['icon'])) {
-
-        unset($options['icon']);
-
-        $entity->link->options = $options;
-
-        $entity->save();
-
-        $count++;
-
-      }
-
+  foreach ($entities as $entity) {
+    $options = $entity->link->options;
+    if (isset($options['icon']) && !is_array($options['icon'])) {
+      unset($options['icon']);
+      $entity->link->options = $options;
+      $entity->save();
+      $count++;
     }
-
-  
-
-    return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
-
   }
 
-  
+  return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
+}

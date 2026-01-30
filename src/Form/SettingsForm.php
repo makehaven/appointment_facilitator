@@ -39,6 +39,36 @@ class SettingsForm extends ConfigFormBase {
       '#description' => $this->t('If you use the Profile module, enter the bundle used for facilitators. Default: <code>coordinator</code>.'),
     ];
 
+    $form['arrival_tracking'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Arrival tracking'),
+      '#open' => TRUE,
+    ];
+
+    $form['arrival_tracking']['arrival_grace_minutes'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Grace minutes'),
+      '#default_value' => (int) ($conf->get('arrival_grace_minutes') ?? 5),
+      '#min' => 0,
+      '#description' => $this->t('Minutes after the scheduled start that count as a lesser late.'),
+    ];
+
+    $form['arrival_tracking']['arrival_pre_window_minutes'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Pre-start scan window (minutes)'),
+      '#default_value' => (int) ($conf->get('arrival_pre_window_minutes') ?? 30),
+      '#min' => 0,
+      '#description' => $this->t('How many minutes before the scheduled start to look for access logs.'),
+    ];
+
+    $form['arrival_tracking']['arrival_backfill_days'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Backfill days on cron'),
+      '#default_value' => (int) ($conf->get('arrival_backfill_days') ?? 7),
+      '#min' => 1,
+      '#description' => $this->t('How many past days to scan for appointments when cron updates arrival status.'),
+    ];
+
     return parent::buildForm($form, $form_state);
   }
 
@@ -47,6 +77,9 @@ class SettingsForm extends ConfigFormBase {
       ->set('show_always_join_cta', (bool) $form_state->getValue('show_always_join_cta'))
       ->set('badges_vocab_machine_name', (string) $form_state->getValue('badges_vocab_machine_name'))
       ->set('facilitator_profile_bundle', (string) $form_state->getValue('facilitator_profile_bundle'))
+      ->set('arrival_grace_minutes', (int) $form_state->getValue('arrival_grace_minutes'))
+      ->set('arrival_pre_window_minutes', (int) $form_state->getValue('arrival_pre_window_minutes'))
+      ->set('arrival_backfill_days', (int) $form_state->getValue('arrival_backfill_days'))
       ->save();
 
     parent::submitForm($form, $form_state);

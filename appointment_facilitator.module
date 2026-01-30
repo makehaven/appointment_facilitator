@@ -176,6 +176,79 @@ function appointment_facilitator_node_presave(NodeInterface $node) {
     return;
   }
   _appointment_facilitator_populate_timerange_from_slots($node);
+  _appointment_facilitator_sync_date_from_timerange($node);
+}
+
+/**
+ * Implements hook_cron().
+ */
+function appointment_facilitator_cron(): void {
+  if (!\Drupal::entityTypeManager()->hasDefinition('access_control_log')) {
+    return;
+  }
+
+  $entity_field_manager = \Drupal::service('entity_field.manager');
+  $access_fields = $entity_field_manager->getFieldDefinitions('access_control_log', 'access_control_request');
+  if (!isset($access_fields['field_access_request_user'])) {
+    return;
+  }
+  $node_fields = $entity_field_manager->getFieldDefinitions('node', 'appointment');
+  if (!isset($node_fields['field_facilitator_arrival_status'])) {
+    return;
+  }
+
+  $config = \Drupal::config('appointment_facilitator.settings');
+  $backfill_days = max(1, (int) ($config->get('arrival_backfill_days') ?? 7));
+  $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $now = new \DateTimeImmutable('now', new \DateTimeZone($site_timezone));
+  $start_date = $now->modify('-' . $backfill_days . ' days')->format('Y-m-d');
+
+  $storage = \Drupal::entityTypeManager()->getStorage('node');
+  $query = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', 'appointment')
+    ->condition('status', 1);
+
+  if (isset($node_fields['field_appointment_status'])) {
+    $query->condition('field_appointment_status.value', 'canceled', '<>');
+  }
+  if (isset($node_fields['field_appointment_date'])) {
+    $query->condition('field_appointment_date.value', $start_date, '>=');
+  }
+
+  $nids = $query->execute();
+  if (!$nids) {
+    return;
+  }
+
+  $nodes = $storage->loadMultiple($nids);
+  foreach ($nodes as $node) {
+    if (!$node instanceof NodeInterface || $node->bundle() !== 'appointment') {
+      continue;
+    }
+
+    if ($node->hasField('field_facilitator_arrival_status') && !$node->get('field_facilitator_arrival_status')->isEmpty()) {
+      continue;
+    }
+
+    $window = _appointment_facilitator_get_arrival_window($node, $site_timezone);
+    if (!$window) {
+      continue;
+    }
+
+    if ($window['end_ts'] > $now->getTimestamp()) {
+      continue;
+    }
+
+    $scan = _appointment_facilitator_find_arrival_scan($node, $window, $site_timezone);
+    $status = _appointment_facilitator_classify_arrival($window['start'], $window['end'], $scan, (int) ($config->get('arrival_grace_minutes') ?? 5));
+
+    $node->set('field_facilitator_arrival_status', $status);
+    if ($scan && $node->hasField('field_facilitator_arrival_time')) {
+      $node->set('field_facilitator_arrival_time', $scan->format('Y-m-d\TH:i:s'));
+    }
+    $node->save();
+  }
 }
 
 /**
@@ -242,6 +315,182 @@ function _appointment_facilitator_populate_timerange_from_slots(NodeInterface $n
   if ($node->hasField('field_host_start_time') && $node->get('field_host_start_time')->isEmpty()) {
     $node->set('field_host_start_time', $base_start->format('Y-m-d\TH:i:s'));
   }
+}
+
+/**
+ * Builds the arrival evaluation window for an appointment.
+ */
+function _appointment_facilitator_get_arrival_window(NodeInterface $node, string $site_timezone): ?array {
+  $config = \Drupal::config('appointment_facilitator.settings');
+  $pre_window_minutes = max(0, (int) ($config->get('arrival_pre_window_minutes') ?? 30));
+  $timezone = new \DateTimeZone($site_timezone ?: date_default_timezone_get());
+
+  if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
+    $item = $node->get('field_appointment_timerange')->first();
+    $range_timezone = $item->timezone ?: $timezone->getName();
+    $range_tz = new \DateTimeZone($range_timezone);
+
+    try {
+      if (is_numeric($item->value)) {
+        $start = (new \DateTimeImmutable('@' . (int) $item->value))->setTimezone($range_tz);
+      }
+      else {
+        $start = new \DateTimeImmutable($item->value, $range_tz);
+      }
+      if (!empty($item->end_value)) {
+        if (is_numeric($item->end_value)) {
+          $end = (new \DateTimeImmutable('@' . (int) $item->end_value))->setTimezone($range_tz);
+        }
+        else {
+          $end = new \DateTimeImmutable($item->end_value, $range_tz);
+        }
+      }
+      else {
+        $end = $start->modify('+60 minutes');
+      }
+    }
+    catch (\Exception $e) {
+      return NULL;
+    }
+
+    $start_ts = $start->getTimestamp() - ($pre_window_minutes * 60);
+    return [
+      'start' => $start,
+      'end' => $end,
+      'start_ts' => $start_ts,
+      'end_ts' => $end->getTimestamp(),
+    ];
+  }
+
+  if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
+    $base_date = _appointment_facilitator_normalize_date($node->get('field_appointment_date')->value);
+    if ($base_date && $node->hasField('field_host_start_time') && !$node->get('field_host_start_time')->isEmpty()) {
+      $start = _appointment_facilitator_parse_slot_time($base_date, (string) $node->get('field_host_start_time')->value, $timezone->getName());
+      if ($start instanceof \DateTimeImmutable) {
+        $end = $start->modify('+60 minutes');
+        $start_ts = $start->getTimestamp() - ($pre_window_minutes * 60);
+        return [
+          'start' => $start,
+          'end' => $end,
+          'start_ts' => $start_ts,
+          'end_ts' => $end->getTimestamp(),
+        ];
+      }
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Finds the first access scan in the arrival window for the facilitator.
+ */
+function _appointment_facilitator_find_arrival_scan(NodeInterface $node, array $window, string $site_timezone): ?\DateTimeImmutable {
+  if (!$node->hasField('field_appointment_host') || $node->get('field_appointment_host')->isEmpty()) {
+    return NULL;
+  }
+  $uid = (int) $node->get('field_appointment_host')->target_id;
+  if ($uid <= 0) {
+    return NULL;
+  }
+
+  $storage = \Drupal::entityTypeManager()->getStorage('access_control_log');
+  $query = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', 'access_control_request')
+    ->condition('field_access_request_user.target_id', $uid)
+    ->condition('created', $window['start_ts'], '>=')
+    ->condition('created', $window['end_ts'], '<=')
+    ->sort('created', 'ASC')
+    ->range(0, 1);
+
+  $ids = $query->execute();
+  if (!$ids) {
+    return NULL;
+  }
+  $logs = $storage->loadMultiple($ids);
+  $log = reset($logs);
+  if (!$log) {
+    return NULL;
+  }
+
+  $timestamp = NULL;
+  if (method_exists($log, 'getCreatedTime')) {
+    $timestamp = (int) $log->getCreatedTime();
+  }
+  elseif ($log->hasField('created') && !$log->get('created')->isEmpty()) {
+    $timestamp = (int) $log->get('created')->value;
+  }
+
+  if (!$timestamp) {
+    return NULL;
+  }
+
+  return (new \DateTimeImmutable('@' . $timestamp))
+    ->setTimezone(new \DateTimeZone($site_timezone ?: date_default_timezone_get()));
+}
+
+/**
+ * Classifies the arrival status using the scan time and grace window.
+ */
+function _appointment_facilitator_classify_arrival(
+  \DateTimeImmutable $start,
+  \DateTimeImmutable $end,
+  ?\DateTimeImmutable $scan,
+  int $grace_minutes
+): string {
+  if (!$scan) {
+    return 'missed';
+  }
+
+  if ($scan <= $start) {
+    return 'on_time';
+  }
+
+  $grace_cutoff = $start->modify('+' . max(0, $grace_minutes) . ' minutes');
+  if ($scan <= $grace_cutoff) {
+    return 'late_grace';
+  }
+
+  if ($scan <= $end) {
+    return 'late';
+  }
+
+  return 'missed';
+}
+
+/**
+ * Ensures the appointment date field mirrors the timerange start.
+ */
+function _appointment_facilitator_sync_date_from_timerange(NodeInterface $node): void {
+  if (!$node->hasField('field_appointment_date') || !$node->get('field_appointment_date')->isEmpty()) {
+    return;
+  }
+  if (!$node->hasField('field_appointment_timerange') || $node->get('field_appointment_timerange')->isEmpty()) {
+    return;
+  }
+
+  $item = $node->get('field_appointment_timerange')->first();
+  if (!$item || $item->value === NULL || $item->value === '') {
+    return;
+  }
+
+  $timezone = $item->timezone ?: (\Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get());
+
+  try {
+    if (is_numeric($item->value)) {
+      $date = (new \DateTimeImmutable('@' . (int) $item->value))
+        ->setTimezone(new \DateTimeZone($timezone));
+    }
+    else {
+      $date = new \DateTimeImmutable($item->value, new \DateTimeZone($timezone));
+    }
+  }
+  catch (\Exception $e) {
+    return;
+  }
+
+  $node->set('field_appointment_date', $date->format('Y-m-d'));
 }
 
 /**

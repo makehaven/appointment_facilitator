@@ -37,6 +37,12 @@ class AppointmentStats {
       'total_feedback' => 0,
       'feedback_rate' => 0,
       'cancelled_total' => 0,
+      'total_appointment_days' => 0,
+      'total_arrival_days' => 0,
+      'arrival_rate' => NULL,
+      'arrival_available' => FALSE,
+      'arrival_status_totals' => [],
+      'arrival_status_available' => FALSE,
       'facilitators' => [],
       'purpose_totals' => [],
       'result_totals' => [],
@@ -46,6 +52,7 @@ class AppointmentStats {
         'appointments_per_week' => 0,
         'appointments_per_month' => 0,
         'feedback_rate' => 0,
+        'arrival_rate' => 0,
       ],
     ];
 
@@ -59,6 +66,7 @@ class AppointmentStats {
     $use_facilitator_terms = !empty($options['use_facilitator_terms']);
     $now_ts = \Drupal::time()->getRequestTime();
     $term_cache = [];
+    $arrival_status_available = $this->fieldExists('field_facilitator_arrival_status');
 
     $date_field = $this->resolveDateField();
     $using_range_field = $date_field === 'field_appointment_timerange';
@@ -144,6 +152,9 @@ class AppointmentStats {
           'latest' => NULL,
           'cancelled' => 0,
           'day_map' => [],
+          'arrival_days' => NULL,
+          'arrival_rate' => NULL,
+          'arrival_status_counts' => [],
           'term_start' => NULL,
           'term_end' => NULL,
           'term_elapsed_weeks' => NULL,
@@ -188,6 +199,14 @@ class AppointmentStats {
         $summary['facilitators'][$host_id]['cancelled']++;
       }
 
+      if ($arrival_status_available) {
+        $arrival_status = $this->extractFieldValue($node, 'field_facilitator_arrival_status');
+        if ($arrival_status !== NULL && $arrival_status !== '') {
+          $summary['arrival_status_totals'][$arrival_status] = ($summary['arrival_status_totals'][$arrival_status] ?? 0) + 1;
+          $summary['facilitators'][$host_id]['arrival_status_counts'][$arrival_status] = ($summary['facilitators'][$host_id]['arrival_status_counts'][$arrival_status] ?? 0) + 1;
+        }
+      }
+
       $attendees = $this->countAttendees($node);
       $summary['total_attendees'] += $attendees;
       $summary['facilitators'][$host_id]['attendees'] += $attendees;
@@ -228,13 +247,28 @@ class AppointmentStats {
       'appointments_per_week' => [],
       'appointments_per_month' => [],
       'feedback_rate' => [],
+      'arrival_rate' => [],
     ];
+
+    $arrival_presence = $this->loadArrivalPresence($summary['facilitators']);
+    $arrival_available = is_array($arrival_presence);
+    $summary['arrival_available'] = $arrival_available;
+    $summary['arrival_status_available'] = $arrival_status_available;
 
     foreach ($summary['facilitators'] as &$facilitator) {
       $facilitator['appointment_day_count'] = isset($facilitator['day_map']) ? count($facilitator['day_map']) : 0;
+      $summary['total_appointment_days'] += $facilitator['appointment_day_count'];
       unset($facilitator['day_map']);
       if ($facilitator['appointments'] > 0) {
         $facilitator['feedback_rate'] = round(($facilitator['feedback'] / $facilitator['appointments']) * 100, 1);
+      }
+
+      if ($arrival_available && $facilitator['appointment_day_count'] > 0) {
+        $uid = $facilitator['uid'];
+        $arrival_days = isset($arrival_presence[$uid]) ? count($arrival_presence[$uid]) : 0;
+        $facilitator['arrival_days'] = $arrival_days;
+        $facilitator['arrival_rate'] = round(($arrival_days / $facilitator['appointment_day_count']) * 100, 1);
+        $summary['total_arrival_days'] += $arrival_days;
       }
 
       $range = NULL;
@@ -270,11 +304,17 @@ class AppointmentStats {
         $rate_accumulator['appointments_per_month'][] = $facilitator['appointments_per_month'];
       }
       $rate_accumulator['feedback_rate'][] = $facilitator['feedback_rate'];
+      if ($arrival_available && $facilitator['appointment_day_count'] > 0) {
+        $rate_accumulator['arrival_rate'][] = $facilitator['arrival_rate'];
+      }
     }
     unset($facilitator);
 
     if ($summary['total_appointments'] > 0) {
       $summary['feedback_rate'] = round(($summary['total_feedback'] / $summary['total_appointments']) * 100, 1);
+    }
+    if ($arrival_available && $summary['total_appointment_days'] > 0) {
+      $summary['arrival_rate'] = round(($summary['total_arrival_days'] / $summary['total_appointment_days']) * 100, 1);
     }
 
     foreach ($rate_accumulator as $key => $values) {
@@ -284,6 +324,128 @@ class AppointmentStats {
     }
 
     return $summary;
+  }
+
+  protected function loadArrivalPresence(array $facilitators): ?array {
+    $presence = [];
+    if (!$facilitators) {
+      return $presence;
+    }
+
+    if (!$this->entityTypeManager->hasDefinition('access_control_log')) {
+      return NULL;
+    }
+
+    $definitions = $this->entityFieldManager->getFieldDefinitions('access_control_log', 'access_control_request');
+    if (!isset($definitions['field_access_request_user'])) {
+      return NULL;
+    }
+
+    $uids = [];
+    $day_map = [];
+    foreach ($facilitators as $facilitator) {
+      $uid = $facilitator['uid'] ?? NULL;
+      if (!$uid || empty($facilitator['day_map'])) {
+        continue;
+      }
+      $uids[] = (int) $uid;
+      $day_map[$uid] = $facilitator['day_map'];
+    }
+
+    $uids = array_values(array_unique(array_filter($uids)));
+    if (!$uids) {
+      return $presence;
+    }
+
+    $timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+    $tz = new \DateTimeZone($timezone);
+    $range = $this->calculateDayRange($day_map, $tz);
+    if (!$range) {
+      return $presence;
+    }
+
+    $storage = $this->entityTypeManager->getStorage('access_control_log');
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'access_control_request')
+      ->condition('field_access_request_user.target_id', $uids, 'IN')
+      ->condition('created', $range['start'], '>=')
+      ->condition('created', $range['end'], '<=');
+
+    try {
+      $ids = $query->execute();
+    }
+    catch (\Exception $e) {
+      $this->logger->warning('Unable to query access log presence: @message', ['@message' => $e->getMessage()]);
+      return $presence;
+    }
+
+    if (!$ids) {
+      return $presence;
+    }
+
+    $logs = $storage->loadMultiple($ids);
+    foreach ($logs as $log) {
+      if (!$log->hasField('field_access_request_user') || $log->get('field_access_request_user')->isEmpty()) {
+        continue;
+      }
+      $uid = (int) $log->get('field_access_request_user')->target_id;
+      if (!$uid || empty($day_map[$uid])) {
+        continue;
+      }
+
+      $timestamp = NULL;
+      if (method_exists($log, 'getCreatedTime')) {
+        $timestamp = (int) $log->getCreatedTime();
+      }
+      elseif ($log->hasField('created') && !$log->get('created')->isEmpty()) {
+        $timestamp = (int) $log->get('created')->value;
+      }
+
+      if (!$timestamp) {
+        continue;
+      }
+
+      $day_key = (new \DateTimeImmutable('@' . $timestamp))
+        ->setTimezone($tz)
+        ->format('Y-m-d');
+      if (!isset($day_map[$uid][$day_key])) {
+        continue;
+      }
+      $presence[$uid][$day_key] = TRUE;
+    }
+
+    return $presence;
+  }
+
+  protected function calculateDayRange(array $day_map, \DateTimeZone $timezone): ?array {
+    $min = NULL;
+    $max = NULL;
+    foreach ($day_map as $days) {
+      foreach (array_keys($days) as $day) {
+        if (!is_string($day) || $day === '') {
+          continue;
+        }
+        try {
+          $start = new \DateTimeImmutable($day . ' 00:00:00', $timezone);
+          $end = new \DateTimeImmutable($day . ' 23:59:59', $timezone);
+        }
+        catch (\Exception $e) {
+          continue;
+        }
+        $min = $min ? min($min, $start->getTimestamp()) : $start->getTimestamp();
+        $max = $max ? max($max, $end->getTimestamp()) : $end->getTimestamp();
+      }
+    }
+
+    if ($min === NULL || $max === NULL) {
+      return NULL;
+    }
+
+    return [
+      'start' => $min,
+      'end' => $max,
+    ];
   }
 
   protected function resolveDateField(): ?string {
@@ -374,6 +536,13 @@ class AppointmentStats {
   }
 
   protected function hasFeedback(NodeInterface $node): bool {
+    if ($node->hasField('field_appointment_result') && !$node->get('field_appointment_result')->isEmpty()) {
+      $result = trim((string) $node->get('field_appointment_result')->value);
+      if ($result !== '') {
+        return TRUE;
+      }
+    }
+
     if (!$node->hasField('field_appointment_feedback') || $node->get('field_appointment_feedback')->isEmpty()) {
       return FALSE;
     }

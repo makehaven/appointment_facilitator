@@ -11,7 +11,6 @@ use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBuilderInterface;
 use Drupal\Core\Link;
-use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -23,33 +22,14 @@ use Symfony\Component\HttpFoundation\RequestStack;
  */
 class StatsController extends ControllerBase {
 
-  protected AppointmentStats $statsHelper;
-
-  protected FormBuilderInterface $statsFormBuilder;
-
-  protected EntityTypeManagerInterface $entityTypeManagerService;
-
-  protected EntityFieldManagerInterface $entityFieldManagerService;
-
-  protected DateFormatterInterface $dateFormatterService;
-
-  protected RequestStack $requestStack;
-
   public function __construct(
-    FormBuilderInterface $formBuilder,
-    EntityTypeManagerInterface $entityTypeManager,
-    EntityFieldManagerInterface $entityFieldManager,
-    DateFormatterInterface $dateFormatter,
-    RequestStack $requestStack,
-    LoggerChannelFactoryInterface $loggerFactory,
-  ) {
-    $this->statsFormBuilder = $formBuilder;
-    $this->entityTypeManagerService = $entityTypeManager;
-    $this->entityFieldManagerService = $entityFieldManager;
-    $this->dateFormatterService = $dateFormatter;
-    $this->requestStack = $requestStack;
-    $this->statsHelper = new AppointmentStats($entityTypeManager, $entityFieldManager, $loggerFactory);
-  }
+    protected readonly FormBuilderInterface $statsFormBuilder,
+    protected readonly EntityTypeManagerInterface $entityTypeManagerService,
+    protected readonly EntityFieldManagerInterface $entityFieldManagerService,
+    protected readonly DateFormatterInterface $dateFormatterService,
+    protected readonly RequestStack $requestStack,
+    protected readonly AppointmentStats $statsHelper,
+  ) {}
 
   /**
    * {@inheritdoc}
@@ -61,7 +41,7 @@ class StatsController extends ControllerBase {
       $container->get('entity_field.manager'),
       $container->get('date.formatter'),
       $container->get('request_stack'),
-      $container->get('logger.factory'),
+      $container->get('appointment_facilitator.stats'),
     );
   }
 
@@ -84,11 +64,12 @@ class StatsController extends ControllerBase {
     $purpose_labels = $this->getAllowedValues('field_appointment_purpose');
     $result_labels = $this->getAllowedValues('field_appointment_result');
     $status_labels = $this->getAllowedValues('field_appointment_status');
+    $arrival_status_labels = $this->getAllowedValues('field_facilitator_arrival_status');
 
     [$sort_key, $sort_direction] = $this->resolveSort($request);
     $header = $this->buildTableHeader($request, $sort_key, $sort_direction);
     $facilitators = $this->sortFacilitators($summary['facilitators'], $user_labels, $sort_key, $sort_direction);
-    $rows = $this->buildTableRows($facilitators, $user_labels, $badge_labels, $purpose_labels, $result_labels, $status_labels);
+    $rows = $this->buildTableRows($facilitators, $user_labels, $badge_labels, $purpose_labels, $result_labels, $status_labels, $arrival_status_labels);
 
     return [
       '#type' => 'container',
@@ -115,6 +96,8 @@ class StatsController extends ControllerBase {
       Markup::create($this->t('<strong>Badge sessions</strong>: Appointments where at least one badge was selected.')),
       Markup::create($this->t('<strong>Badges selected</strong>: Total number of badge selections across those appointments (one appointment can add several).')),
       Markup::create($this->t('<strong>Active days</strong>: Distinct calendar days with at least one appointment inside the current filters.')),
+      Markup::create($this->t('<strong>Arrival days</strong>: Appointment days where the facilitator has any access-control log entry that day (door/tool usage).')),
+      Markup::create($this->t('<strong>Arrival status</strong>: Per-appointment status derived from access logs when configured (on time, grace late, late, missed).')),
       Markup::create($this->t('<strong>Result mix (set)</strong>: Percentages ignore appointments without a recorded result; counts are shown in parentheses.')),
       Markup::create($this->t('<strong>Cancelled</strong>: Appointments whose status is <em>canceled</em>.')),
     ];
@@ -226,6 +209,8 @@ class StatsController extends ControllerBase {
       'badges',
       'attendees',
       'feedback_rate',
+      'arrival_rate',
+      'arrival_days',
       'appointments_per_week',
       'appointments_per_month',
       'appointment_day_count',
@@ -252,7 +237,9 @@ class StatsController extends ControllerBase {
       'attendees' => $this->t('Attendees'),
       'badge_sessions' => $this->t('Badge sessions'),
       'badges' => $this->t('Badges selected'),
-      'feedback_rate' => $this->t('Feedback %'),
+      'feedback_rate' => $this->t('Evaluation %'),
+      'arrival_rate' => $this->t('Arrival %'),
+      'arrival_days' => $this->t('Arrival days'),
       'appointments_per_week' => $this->t('Per week'),
       'appointments_per_month' => $this->t('Per month'),
       'appointment_day_count' => $this->t('Active days'),
@@ -260,6 +247,7 @@ class StatsController extends ControllerBase {
       'purpose' => $this->t('Purpose mix'),
       'result' => $this->t('Result mix'),
       'status' => $this->t('Status mix'),
+      'arrival_status' => $this->t('Arrival status'),
       'top_badges' => $this->t('Top badges'),
       'latest' => $this->t('Latest appointment'),
     ];
@@ -271,6 +259,8 @@ class StatsController extends ControllerBase {
       'badge_sessions',
       'badges',
       'feedback_rate',
+      'arrival_rate',
+      'arrival_days',
       'appointments_per_week',
       'appointments_per_month',
       'appointment_day_count',
@@ -326,6 +316,8 @@ class StatsController extends ControllerBase {
         case 'badges':
         case 'attendees':
         case 'feedback_rate':
+        case 'arrival_rate':
+        case 'arrival_days':
         case 'appointments_per_week':
         case 'appointments_per_month':
         case 'appointment_day_count':
@@ -364,7 +356,7 @@ class StatsController extends ControllerBase {
     return $user_labels[$uid] ?? (string) $this->t('User @uid', ['@uid' => $uid]);
   }
 
-  protected function buildTableRows(array $facilitators, array $user_labels, array $badge_labels, array $purpose_labels, array $result_labels, array $status_labels): array {
+  protected function buildTableRows(array $facilitators, array $user_labels, array $badge_labels, array $purpose_labels, array $result_labels, array $status_labels, array $arrival_status_labels): array {
     $rows = [];
 
     foreach ($facilitators as $data) {
@@ -377,6 +369,8 @@ class StatsController extends ControllerBase {
         'badge_sessions' => ['data' => $data['badge_sessions']],
         'badges' => ['data' => $data['badges']],
         'feedback_rate' => ['data' => $this->formatPercent($data['feedback_rate'])],
+        'arrival_rate' => ['data' => $this->formatPercent($data['arrival_rate'])],
+        'arrival_days' => ['data' => $this->formatRate($data['arrival_days'])],
         'appointments_per_week' => ['data' => $this->formatRate($data['appointments_per_week'])],
         'appointments_per_month' => ['data' => $this->formatRate($data['appointments_per_month'])],
         'appointment_day_count' => ['data' => $data['appointment_day_count']],
@@ -384,6 +378,7 @@ class StatsController extends ControllerBase {
         'purpose' => ['data' => $this->formatDistributionList($data['purpose_counts'], $purpose_labels)],
         'result' => ['data' => $this->formatResultPercentages($data['result_counts'], $result_labels, TRUE)],
         'status' => ['data' => $this->formatDistributionList($data['status_counts'], $status_labels, TRUE)],
+        'arrival_status' => ['data' => $this->formatDistributionList($data['arrival_status_counts'], $arrival_status_labels, TRUE)],
         'top_badges' => ['data' => $this->formatDistributionList($data['badges_breakdown'], $badge_labels)],
         'latest' => ['data' => $this->formatLatest($data['latest'])],
       ];
@@ -421,8 +416,15 @@ class StatsController extends ControllerBase {
     $items[] = $this->t('Badge sessions: @count', ['@count' => $summary['total_badge_appointments']]);
     $items[] = $this->t('Badges selected: @count', ['@count' => $summary['total_badges']]);
     $items[] = $this->t('Cancelled appointments: @count', ['@count' => $summary['cancelled_total']]);
+    if (!empty($summary['arrival_available']) && $summary['total_appointment_days'] > 0) {
+      $items[] = $this->t('Arrival days: @count of @total (@rate%)', [
+        '@count' => $summary['total_arrival_days'],
+        '@total' => $summary['total_appointment_days'],
+        '@rate' => $summary['arrival_rate'],
+      ]);
+    }
     if ($summary['total_appointments'] > 0) {
-      $items[] = $this->t('Feedback completion: @rate% (@count)', [
+      $items[] = $this->t('Evaluation completion: @rate% (@count)', [
         '@rate' => $summary['feedback_rate'],
         '@count' => $summary['total_feedback'],
       ]);
@@ -436,6 +438,10 @@ class StatsController extends ControllerBase {
     }
     if ($summary['status_totals']) {
       $items[] = Markup::create($this->t('Status mix: @list', ['@list' => $this->formatDistribution($summary['status_totals'], $status_labels)]));
+    }
+    if (!empty($summary['arrival_status_totals'])) {
+      $arrival_status_labels = $this->getAllowedValues('field_facilitator_arrival_status');
+      $items[] = Markup::create($this->t('Arrival status mix: @list', ['@list' => $this->formatDistribution($summary['arrival_status_totals'], $arrival_status_labels)]));
     }
 
     return $items;

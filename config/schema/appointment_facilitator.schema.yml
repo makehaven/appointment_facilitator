@@ -11,3 +11,12 @@ appointment_facilitator.settings:
     facilitator_profile_bundle:
       type: string
       label: 'Facilitator profile bundle machine name'
+    arrival_grace_minutes:
+      type: integer
+      label: 'Grace minutes for on-time arrival'
+    arrival_pre_window_minutes:
+      type: integer
+      label: 'Minutes before start to match access scans'
+    arrival_backfill_days:
+      type: integer
+      label: 'Days to backfill arrival status on cron'

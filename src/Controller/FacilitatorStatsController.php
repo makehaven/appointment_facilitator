@@ -7,7 +7,6 @@ use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
-use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -15,20 +14,12 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  */
 class FacilitatorStatsController extends ControllerBase {
 
-  protected AppointmentStats $statsHelper;
-  protected EntityTypeManagerInterface $entityTypeManagerService;
-  protected DateFormatterInterface $dateFormatterService;
-
   public function __construct(
-    EntityTypeManagerInterface $entityTypeManager,
-    EntityFieldManagerInterface $entityFieldManager,
-    DateFormatterInterface $dateFormatter,
-    LoggerChannelFactoryInterface $loggerFactory,
-  ) {
-    $this->entityTypeManagerService = $entityTypeManager;
-    $this->dateFormatterService = $dateFormatter;
-    $this->statsHelper = new AppointmentStats($entityTypeManager, $entityFieldManager, $loggerFactory);
-  }
+    protected readonly EntityTypeManagerInterface $entityTypeManagerService,
+    protected readonly EntityFieldManagerInterface $entityFieldManagerService,
+    protected readonly DateFormatterInterface $dateFormatterService,
+    protected readonly AppointmentStats $statsHelper,
+  ) {}
 
   /**
    * {@inheritdoc}
@@ -38,7 +29,7 @@ class FacilitatorStatsController extends ControllerBase {
       $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
       $container->get('date.formatter'),
-      $container->get('logger.factory'),
+      $container->get('appointment_facilitator.stats'),
     );
   }
 
@@ -70,7 +61,27 @@ class FacilitatorStatsController extends ControllerBase {
       [$this->t('Badges selected'), $facilitator['badges']],
       [$this->t('Cancelled appointments'), $facilitator['cancelled']],
       [
-        $this->t('Feedback completion'),
+        $this->t('Arrival days'),
+        $facilitator['arrival_days'] === NULL
+          ? $this->t('—')
+          : $this->t('@count of @total', [
+            '@count' => $facilitator['arrival_days'],
+            '@total' => $facilitator['appointment_day_count'],
+          ]),
+      ],
+      [
+        $this->t('Arrival coverage'),
+        $this->formatPercent($facilitator['arrival_rate']),
+      ],
+      [
+        $this->t('Arrival status mix'),
+        $this->formatArrivalStatusCounts(
+          $facilitator['arrival_status_counts'] ?? [],
+          $this->getAllowedValues('field_facilitator_arrival_status'),
+        ),
+      ],
+      [
+        $this->t('Evaluation completion'),
         $this->t('@rate (@count)', [
           '@rate' => $this->formatPercent($facilitator['feedback_rate']),
           '@count' => $facilitator['feedback'],
@@ -98,8 +109,12 @@ class FacilitatorStatsController extends ControllerBase {
         $this->formatRate($overall['facilitator_rate_averages']['appointments_per_month'] ?? NULL),
       ],
       [
-        $this->t('Org average feedback completion'),
+        $this->t('Org average evaluation completion'),
         $this->formatPercent($overall['facilitator_rate_averages']['feedback_rate'] ?? NULL),
+      ],
+      [
+        $this->t('Org average arrival coverage'),
+        $this->formatPercent($overall['facilitator_rate_averages']['arrival_rate'] ?? NULL),
       ],
     ];
 
@@ -163,6 +178,9 @@ class FacilitatorStatsController extends ControllerBase {
       'latest' => NULL,
       'cancelled' => 0,
       'appointment_day_count' => 0,
+      'arrival_days' => NULL,
+      'arrival_rate' => NULL,
+      'arrival_status_counts' => [],
       'term_start' => NULL,
       'term_end' => NULL,
       'term_elapsed_weeks' => NULL,
@@ -188,6 +206,52 @@ class FacilitatorStatsController extends ControllerBase {
     }
     $value = (float) $value;
     return $value . '%';
+  }
+
+  protected function formatArrivalStatusCounts(array $counts, array $labels): string {
+    if (!$counts) {
+      return (string) $this->t('—');
+    }
+    arsort($counts);
+    $parts = [];
+    foreach ($counts as $key => $value) {
+      $label = $labels[$key] ?? NULL;
+      if ($key === '_none' || $key === NULL || $key === '') {
+        $label = $this->t('Not set');
+      }
+      elseif ($label === NULL) {
+        $label = $this->humanizeMachineName($key);
+      }
+      $parts[] = $this->t('@count @label', ['@label' => $label, '@count' => $value]);
+    }
+    return implode(', ', $parts);
+  }
+
+  protected function getAllowedValues(string $field_name): array {
+    $definitions = $this->entityFieldManagerService->getFieldDefinitions('node', 'appointment');
+    if (!isset($definitions[$field_name])) {
+      return [];
+    }
+    $settings = $definitions[$field_name]->getSetting('allowed_values') ?? [];
+    $labels = [];
+    foreach ($settings as $item) {
+      if (is_array($item) && isset($item['value'])) {
+        $labels[$item['value']] = $item['label'] ?? $item['value'];
+      }
+      elseif (is_string($item)) {
+        $labels[$item] = $item;
+      }
+    }
+    return $labels;
+  }
+
+  protected function humanizeMachineName(?string $value): string {
+    if ($value === NULL || $value === '' || $value === '_none') {
+      return (string) $this->t('Not set');
+    }
+    $value = str_replace(['_', '-'], ' ', $value);
+    $value = preg_replace('/\s+/', ' ', trim($value));
+    return ucwords($value);
   }
 
 }

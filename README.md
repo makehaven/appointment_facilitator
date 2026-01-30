@@ -87,3 +87,48 @@ This module provides a solid foundation for a flexible appointment system. Futur
 ## Reporting
 
 Administrators with the `View facilitator appointment reports` permission can visit `/admin/reports/appointment-facilitator` to review appointment counts, badge session totals, and top badges per facilitator. Filters for date range, purpose, and cancelled sessions help focus on specific activity windows before exporting data.
+
+### Arrival Coverage (Access Logs)
+
+The facilitator stats report now includes **Arrival %** and **Arrival days**. This is a lightweight attendance signal based on access-control logs:
+
+- **Arrival days** counts appointment days where the facilitator has *any* access-control log entry that day (door/tool usage).
+- **Arrival %** is arrival days divided by appointment active days.
+- **Arrival status mix** summarizes per-appointment statuses when those fields are configured (see below).
+
+**Requirements (manual on live):**
+1. Ensure the `access_control_api_logger` module (or another provider that creates the `access_control_log` entity) is enabled.
+2. Confirm the `access_control_log` entity bundle `access_control_request` exists and includes the `field_access_request_user` field.
+3. Verify access log entries are being created when doors/tools are used.
+
+If the access log entity or user field is missing, the arrival metrics remain blank and the report will still function without errors.
+
+### Per-Appointment Arrival Status
+
+To tie late/missed tracking directly to each appointment, add the following fields to the **Appointment** content type (manual on live):
+
+1. **Facilitator Arrival Status**
+   - Machine name: `field_facilitator_arrival_status`
+   - Type: List (text)
+   - Allowed values:
+     - `on_time` = On time
+     - `late_grace` = Late (grace)
+     - `late` = Late
+     - `missed` = Missed
+2. **Facilitator Arrival Time** (optional but recommended)
+   - Machine name: `field_facilitator_arrival_time`
+   - Type: Date and time (not date-only)
+
+When these fields exist, cron will backfill arrival status for recent appointments based on access logs. Configure grace minutes and pre-start scan window in **Configuration → People → Appointment Facilitator**.
+
+Status rules (default):
+- **On time**: scan at or before the scheduled start.
+- **Late (grace)**: scan within the grace window after start.
+- **Late**: scan after grace but before the appointment end.
+- **Missed**: no scan within the window.
+
+One-time backfill (Drush):
+```
+drush appointment-facilitator:backfill-arrivals --start=2025-01-01 --end=2025-03-31
+```
+Use `--force` to overwrite existing arrival status values.

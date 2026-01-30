@@ -4,11 +4,26 @@ namespace Drupal\appointment_facilitator\Form;
 
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpFoundation\RequestStack;
 
 /**
  * Filter form for the facilitator stats report.
  */
 class StatsFilterForm extends FormBase {
+
+  public function __construct(
+    protected readonly RequestStack $requestStack,
+  ) {}
+
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container): static {
+    return new static(
+      $container->get('request_stack'),
+    );
+  }
 
   /**
    * {@inheritdoc}
@@ -75,9 +90,9 @@ class StatsFilterForm extends FormBase {
     $end = $form_state->getValue('end');
     $purpose = $form_state->getValue('purpose');
     $include_cancelled = $form_state->getValue('include_cancelled');
-    $request = \Drupal::request();
-    $current_sort = $request->query->get('sort');
-    $current_order = $request->query->get('order');
+    $request = $this->requestStack->getCurrentRequest();
+    $current_sort = $request?->query->get('sort');
+    $current_order = $request?->query->get('order');
 
     if (!empty($start)) {
       $params['start'] = $start;
