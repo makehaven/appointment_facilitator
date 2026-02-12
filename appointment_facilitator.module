@@ -252,6 +252,17 @@ function appointment_facilitator_cron(): void {
 }
 
 /**
+ * Implements hook_page_attachments().
+ *
+ * Exposes the configured site timezone so inline appointment display scripts
+ * can format times consistently across client browsers.
+ */
+function appointment_facilitator_page_attachments(array &$attachments): void {
+  $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $attachments['#attached']['drupalSettings']['appointment_facilitator']['siteTimezone'] = $site_timezone;
+}
+
+/**
  * Populates the Smart Date timerange from legacy slot selections.
  */
 function _appointment_facilitator_populate_timerange_from_slots(NodeInterface $node): void {
@@ -677,9 +688,22 @@ function _appointment_facilitator_normalize_date(?string $value): ?string {
   if ($value === '') {
     return NULL;
   }
-  $timestamp = strtotime($value);
-  if ($timestamp === FALSE) {
+
+  $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $timezone = new \DateTimeZone($timezone_name);
+
+  try {
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+      $date = new \DateTimeImmutable($value . ' 00:00:00', $timezone);
+    }
+    else {
+      $date = new \DateTimeImmutable($value);
+      $date = $date->setTimezone($timezone);
+    }
+  }
+  catch (\Exception $e) {
     return NULL;
   }
-  return date('Y-m-d', $timestamp);
+
+  return $date->format('Y-m-d');
 }

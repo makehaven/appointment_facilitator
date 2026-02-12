@@ -2,6 +2,7 @@
 
 namespace Drupal\appointment_facilitator\Service;
 
+use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Datetime\DrupalDateTime;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
@@ -21,6 +22,7 @@ class AppointmentStats {
     protected readonly EntityTypeManagerInterface $entityTypeManager,
     protected readonly EntityFieldManagerInterface $entityFieldManager,
     LoggerChannelFactoryInterface $loggerFactory,
+    protected readonly CacheBackendInterface $cacheBackend,
   ) {
     $this->logger = $loggerFactory->get('appointment_facilitator');
   }
@@ -29,6 +31,11 @@ class AppointmentStats {
    * Builds aggregated statistics for appointments.
    */
   public function summarize(?DrupalDateTime $start = NULL, ?DrupalDateTime $end = NULL, array $options = []): array {
+    $cache_id = $this->buildSummaryCacheId($start, $end, $options);
+    if ($cache = $this->cacheBackend->get($cache_id)) {
+      return $cache->data;
+    }
+
     $summary = [
       'total_appointments' => 0,
       'total_badge_appointments' => 0,
@@ -323,7 +330,40 @@ class AppointmentStats {
       }
     }
 
+    $this->cacheBackend->set(
+      $cache_id,
+      $summary,
+      \Drupal::time()->getRequestTime() + 300,
+      [
+        'node_list',
+        'node_list:appointment',
+        'config:appointment_facilitator.settings',
+        'config:system.date',
+        'access_control_log_list',
+      ]
+    );
+
     return $summary;
+  }
+
+  /**
+   * Builds a deterministic cache key for summary requests.
+   */
+  protected function buildSummaryCacheId(?DrupalDateTime $start, ?DrupalDateTime $end, array $options): string {
+    $normalized_options = $options;
+    ksort($normalized_options);
+
+    // Bucket current time so term-based rates stay reasonably fresh.
+    $time_bucket = (int) floor(\Drupal::time()->getRequestTime() / 300);
+
+    $parts = [
+      'start' => $start?->format('Y-m-d H:i:s') ?? '',
+      'end' => $end?->format('Y-m-d H:i:s') ?? '',
+      'options' => $normalized_options,
+      'time_bucket' => $time_bucket,
+    ];
+
+    return 'appointment_facilitator:summary:' . hash('sha256', serialize($parts));
   }
 
   protected function loadArrivalPresence(array $facilitators): ?array {

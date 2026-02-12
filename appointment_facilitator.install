@@ -243,10 +243,10 @@ function appointment_facilitator_ensure_fields(string $badges_vid, ?string $prof
       'type' => 'list_string',
       'settings' => [
         'allowed_values' => [
-          ['value' => 'on_time', 'label' => 'On time'],
-          ['value' => 'late_grace', 'label' => 'Late (grace)'],
-          ['value' => 'late', 'label' => 'Late'],
-          ['value' => 'missed', 'label' => 'Missed'],
+          'on_time' => 'On time',
+          'late_grace' => 'Late (grace)',
+          'late' => 'Late',
+          'missed' => 'Missed',
         ],
       ],
       'cardinality' => 1,
