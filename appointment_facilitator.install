@@ -236,6 +236,51 @@ function appointment_facilitator_ensure_fields(string $badges_vid, ?string $prof
     ])->save();
   }
 
+  if (!FieldStorageConfig::loadByName('node', 'field_facilitator_arrival_status')) {
+    FieldStorageConfig::create([
+      'field_name' => 'field_facilitator_arrival_status',
+      'entity_type' => 'node',
+      'type' => 'list_string',
+      'settings' => [
+        'allowed_values' => [
+          ['value' => 'on_time', 'label' => 'On time'],
+          ['value' => 'late_grace', 'label' => 'Late (grace)'],
+          ['value' => 'late', 'label' => 'Late'],
+          ['value' => 'missed', 'label' => 'Missed'],
+        ],
+      ],
+      'cardinality' => 1,
+    ])->save();
+  }
+  if (!FieldConfig::loadByName('node', 'appointment', 'field_facilitator_arrival_status')) {
+    FieldConfig::create([
+      'field_name' => 'field_facilitator_arrival_status',
+      'entity_type' => 'node',
+      'bundle' => 'appointment',
+      'label' => 'Facilitator arrival status',
+    ])->save();
+  }
+
+  if (!FieldStorageConfig::loadByName('node', 'field_facilitator_arrival_time')) {
+    FieldStorageConfig::create([
+      'field_name' => 'field_facilitator_arrival_time',
+      'entity_type' => 'node',
+      'type' => 'datetime',
+      'settings' => [
+        'datetime_type' => 'datetime',
+      ],
+      'cardinality' => 1,
+    ])->save();
+  }
+  if (!FieldConfig::loadByName('node', 'appointment', 'field_facilitator_arrival_time')) {
+    FieldConfig::create([
+      'field_name' => 'field_facilitator_arrival_time',
+      'entity_type' => 'node',
+      'bundle' => 'appointment',
+      'label' => 'Facilitator first scan time',
+    ])->save();
+  }
+
   // Badge capacity on taxonomy terms (Badges vocabulary).
   if ($badges_vid && \Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary')->load($badges_vid)) {
     if (!FieldStorageConfig::loadByName('taxonomy_term', 'field_badge_capacity')) {
@@ -293,6 +338,12 @@ function appointment_facilitator_ensure_displays(?string $badges_vid = 'badges',
     if ($fd->getComponent('field_appointment_attendees') === NULL) {
       $fd->setComponent('field_appointment_attendees', ['type' => 'entity_reference_autocomplete', 'weight' => -8, 'region' => 'content']);
     }
+    if ($fd->getComponent('field_facilitator_arrival_status') === NULL) {
+      $fd->setComponent('field_facilitator_arrival_status', ['type' => 'options_select', 'weight' => 98, 'region' => 'content']);
+    }
+    if ($fd->getComponent('field_facilitator_arrival_time') === NULL) {
+      $fd->setComponent('field_facilitator_arrival_time', ['type' => 'datetime_default', 'weight' => 99, 'region' => 'content']);
+    }
     // Remove the old capacity field if it exists on the display.
     if ($fd->getComponent('field_appointment_capacity') !== NULL) {
       $fd->removeComponent('field_appointment_capacity');
@@ -304,6 +355,12 @@ function appointment_facilitator_ensure_displays(?string $badges_vid = 'badges',
   if ($vd = $em->getStorage('entity_view_display')->load('node.appointment.default')) {
     if ($vd->getComponent('field_appointment_attendees') === NULL) {
       $vd->setComponent('field_appointment_attendees', ['type' => 'entity_reference_label', 'label' => 'above', 'weight' => -8, 'settings' => ['link' => TRUE]]);
+    }
+    if ($vd->getComponent('field_facilitator_arrival_status') === NULL) {
+      $vd->setComponent('field_facilitator_arrival_status', ['type' => 'list_default', 'label' => 'above', 'weight' => 98, 'region' => 'content']);
+    }
+    if ($vd->getComponent('field_facilitator_arrival_time') === NULL) {
+      $vd->setComponent('field_facilitator_arrival_time', ['type' => 'datetime_default', 'label' => 'above', 'weight' => 99, 'region' => 'content']);
     }
     // Remove the old capacity field if it exists on the display.
     if ($vd->getComponent('field_appointment_capacity') !== NULL) {
@@ -386,7 +443,7 @@ function appointment_facilitator_requirements($phase) {
 
   // Check appointment fields.
   $need = [];
-  foreach (['field_appointment_timerange', 'field_appointment_attendees'] as $fname) {
+  foreach (['field_appointment_timerange', 'field_appointment_attendees', 'field_facilitator_arrival_status', 'field_facilitator_arrival_time'] as $fname) {
     if (!\Drupal\field\Entity\FieldConfig::loadByName('node', 'appointment', $fname)) {
       $need[] = $fname;
     }
@@ -535,4 +592,16 @@ function appointment_facilitator_update_9016() {
   }
 
   return t('Fixed @count menu link entities with invalid icon options.', ['@count' => $count]);
+}
+
+/**
+ * Update: Ensure facilitator arrival fields and displays exist.
+ */
+function appointment_facilitator_update_9017() {
+  $conf = \Drupal::config('appointment_facilitator.settings');
+  $badges = $conf->get('badges_vocab_machine_name') ?: 'badges';
+  $bundle = $conf->get('facilitator_profile_bundle') ?: 'coordinator';
+
+  appointment_facilitator_ensure_fields($badges, $bundle);
+  appointment_facilitator_ensure_displays($badges, $bundle);
 }

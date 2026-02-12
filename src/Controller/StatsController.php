@@ -98,6 +98,7 @@ class StatsController extends ControllerBase {
       Markup::create($this->t('<strong>Active days</strong>: Distinct calendar days with at least one appointment inside the current filters.')),
       Markup::create($this->t('<strong>Arrival days</strong>: Appointment days where the facilitator has any access-control log entry that day (door/tool usage).')),
       Markup::create($this->t('<strong>Arrival status</strong>: Per-appointment status derived from access logs when configured (on time, grace late, late, missed).')),
+      Markup::create($this->t('<strong>Late % / Missed %</strong>: Calculated from appointments that already have an arrival status value.')),
       Markup::create($this->t('<strong>Result mix (set)</strong>: Percentages ignore appointments without a recorded result; counts are shown in parentheses.')),
       Markup::create($this->t('<strong>Cancelled</strong>: Appointments whose status is <em>canceled</em>.')),
     ];
@@ -210,6 +211,8 @@ class StatsController extends ControllerBase {
       'attendees',
       'feedback_rate',
       'arrival_rate',
+      'late_rate',
+      'missed_rate',
       'arrival_days',
       'appointments_per_week',
       'appointments_per_month',
@@ -239,6 +242,8 @@ class StatsController extends ControllerBase {
       'badges' => $this->t('Badges selected'),
       'feedback_rate' => $this->t('Evaluation %'),
       'arrival_rate' => $this->t('Arrival %'),
+      'late_rate' => $this->t('Late %'),
+      'missed_rate' => $this->t('Missed %'),
       'arrival_days' => $this->t('Arrival days'),
       'appointments_per_week' => $this->t('Per week'),
       'appointments_per_month' => $this->t('Per month'),
@@ -260,6 +265,8 @@ class StatsController extends ControllerBase {
       'badges',
       'feedback_rate',
       'arrival_rate',
+      'late_rate',
+      'missed_rate',
       'arrival_days',
       'appointments_per_week',
       'appointments_per_month',
@@ -326,6 +333,14 @@ class StatsController extends ControllerBase {
           $comparison = $a[$sort_key] <=> $b[$sort_key];
           break;
 
+        case 'late_rate':
+          $comparison = ($this->calculateLateRate($a) ?? -1) <=> ($this->calculateLateRate($b) ?? -1);
+          break;
+
+        case 'missed_rate':
+          $comparison = ($this->calculateMissedRate($a) ?? -1) <=> ($this->calculateMissedRate($b) ?? -1);
+          break;
+
         case 'latest':
           $time_a = $a['latest'] instanceof \Drupal\Core\Datetime\DrupalDateTime ? $a['latest']->getTimestamp() : 0;
           $time_b = $b['latest'] instanceof \Drupal\Core\Datetime\DrupalDateTime ? $b['latest']->getTimestamp() : 0;
@@ -370,6 +385,8 @@ class StatsController extends ControllerBase {
         'badges' => ['data' => $data['badges']],
         'feedback_rate' => ['data' => $this->formatPercent($data['feedback_rate'])],
         'arrival_rate' => ['data' => $this->formatPercent($data['arrival_rate'])],
+        'late_rate' => ['data' => $this->formatPercent($this->calculateLateRate($data))],
+        'missed_rate' => ['data' => $this->formatPercent($this->calculateMissedRate($data))],
         'arrival_days' => ['data' => $this->formatRate($data['arrival_days'])],
         'appointments_per_week' => ['data' => $this->formatRate($data['appointments_per_week'])],
         'appointments_per_month' => ['data' => $this->formatRate($data['appointments_per_month'])],
@@ -463,6 +480,42 @@ class StatsController extends ControllerBase {
     }
     $value = (float) $value;
     return $value . '%';
+  }
+
+  /**
+   * Calculates late percentage from arrival status counts.
+   */
+  protected function calculateLateRate(array $facilitator): ?float {
+    $counts = $facilitator['arrival_status_counts'] ?? [];
+    if (!$counts || !is_array($counts)) {
+      return NULL;
+    }
+
+    $evaluated = array_sum($counts);
+    if ($evaluated <= 0) {
+      return NULL;
+    }
+
+    $late_total = (int) ($counts['late'] ?? 0) + (int) ($counts['late_grace'] ?? 0) + (int) ($counts['missed'] ?? 0);
+    return round(($late_total / $evaluated) * 100, 1);
+  }
+
+  /**
+   * Calculates missed percentage from arrival status counts.
+   */
+  protected function calculateMissedRate(array $facilitator): ?float {
+    $counts = $facilitator['arrival_status_counts'] ?? [];
+    if (!$counts || !is_array($counts)) {
+      return NULL;
+    }
+
+    $evaluated = array_sum($counts);
+    if ($evaluated <= 0) {
+      return NULL;
+    }
+
+    $missed_total = (int) ($counts['missed'] ?? 0);
+    return round(($missed_total / $evaluated) * 100, 1);
   }
 
   protected function formatResultPercentages(array $counts, array $labels, bool $as_list = FALSE): string|array {
