@@ -9,3 +9,9 @@ facilitator_dashboard:
   css:
     theme:
       css/facilitator-dashboard.css: {}
+
+stats_report:
+  version: 1.x
+  css:
+    theme:
+      css/stats-report.css: {}

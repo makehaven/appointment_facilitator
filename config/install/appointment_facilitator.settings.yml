@@ -2,5 +2,5 @@ show_always_join_cta: false
 badges_vocab_machine_name: badges
 facilitator_profile_bundle: coordinator
 arrival_grace_minutes: 5
-arrival_pre_window_minutes: 30
-arrival_backfill_days: 7
+arrival_pre_window_minutes: 240
+arrival_backfill_days: 60

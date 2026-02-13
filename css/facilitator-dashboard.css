@@ -152,6 +152,39 @@
   margin-bottom: 0.4rem;
 }
 
+/* Fix operations dropdown overflow */
+.appointment-facilitator-dashboard .dropbutton-wrapper {
+  min-width: 100px;
+}
+
+.appointment-facilitator-dashboard .dropbutton-widget {
+  position: relative;
+}
+
+.appointment-facilitator-dashboard .dropbutton .dropbutton-action a,
+.appointment-facilitator-dashboard .dropbutton .dropbutton-action button {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.appointment-facilitator-dashboard .dropbutton-multiple .dropbutton-widget {
+  padding-right: 2rem;
+}
+
+.appointment-facilitator-dashboard .dropbutton-toggle button {
+  padding: 0.4rem 0.5rem;
+}
+
+/* Ensure dropdown menu doesn't overflow and is accessible */
+.appointment-facilitator-dashboard .dropbutton .secondary-action {
+  left: auto;
+  right: 0;
+  min-width: 120px;
+  max-width: 200px;
+  z-index: 100;
+}
+
 @media (max-width: 1024px) {
   .appointment-facilitator-dashboard .afd-stat-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));

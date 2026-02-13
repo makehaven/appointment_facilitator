@@ -73,6 +73,11 @@ class StatsController extends ControllerBase {
 
     return [
       '#type' => 'container',
+      '#attached' => [
+        'library' => [
+          'appointment_facilitator/stats_report',
+        ],
+      ],
       'filter' => $this->statsFormBuilder->getForm(StatsFilterForm::class, $filters, $purpose_labels),
       'summary' => [
         '#theme' => 'item_list',
@@ -81,30 +86,31 @@ class StatsController extends ControllerBase {
         '#attributes' => ['class' => ['appointment-facilitator-summary']],
       ],
       'definitions' => $this->buildDefinitions($use_facilitator_terms),
-      'table' => [
-        '#type' => 'table',
-        '#header' => $header,
-        '#rows' => $rows,
-        '#empty' => $this->t('No appointments found for the selected filters.'),
-        '#attributes' => ['class' => ['appointment-facilitator-table']],
+      'table_wrapper' => [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['appointment-facilitator-table-wrapper']],
+        'table' => [
+          '#type' => 'table',
+          '#header' => $header,
+          '#rows' => $rows,
+          '#empty' => $this->t('No appointments found for the selected filters.'),
+          '#attributes' => ['class' => ['appointment-facilitator-table']],
+        ],
       ],
     ];
   }
 
   protected function buildDefinitions(bool $use_facilitator_terms): array {
     $items = [
-      Markup::create($this->t('<strong>Badge sessions</strong>: Appointments where at least one badge was selected.')),
-      Markup::create($this->t('<strong>Badges selected</strong>: Total number of badge selections across those appointments (one appointment can add several).')),
-      Markup::create($this->t('<strong>Active days</strong>: Distinct calendar days with at least one appointment inside the current filters.')),
-      Markup::create($this->t('<strong>Arrival days</strong>: Appointment days where the facilitator has any access-control log entry that day (door/tool usage).')),
-      Markup::create($this->t('<strong>Arrival status</strong>: Per-appointment status derived from access logs when configured (on time, grace late, late, missed).')),
-      Markup::create($this->t('<strong>Late % / Missed %</strong>: Calculated from appointments that already have an arrival status value.')),
-      Markup::create($this->t('<strong>Result mix (set)</strong>: Percentages ignore appointments without a recorded result; counts are shown in parentheses.')),
-      Markup::create($this->t('<strong>Cancelled</strong>: Appointments whose status is <em>canceled</em>.')),
+      Markup::create($this->t('<strong>Sessions</strong>: Total appointments hosted in the date range.')),
+      Markup::create($this->t('<strong>Evaluation Complete %</strong>: Percentage of appointments with feedback submitted.')),
+      Markup::create($this->t('<strong>Evaluation Results</strong>: Distribution of appointment outcomes (successful, check-in, other, etc.) - percentages exclude appointments without results.')),
+      Markup::create($this->t('<strong>Arrival %</strong>: Percentage of appointments where facilitator was detected via access logs (scans up to 4 hours before through end of session).')),
+      Markup::create($this->t('<strong>Late %</strong>: Percentage of tracked appointments where arrival was after start time (includes grace period and late).')),
+      Markup::create($this->t('<strong>Missed %</strong>: Percentage of tracked appointments with no access log scan found.')),
+      Markup::create($this->t('<strong>Details</strong>: Compact view of attendees served, badge sessions, cancelled count, active days, and top badges issued.')),
+      Markup::create($this->t('<strong>Arrival Window</strong>: System checks for access logs from 4 hours before appointment start through the end time. This accommodates facilitators who arrive early for setup.')),
     ];
-    if ($use_facilitator_terms) {
-      $items[] = Markup::create($this->t('<strong>Per-week / per-month</strong>: Based on the facilitator’s current or most recent term, capped at today (future time does not reduce averages).'));
-    }
 
     return [
       '#theme' => 'item_list',
@@ -122,7 +128,15 @@ class StatsController extends ControllerBase {
     $purpose = $request->query->get('purpose');
     $include_cancelled = (bool) $request->query->get('include_cancelled');
 
-    $start_date = $start_input ? $this->createDate($start_input . ' 00:00:00') : NULL;
+    // Default to last 6 months if no start date provided.
+    if (!$start_input) {
+      $start_date = new DrupalDateTime('-6 months');
+      $start_date->setTime(0, 0, 0);
+    }
+    else {
+      $start_date = $this->createDate($start_input . ' 00:00:00');
+    }
+
     $end_date = $end_input ? $this->createDate($end_input . ' 23:59:59') : NULL;
 
     if ($start_date && $end_date && $start_date > $end_date) {
@@ -236,42 +250,24 @@ class StatsController extends ControllerBase {
   protected function buildTableHeader(Request $request, string $sort_key, string $sort_direction): array {
     $columns = [
       'name' => $this->t('Facilitator'),
-      'appointments' => $this->t('Appointments'),
-      'attendees' => $this->t('Attendees'),
-      'badge_sessions' => $this->t('Badge sessions'),
-      'badges' => $this->t('Badges selected'),
-      'feedback_rate' => $this->t('Evaluation %'),
+      'appointments' => $this->t('Sessions'),
+      'feedback_rate' => $this->t('Evaluation Complete %'),
+      'result' => $this->t('Evaluation Results'),
       'arrival_rate' => $this->t('Arrival %'),
       'late_rate' => $this->t('Late %'),
       'missed_rate' => $this->t('Missed %'),
-      'arrival_days' => $this->t('Arrival days'),
-      'appointments_per_week' => $this->t('Per week'),
-      'appointments_per_month' => $this->t('Per month'),
-      'appointment_day_count' => $this->t('Active days'),
-      'cancelled' => $this->t('Cancelled'),
-      'purpose' => $this->t('Purpose mix'),
-      'result' => $this->t('Result mix'),
-      'status' => $this->t('Status mix'),
-      'arrival_status' => $this->t('Arrival status'),
-      'top_badges' => $this->t('Top badges'),
-      'latest' => $this->t('Latest appointment'),
+      'meta' => $this->t('Details'),
+      'latest' => $this->t('Latest'),
     ];
 
     $sortable = [
       'name',
       'appointments',
-      'attendees',
-      'badge_sessions',
-      'badges',
       'feedback_rate',
       'arrival_rate',
       'late_rate',
       'missed_rate',
-      'arrival_days',
-      'appointments_per_week',
-      'appointments_per_month',
-      'appointment_day_count',
-      'cancelled',
+      'latest',
     ];
 
     $header = [];
@@ -377,26 +373,43 @@ class StatsController extends ControllerBase {
     foreach ($facilitators as $data) {
       $name_render = $this->buildFacilitatorNameRenderable($data['uid'], $user_labels);
 
+      // Build compact details cell.
+      $details_items = [];
+      $details_items[] = $this->t('Attendees: @count', ['@count' => $data['attendees']]);
+      if ($data['badge_sessions'] > 0) {
+        $details_items[] = $this->t('Badge sessions: @count', ['@count' => $data['badge_sessions']]);
+      }
+      if ($data['cancelled'] > 0) {
+        $details_items[] = $this->t('Cancelled: @count', ['@count' => $data['cancelled']]);
+      }
+      $details_items[] = $this->t('Active days: @count', ['@count' => $data['appointment_day_count']]);
+
+      if (!empty($data['badges_breakdown'])) {
+        $top_badges = array_slice($data['badges_breakdown'], 0, 3, TRUE);
+        $badge_names = [];
+        foreach ($top_badges as $tid => $count) {
+          $badge_names[] = ($badge_labels[$tid] ?? 'Badge ' . $tid) . ' (' . $count . ')';
+        }
+        if ($badge_names) {
+          $details_items[] = $this->t('Top badges: @badges', ['@badges' => implode(', ', $badge_names)]);
+        }
+      }
+
       $rows[] = [
         'name' => ['data' => $name_render],
         'appointments' => ['data' => $data['appointments']],
-        'attendees' => ['data' => $data['attendees']],
-        'badge_sessions' => ['data' => $data['badge_sessions']],
-        'badges' => ['data' => $data['badges']],
         'feedback_rate' => ['data' => $this->formatPercent($data['feedback_rate'])],
+        'result' => ['data' => $this->formatResultPercentages($data['result_counts'], $result_labels, TRUE)],
         'arrival_rate' => ['data' => $this->formatPercent($data['arrival_rate'])],
         'late_rate' => ['data' => $this->formatPercent($this->calculateLateRate($data))],
         'missed_rate' => ['data' => $this->formatPercent($this->calculateMissedRate($data))],
-        'arrival_days' => ['data' => $this->formatRate($data['arrival_days'])],
-        'appointments_per_week' => ['data' => $this->formatRate($data['appointments_per_week'])],
-        'appointments_per_month' => ['data' => $this->formatRate($data['appointments_per_month'])],
-        'appointment_day_count' => ['data' => $data['appointment_day_count']],
-        'cancelled' => ['data' => $data['cancelled']],
-        'purpose' => ['data' => $this->formatDistributionList($data['purpose_counts'], $purpose_labels)],
-        'result' => ['data' => $this->formatResultPercentages($data['result_counts'], $result_labels, TRUE)],
-        'status' => ['data' => $this->formatDistributionList($data['status_counts'], $status_labels, TRUE)],
-        'arrival_status' => ['data' => $this->formatDistributionList($data['arrival_status_counts'], $arrival_status_labels, TRUE)],
-        'top_badges' => ['data' => $this->formatDistributionList($data['badges_breakdown'], $badge_labels)],
+        'meta' => [
+          'data' => [
+            '#theme' => 'item_list',
+            '#items' => $details_items,
+            '#attributes' => ['class' => ['appointment-facilitator-meta-list']],
+          ],
+        ],
         'latest' => ['data' => $this->formatLatest($data['latest'])],
       ];
     }

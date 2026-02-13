@@ -1,0 +1,161 @@
+/**
+ * Styles for appointment facilitator admin stats report.
+ */
+
+.appointment-facilitator-summary {
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.appointment-facilitator-summary li {
+  margin-bottom: 0.5rem;
+}
+
+.appointment-facilitator-definitions {
+  background: #fff9e6;
+  border: 1px solid #f0e5c2;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.appointment-facilitator-definitions li {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.appointment-facilitator-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Wrapper for horizontal scrolling on narrow screens */
+.appointment-facilitator-table-wrapper {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+}
+
+.appointment-facilitator-table thead th {
+  background: #f2f6fb;
+  color: #5f6b7a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.7rem 0.6rem;
+  border-bottom: 2px solid #dbe3ef;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.appointment-facilitator-table thead th a {
+  color: #5f6b7a;
+  text-decoration: none;
+}
+
+.appointment-facilitator-table thead th a:hover {
+  color: #0f4c81;
+}
+
+.appointment-facilitator-table tbody td {
+  padding: 0.65rem 0.6rem;
+  border-bottom: 1px solid #edf2f8;
+  vertical-align: top;
+  font-size: 0.9rem;
+}
+
+.appointment-facilitator-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.appointment-facilitator-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Name column should be sticky on horizontal scroll */
+.appointment-facilitator-table tbody td:first-child,
+.appointment-facilitator-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 5;
+  box-shadow: 2px 0 4px rgba(0, 0, 0, 0.05);
+}
+
+.appointment-facilitator-table thead th:first-child {
+  background: #f2f6fb;
+  z-index: 15;
+}
+
+.appointment-facilitator-table tbody tr:hover td:first-child {
+  background: #f8fbff;
+}
+
+/* Compact list styles for nested data */
+.appointment-facilitator-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.appointment-facilitator-list__item {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  margin-bottom: 0.2rem;
+}
+
+/* Meta details list - compact styling */
+.appointment-facilitator-meta-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #5f6b7a;
+}
+
+.appointment-facilitator-meta-list li {
+  margin-bottom: 0.25rem;
+  padding: 0;
+}
+
+/* Ensure filter form is styled nicely */
+.appointment-facilitator-filter {
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.appointment-facilitator-filter .form-item {
+  margin-bottom: 1rem;
+}
+
+.appointment-facilitator-filter .form-actions {
+  margin-top: 1rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  .appointment-facilitator-table {
+    font-size: 0.85rem;
+  }
+
+  .appointment-facilitator-table thead th,
+  .appointment-facilitator-table tbody td {
+    padding: 0.5rem 0.4rem;
+  }
+}
