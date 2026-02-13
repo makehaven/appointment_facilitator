@@ -13,8 +13,10 @@ use Symfony\Component\HttpFoundation\RequestStack;
 class StatsFilterForm extends FormBase {
 
   public function __construct(
-    protected readonly RequestStack $requestStack,
-  ) {}
+    RequestStack $requestStack,
+  ) {
+    $this->requestStack = $requestStack;
+  }
 
   /**
    * {@inheritdoc}
