@@ -1,0 +1,100 @@
+.appointment-facilitator-self-stats {
+  --afs-bg: #f6f8fb;
+  --afs-card: #ffffff;
+  --afs-text: #1c2431;
+  --afs-muted: #5f6b7a;
+  --afs-border: #dbe3ef;
+  --afs-accent: #0f4c81;
+  --afs-shadow: 0 12px 28px rgba(25, 43, 66, 0.08);
+  background: linear-gradient(180deg, #f8fafc 0%, #eef3f9 100%);
+  color: var(--afs-text);
+  border: 1px solid var(--afs-border);
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+.appointment-facilitator-self-stats > h2 {
+  margin: 0 0 1rem;
+  font-size: clamp(1.7rem, 3vw, 2.2rem);
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.appointment-facilitator-self-stats .afs-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.appointment-facilitator-self-stats .afs-card {
+  background: var(--afs-card);
+  border: 1px solid var(--afs-border);
+  border-radius: 14px;
+  box-shadow: var(--afs-shadow);
+  padding: 1rem;
+  overflow: hidden;
+}
+
+.appointment-facilitator-self-stats .afs-card-summary {
+  grid-column: span 7;
+}
+
+.appointment-facilitator-self-stats .afs-card-term {
+  grid-column: span 5;
+}
+
+.appointment-facilitator-self-stats .afs-card-comparison {
+  grid-column: span 12;
+}
+
+.appointment-facilitator-self-stats .afs-card h3 {
+  margin: 0 0 0.8rem;
+  font-size: 1.15rem;
+  color: var(--afs-accent);
+  letter-spacing: 0.02em;
+}
+
+.appointment-facilitator-self-stats table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+}
+
+.appointment-facilitator-self-stats thead th {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--afs-muted);
+  background: #f2f6fb;
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid var(--afs-border);
+}
+
+.appointment-facilitator-self-stats tbody td {
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #edf2f8;
+  vertical-align: top;
+}
+
+.appointment-facilitator-self-stats tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.appointment-facilitator-self-stats tbody td:last-child {
+  font-weight: 700;
+}
+
+.appointment-facilitator-self-stats .appointment-facilitator-summary-table tbody td:first-child {
+  color: var(--afs-muted);
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .appointment-facilitator-self-stats .afs-card-summary,
+  .appointment-facilitator-self-stats .afs-card-term,
+  .appointment-facilitator-self-stats .afs-card-comparison {
+    grid-column: span 12;
+  }
+}

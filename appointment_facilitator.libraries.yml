@@ -1,0 +1,11 @@
+self_stats:
+  version: 1.x
+  css:
+    theme:
+      css/self-stats.css: {}
+
+facilitator_dashboard:
+  version: 1.x
+  css:
+    theme:
+      css/facilitator-dashboard.css: {}

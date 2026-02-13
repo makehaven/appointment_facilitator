@@ -6,7 +6,6 @@ use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
-use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -15,7 +14,6 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class FacilitatorStatsController extends ControllerBase {
 
   public function __construct(
-    protected readonly EntityTypeManagerInterface $entityTypeManagerService,
     protected readonly EntityFieldManagerInterface $entityFieldManagerService,
     protected readonly DateFormatterInterface $dateFormatterService,
     protected readonly AppointmentStats $statsHelper,
@@ -26,7 +24,6 @@ class FacilitatorStatsController extends ControllerBase {
    */
   public static function create(ContainerInterface $container): static {
     return new static(
-      $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
       $container->get('date.formatter'),
       $container->get('appointment_facilitator.stats'),
@@ -39,20 +36,32 @@ class FacilitatorStatsController extends ControllerBase {
   public function overview(): array {
     $account = $this->currentUser();
     $uid = (int) $account->id();
-    $user = $this->entityTypeManagerService->getStorage('user')->load($uid);
 
-    $summary = $this->statsHelper->summarize(NULL, NULL, [
-      'host_id' => $uid,
-      'include_cancelled' => TRUE,
-      'use_facilitator_terms' => TRUE,
-    ]);
     $overall = $this->statsHelper->summarize(NULL, NULL, [
       'include_cancelled' => TRUE,
       'use_facilitator_terms' => TRUE,
     ]);
+    $lifetime_summary = $this->statsHelper->summarize(NULL, NULL, [
+      'host_id' => $uid,
+      'include_cancelled' => TRUE,
+      'use_facilitator_terms' => FALSE,
+    ]);
 
-    $facilitator = $summary['facilitators'][$uid] ?? $this->buildEmptyFacilitatorRow($uid);
-    $term = $this->statsHelper->getFacilitatorTermRange($uid);
+    $facilitator = $overall['facilitators'][$uid] ?? $this->buildEmptyFacilitatorRow($uid);
+    $lifetime = $lifetime_summary['facilitators'][$uid] ?? $this->buildEmptyFacilitatorRow($uid);
+    $term = NULL;
+    if (
+      $facilitator['term_start'] instanceof \DateTimeInterface
+      && $facilitator['term_end'] instanceof \DateTimeInterface
+    ) {
+      $term = [
+        'start' => $facilitator['term_start'],
+        'end' => $facilitator['term_end'],
+      ];
+    }
+    else {
+      $term = $this->statsHelper->getFacilitatorTermRange($uid);
+    }
 
     $summary_rows = [
       [$this->t('Appointments hosted'), $facilitator['appointments']],
@@ -117,47 +126,124 @@ class FacilitatorStatsController extends ControllerBase {
         $this->formatPercent($overall['facilitator_rate_averages']['arrival_rate'] ?? NULL),
       ],
     ];
+    $lifetime_latest = $this->t('—');
+    if ($lifetime['latest'] instanceof \DateTimeInterface) {
+      $lifetime_latest = $this->dateFormatterService->format($lifetime['latest']->getTimestamp(), 'custom', 'M j, Y g:i a');
+    }
 
-    $title = $user ? $this->t('Facilitator stats for @name', ['@name' => $user->getDisplayName()]) : $this->t('Facilitator stats');
+    $lifetime_rows = [
+      [$this->t('Appointments hosted'), $lifetime['appointments']],
+      [$this->t('Attendees served'), $lifetime['attendees']],
+      [$this->t('Badge sessions'), $lifetime['badge_sessions']],
+      [$this->t('Badges selected'), $lifetime['badges']],
+      [$this->t('Cancelled appointments'), $lifetime['cancelled']],
+      [
+        $this->t('Arrival days'),
+        $lifetime['arrival_days'] === NULL
+          ? $this->t('—')
+          : $this->t('@count of @total', [
+            '@count' => $lifetime['arrival_days'],
+            '@total' => $lifetime['appointment_day_count'],
+          ]),
+      ],
+      [$this->t('Arrival coverage'), $this->formatPercent($lifetime['arrival_rate'])],
+      [
+        $this->t('Evaluation completion'),
+        $this->t('@rate (@count)', [
+          '@rate' => $this->formatPercent($lifetime['feedback_rate']),
+          '@count' => $lifetime['feedback'],
+        ]),
+      ],
+      [$this->t('Latest appointment'), $lifetime_latest],
+    ];
+
+    $title = $this->t('Facilitator stats for @name', ['@name' => $account->getDisplayName()]);
 
     return [
       '#type' => 'container',
       '#title' => $title,
       '#attributes' => ['class' => ['appointment-facilitator-self-stats']],
-      'summary' => [
-        '#type' => 'html_tag',
-        '#tag' => 'h3',
-        '#value' => $this->t('Your term-to-date summary'),
-      ],
-      'summary_table' => [
-        '#type' => 'table',
-        '#header' => [$this->t('Metric'), $this->t('Value')],
-        '#rows' => $summary_rows,
-        '#attributes' => ['class' => ['appointment-facilitator-summary-table']],
-      ],
-      'term' => [
-        '#type' => 'html_tag',
-        '#tag' => 'h3',
-        '#value' => $this->t('Term range'),
-      ],
-      'term_table' => [
-        '#type' => 'table',
-        '#header' => [$this->t('Metric'), $this->t('Value')],
-        '#rows' => [
-          [$this->t('Current or most recent term'), $term_value],
+      '#attached' => [
+        'library' => [
+          'appointment_facilitator/self_stats',
         ],
-        '#attributes' => ['class' => ['appointment-facilitator-term-table']],
       ],
-      'comparisons' => [
-        '#type' => 'html_tag',
-        '#tag' => 'h3',
-        '#value' => $this->t('Org comparisons'),
+      '#cache' => [
+        'contexts' => ['user'],
+        'tags' => [
+          'node_list',
+          'node_list:appointment',
+          'config:appointment_facilitator.settings',
+          'config:system.date',
+          'access_control_log_list',
+        ],
+        'max-age' => 300,
       ],
-      'comparisons_table' => [
-        '#type' => 'table',
-        '#header' => [$this->t('Metric'), $this->t('Value')],
-        '#rows' => $comparison_rows,
-        '#attributes' => ['class' => ['appointment-facilitator-comparison-table']],
+      'grid' => [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['afs-grid']],
+        'summary_card' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afs-card', 'afs-card-summary']],
+          'summary' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Your term-to-date summary'),
+          ],
+          'summary_table' => [
+            '#type' => 'table',
+            '#header' => [$this->t('Metric'), $this->t('Value')],
+            '#rows' => $summary_rows,
+            '#attributes' => ['class' => ['appointment-facilitator-summary-table']],
+          ],
+        ],
+        'term_card' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afs-card', 'afs-card-term']],
+          'term' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Term range'),
+          ],
+          'term_table' => [
+            '#type' => 'table',
+            '#header' => [$this->t('Metric'), $this->t('Value')],
+            '#rows' => [
+              [$this->t('Current or most recent term'), $term_value],
+            ],
+            '#attributes' => ['class' => ['appointment-facilitator-term-table']],
+          ],
+        ],
+        'comparisons_card' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afs-card', 'afs-card-comparison']],
+          'comparisons' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Org comparisons'),
+          ],
+          'comparisons_table' => [
+            '#type' => 'table',
+            '#header' => [$this->t('Metric'), $this->t('Value')],
+            '#rows' => $comparison_rows,
+            '#attributes' => ['class' => ['appointment-facilitator-comparison-table']],
+          ],
+        ],
+        'lifetime_card' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afs-card', 'afs-card-comparison']],
+          'lifetime' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Lifetime summary (all-time activity)'),
+          ],
+          'lifetime_table' => [
+            '#type' => 'table',
+            '#header' => [$this->t('Metric'), $this->t('Value')],
+            '#rows' => $lifetime_rows,
+            '#attributes' => ['class' => ['appointment-facilitator-lifetime-table']],
+          ],
+        ],
       ],
     ];
   }

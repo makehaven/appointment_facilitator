@@ -15,6 +15,13 @@ appointment_facilitator.stats:
 appointment_facilitator.self_stats:
   title: 'My facilitator stats'
   description: 'View your appointment stats'
-  route_name: appointment_facilitator.self_stats
+  route_name: appointment_facilitator.self_stats_details
   menu_name: account
   weight: 51
+
+appointment_facilitator.dashboard:
+  title: 'Facilitator dashboard'
+  description: 'Open your action-oriented facilitator dashboard'
+  route_name: appointment_facilitator.dashboard
+  menu_name: account
+  weight: 50
