@@ -13,6 +13,7 @@ use Drupal\Core\Form\FormBuilderInterface;
 use Drupal\Core\Link;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
+use Drupal\node\NodeInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -59,8 +60,16 @@ class StatsController extends ControllerBase {
       'use_facilitator_terms' => $use_facilitator_terms,
     ]);
 
+    [$weekly_start, $weekly_end] = $this->buildLastSevenDaysRange();
+    $weekly_summary = $this->statsHelper->summarize($weekly_start, $weekly_end, [
+      'include_cancelled' => TRUE,
+      'use_facilitator_terms' => FALSE,
+    ]);
+    $weekly_issue_links = $this->loadWeeklyIssueLatestAppointments($weekly_start, $weekly_end);
+
     $badge_labels = $this->loadBadgeLabels(array_keys($summary['badge_ids']));
-    $user_labels = $this->loadUserLabels(array_keys($summary['facilitators']));
+    $all_uids = array_unique(array_merge(array_keys($summary['facilitators']), array_keys($weekly_summary['facilitators'])));
+    $user_labels = $this->loadUserLabels($all_uids);
     $purpose_labels = $this->getAllowedValues('field_appointment_purpose');
     $result_labels = $this->getAllowedValues('field_appointment_result');
     $status_labels = $this->getAllowedValues('field_appointment_status');
@@ -85,6 +94,13 @@ class StatsController extends ControllerBase {
         '#items' => $this->buildSummaryItems($summary, $purpose_labels, $result_labels, $status_labels),
         '#attributes' => ['class' => ['appointment-facilitator-summary']],
       ],
+      'weekly_findings' => $this->buildWeeklyFindings(
+        $weekly_summary,
+        $user_labels,
+        $weekly_start,
+        $weekly_end,
+        $weekly_issue_links
+      ),
       'definitions' => $this->buildDefinitions($use_facilitator_terms),
       'table_wrapper' => [
         '#type' => 'container',
@@ -98,6 +114,271 @@ class StatsController extends ControllerBase {
         ],
       ],
     ];
+  }
+
+  /**
+   * Builds an inclusive date range representing the most recent seven days.
+   */
+  protected function buildLastSevenDaysRange(): array {
+    $start = new DrupalDateTime('-6 days');
+    $start->setTime(0, 0, 0);
+
+    $end = new DrupalDateTime('now');
+    $end->setTime(23, 59, 59);
+
+    return [$start, $end];
+  }
+
+  /**
+   * Builds a quick list of facilitators with issue signals in the last 7 days.
+   */
+  protected function buildWeeklyFindings(array $summary, array $user_labels, DrupalDateTime $start, DrupalDateTime $end, array $weekly_issue_links): array {
+    $items = [];
+    $flagged = [];
+
+    foreach ($summary['facilitators'] as $facilitator) {
+      $status_counts = $facilitator['status_counts'] ?? [];
+      $result_counts = $facilitator['result_counts'] ?? [];
+      $arrival_counts = $facilitator['arrival_status_counts'] ?? [];
+
+      $removed_from_schedule = (int) ($status_counts['canceled'] ?? 0);
+      $cancelled = (int) ($status_counts['canceled'] ?? 0);
+      $no_show = (int) ($result_counts['volunteer_absent'] ?? 0);
+      $late = (int) ($arrival_counts['late'] ?? 0) + (int) ($arrival_counts['late_grace'] ?? 0);
+      $problems = (int) ($result_counts['met_unsuccesful'] ?? 0);
+
+      $total_flags = $removed_from_schedule + $no_show + $late + $problems;
+      if ($total_flags <= 0) {
+        continue;
+      }
+
+      $flagged[] = [
+        'uid' => (int) ($facilitator['uid'] ?? 0),
+        'total' => $total_flags,
+        'removed_from_schedule' => $removed_from_schedule,
+        'cancelled' => $cancelled,
+        'no_show' => $no_show,
+        'late' => $late,
+        'problems' => $problems,
+      ];
+    }
+
+    usort($flagged, function (array $a, array $b): int {
+      if ($a['total'] === $b['total']) {
+        return $a['uid'] <=> $b['uid'];
+      }
+      return $b['total'] <=> $a['total'];
+    });
+
+    foreach ($flagged as $record) {
+      $pieces = [];
+      if ($record['removed_from_schedule'] > 0) {
+        $pieces[] = $this->formatWeeklyIssuePiece(
+          (string) $this->t('session removed from schedule'),
+          $record['removed_from_schedule'],
+          $weekly_issue_links[$record['uid']]['removed_from_schedule'] ?? NULL
+        );
+      }
+      if ($record['no_show'] > 0) {
+        $pieces[] = $this->formatWeeklyIssuePiece(
+          (string) $this->t('no show'),
+          $record['no_show'],
+          $weekly_issue_links[$record['uid']]['no_show'] ?? NULL
+        );
+      }
+      if ($record['late'] > 0) {
+        $pieces[] = $this->formatWeeklyIssuePiece(
+          (string) $this->t('late'),
+          $record['late'],
+          $weekly_issue_links[$record['uid']]['late'] ?? NULL
+        );
+      }
+      if ($record['cancelled'] > 0) {
+        $pieces[] = $this->formatWeeklyIssuePiece(
+          (string) $this->t('cancelled'),
+          $record['cancelled'],
+          $weekly_issue_links[$record['uid']]['cancelled'] ?? NULL
+        );
+      }
+      if ($record['problems'] > 0) {
+        $pieces[] = $this->formatWeeklyIssuePiece(
+          (string) $this->t('problems'),
+          $record['problems'],
+          $weekly_issue_links[$record['uid']]['problems'] ?? NULL
+        );
+      }
+
+      $name = $this->buildFacilitatorName($record['uid'], $user_labels);
+      $items[] = Markup::create($this->t('@name', ['@name' => $name]) . ' (' . implode('; ', $pieces) . ')');
+    }
+
+    if (!$items) {
+      $items[] = $this->t('No facilitators were flagged for these issue types in the last seven days.');
+    }
+
+    return [
+      '#theme' => 'item_list',
+      '#title' => $this->t('Potential issues in last 7 days (@start to @end)', [
+        '@start' => $start->format('Y-m-d'),
+        '@end' => $end->format('Y-m-d'),
+      ]),
+      '#items' => $items,
+      '#attributes' => ['class' => ['appointment-facilitator-weekly-findings']],
+    ];
+  }
+
+  /**
+   * Formats one weekly issue summary with an optional appointment detail link.
+   */
+  protected function formatWeeklyIssuePiece(string $label, int $count, ?int $nid): string {
+    $text = (string) $this->t('@label: @count', [
+      '@label' => $label,
+      '@count' => $count,
+    ]);
+
+    if ($nid) {
+      $url = Url::fromRoute('entity.node.canonical', ['node' => $nid]);
+      $link = Link::fromTextAndUrl($this->t('latest details'), $url)->toString();
+      return $text . ' (' . $link . ')';
+    }
+
+    return $text;
+  }
+
+  /**
+   * Finds the latest appointment node id per facilitator and issue type.
+   */
+  protected function loadWeeklyIssueLatestAppointments(DrupalDateTime $start, DrupalDateTime $end): array {
+    $results = [];
+    $latest_timestamps = [];
+    $date_field = $this->resolveAppointmentDateField();
+
+    if (!$date_field) {
+      return $results;
+    }
+
+    $storage = $this->entityTypeManagerService->getStorage('node');
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'appointment')
+      ->condition('status', 1);
+
+    if ($date_field === 'field_appointment_timerange') {
+      $query->condition($date_field . '.value', $start->getTimestamp(), '>=');
+      $query->condition($date_field . '.value', $end->getTimestamp(), '<=');
+    }
+    else {
+      $query->condition($date_field . '.value', $start->format('Y-m-d'), '>=');
+      $query->condition($date_field . '.value', $end->format('Y-m-d'), '<=');
+    }
+
+    $nids = $query->execute();
+    if (!$nids) {
+      return $results;
+    }
+
+    /** @var \Drupal\node\NodeInterface[] $nodes */
+    $nodes = $storage->loadMultiple($nids);
+    foreach ($nodes as $node) {
+      $uid = $this->extractHostId($node) ?? 0;
+      $appointment_date = $this->extractDate($node);
+      $appointment_ts = $appointment_date ? $appointment_date->getTimestamp() : 0;
+
+      $status = $this->extractFieldValue($node, 'field_appointment_status');
+      if ($status === 'canceled') {
+        $this->trackLatestIssueNode($results, $latest_timestamps, $uid, 'removed_from_schedule', (int) $node->id(), $appointment_ts);
+        $this->trackLatestIssueNode($results, $latest_timestamps, $uid, 'cancelled', (int) $node->id(), $appointment_ts);
+      }
+
+      $result = $this->extractFieldValue($node, 'field_appointment_result');
+      if ($result === 'volunteer_absent') {
+        $this->trackLatestIssueNode($results, $latest_timestamps, $uid, 'no_show', (int) $node->id(), $appointment_ts);
+      }
+      if ($result === 'met_unsuccesful') {
+        $this->trackLatestIssueNode($results, $latest_timestamps, $uid, 'problems', (int) $node->id(), $appointment_ts);
+      }
+
+      $arrival = $this->extractFieldValue($node, 'field_facilitator_arrival_status');
+      if ($arrival === 'late' || $arrival === 'late_grace') {
+        $this->trackLatestIssueNode($results, $latest_timestamps, $uid, 'late', (int) $node->id(), $appointment_ts);
+      }
+    }
+
+    return $results;
+  }
+
+  /**
+   * Tracks the latest node id for a facilitator issue bucket.
+   */
+  protected function trackLatestIssueNode(array &$results, array &$latest_timestamps, int $uid, string $issue, int $nid, int $timestamp): void {
+    $current = $latest_timestamps[$uid][$issue] ?? NULL;
+    if ($current === NULL || $timestamp >= $current) {
+      $latest_timestamps[$uid][$issue] = $timestamp;
+      $results[$uid][$issue] = $nid;
+    }
+  }
+
+  /**
+   * Resolves the active appointment date field used for filtering.
+   */
+  protected function resolveAppointmentDateField(): ?string {
+    $definitions = $this->entityFieldManagerService->getFieldDefinitions('node', 'appointment');
+    if (isset($definitions['field_appointment_date'])) {
+      return 'field_appointment_date';
+    }
+    if (isset($definitions['field_appointment_timerange'])) {
+      return 'field_appointment_timerange';
+    }
+    return NULL;
+  }
+
+  /**
+   * Extracts host user id from an appointment node.
+   */
+  protected function extractHostId(NodeInterface $node): ?int {
+    if ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()) {
+      $target = $node->get('field_appointment_host')->target_id;
+      return $target !== NULL ? (int) $target : NULL;
+    }
+    return NULL;
+  }
+
+  /**
+   * Extracts a scalar field value from an appointment node.
+   */
+  protected function extractFieldValue(NodeInterface $node, string $field_name): ?string {
+    if ($node->hasField($field_name) && !$node->get($field_name)->isEmpty()) {
+      return (string) $node->get($field_name)->value;
+    }
+    return NULL;
+  }
+
+  /**
+   * Extracts the appointment date/time from range or legacy date fields.
+   */
+  protected function extractDate(NodeInterface $node): ?DrupalDateTime {
+    if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
+      $item = $node->get('field_appointment_timerange')->first();
+      $value = $item->value;
+      if ($value !== NULL && $value !== '') {
+        $timezone = $item->timezone ?: date_default_timezone_get();
+        try {
+          return DrupalDateTime::createFromTimestamp((int) $value, new \DateTimeZone($timezone));
+        }
+        catch (\Exception $e) {
+          // Fall through to legacy date.
+        }
+      }
+    }
+
+    if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
+      $value = $node->get('field_appointment_date')->value;
+      if ($value) {
+        return DrupalDateTime::createFromFormat('Y-m-d', $value) ?: NULL;
+      }
+    }
+
+    return NULL;
   }
 
   protected function buildDefinitions(bool $use_facilitator_terms): array {

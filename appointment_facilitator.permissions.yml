@@ -10,3 +10,8 @@ cancel own facilitator appointments:
 view own facilitator stats:
   title: 'View own facilitator stats'
   description: 'View personal appointment statistics and feedback rates.'
+
+manage facilitator arrival fields:
+  title: 'Manage facilitator arrival tracking fields'
+  description: 'Edit facilitator arrival status and arrival time fields on appointments.'
+  restrict access: true

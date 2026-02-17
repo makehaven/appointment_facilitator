@@ -27,6 +27,18 @@
   font-size: 0.9rem;
 }
 
+.appointment-facilitator-weekly-findings {
+  background: #fff4f4;
+  border: 1px solid #f1c8c8;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.appointment-facilitator-weekly-findings li {
+  margin-bottom: 0.5rem;
+}
+
 .appointment-facilitator-table {
   width: 100%;
   border-collapse: separate;

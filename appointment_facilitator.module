@@ -1,8 +1,13 @@
 <?php
 
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
+use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Form\FormStateInterface;
 use Drupal\node\NodeInterface;
+use Drupal\Core\Session\AccountInterface;
 
 /**
  * Compute effective capacity for an appointment node.
@@ -260,6 +265,47 @@ function appointment_facilitator_cron(): void {
 function appointment_facilitator_page_attachments(array &$attachments): void {
   $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
   $attachments['#attached']['drupalSettings']['appointment_facilitator']['siteTimezone'] = $site_timezone;
+}
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function appointment_facilitator_entity_field_access(string $operation, FieldDefinitionInterface $field_definition, AccountInterface $account, ?FieldItemListInterface $items = NULL): AccessResult {
+  if ($operation !== 'edit') {
+    return AccessResult::neutral();
+  }
+
+  if ($field_definition->getTargetEntityTypeId() !== 'node' || $field_definition->getTargetBundle() !== 'appointment') {
+    return AccessResult::neutral();
+  }
+
+  $field_name = $field_definition->getName();
+  if (!in_array($field_name, ['field_facilitator_arrival_status', 'field_facilitator_arrival_time'], TRUE)) {
+    return AccessResult::neutral();
+  }
+
+  if ($account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields')) {
+    return AccessResult::allowed()->cachePerPermissions();
+  }
+
+  return AccessResult::forbidden()->cachePerPermissions();
+}
+
+/**
+ * Implements hook_form_node_form_alter().
+ */
+function appointment_facilitator_form_node_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  $entity = $form_state->getFormObject()?->getEntity();
+  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'appointment') {
+    return;
+  }
+
+  $account = \Drupal::currentUser();
+  if ($account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields')) {
+    return;
+  }
+
+  unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
 }
 
 /**
