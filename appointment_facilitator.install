@@ -605,3 +605,59 @@ function appointment_facilitator_update_9017() {
   appointment_facilitator_ensure_fields($badges, $bundle);
   appointment_facilitator_ensure_displays($badges, $bundle);
 }
+
+/**
+ * Ensure facilitator menu links remain visible to facilitator roles.
+ */
+function appointment_facilitator_update_9018() {
+  $storage = \Drupal::entityTypeManager()->getStorage('menu_link_content');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('menu_name', 'facilitator-menu')
+    ->execute();
+
+  if (!$ids) {
+    return t('No facilitator-menu links found.');
+  }
+
+  $required_roles = ['facilitator', 'manager', 'administrator'];
+  $updated = 0;
+
+  foreach ($storage->loadMultiple($ids) as $link) {
+    // Menu Per Role stores role visibility on this field.
+    if (!$link->hasField('menu_per_role__show_role')) {
+      continue;
+    }
+
+    $existing = [];
+    foreach ($link->get('menu_per_role__show_role')->getValue() as $item) {
+      if (!empty($item['target_id'])) {
+        $existing[] = $item['target_id'];
+      }
+    }
+
+    $merged = array_values(array_unique(array_merge($existing, $required_roles)));
+    sort($merged);
+
+    $existing_sorted = $existing;
+    sort($existing_sorted);
+
+    if ($merged !== $existing_sorted) {
+      $link->set('menu_per_role__show_role', array_map(static function (string $rid): array {
+        return ['target_id' => $rid];
+      }, $merged));
+      $link->save();
+      $updated++;
+    }
+  }
+
+  return t('Updated @count facilitator-menu links with required show roles.', ['@count' => $updated]);
+}
+
+/**
+ * Rebuild node access grants after facilitator menu access changes.
+ */
+function appointment_facilitator_update_9019() {
+  node_access_rebuild();
+  return t('Rebuilt node access grants.');
+}
