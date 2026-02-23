@@ -658,6 +658,8 @@ function appointment_facilitator_update_9018() {
  * Rebuild node access grants after facilitator menu access changes.
  */
 function appointment_facilitator_update_9019() {
-  node_access_rebuild();
-  return t('Rebuilt node access grants.');
+  // Avoid a synchronous full node access rebuild during update.php/drush updb.
+  // On larger sites this can run for a long time and block deployments.
+  node_access_needs_rebuild(TRUE);
+  return t('Marked node access grants for rebuild.');
 }
