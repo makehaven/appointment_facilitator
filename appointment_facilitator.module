@@ -305,7 +305,130 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     return;
   }
 
+  if ($form_id === 'node_appointment_form') {
+    $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
+  }
+
   unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
+}
+
+/**
+ * Validates selected appointment badges are pending for the member.
+ */
+function appointment_facilitator_validate_pending_badges(array &$form, FormStateInterface $form_state): void {
+  $entity = $form_state->getFormObject()?->getEntity();
+  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'appointment') {
+    return;
+  }
+
+  $selected = _appointment_facilitator_extract_badge_ids_from_form_value($form_state->getValue('field_appointment_badges'));
+  if (!$selected) {
+    return;
+  }
+
+  $member_uid = (int) $entity->getOwnerId();
+  if ($member_uid <= 0) {
+    return;
+  }
+
+  $allowed = _appointment_facilitator_load_pending_badge_term_ids($member_uid);
+  $invalid = array_values(array_diff($selected, $allowed));
+  if (!$invalid) {
+    return;
+  }
+
+  $labels = [];
+  $terms = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->loadMultiple($invalid);
+  foreach ($invalid as $tid) {
+    $labels[] = isset($terms[$tid]) ? $terms[$tid]->label() : (string) $tid;
+  }
+
+  $message = $allowed
+    ? t('Only badges that are currently pending on your profile can be selected. Remove: @badges.', ['@badges' => implode(', ', $labels)])
+    : t('You do not currently have any pending badges eligible for checkout appointments.');
+  $form_state->setErrorByName('field_appointment_badges', $message);
+}
+
+/**
+ * Extracts badge term IDs from the appointment form value.
+ */
+function _appointment_facilitator_extract_badge_ids_from_form_value($value): array {
+  $ids = [];
+
+  if (!is_array($value)) {
+    if (is_scalar($value) && is_numeric($value)) {
+      $ids[] = (int) $value;
+    }
+    return array_values(array_unique(array_filter($ids, fn($id) => $id > 0)));
+  }
+
+  foreach ($value as $key => $item) {
+    if (is_array($item) && isset($item['target_id']) && is_numeric($item['target_id'])) {
+      $ids[] = (int) $item['target_id'];
+      continue;
+    }
+
+    if (is_array($item) && isset($item['value']) && is_numeric($item['value'])) {
+      $ids[] = (int) $item['value'];
+      continue;
+    }
+
+    if (is_numeric($item)) {
+      $ids[] = (int) $item;
+      continue;
+    }
+
+    if (is_numeric($key) && $item) {
+      $ids[] = (int) $key;
+      continue;
+    }
+
+    if (ctype_digit((string) $key) && ($item === $key || $item === 1 || $item === '1' || $item === TRUE || $item === 'on')) {
+      $ids[] = (int) $key;
+    }
+  }
+
+  $ids = array_filter($ids, fn($id) => $id > 0);
+  sort($ids);
+  return array_values(array_unique($ids));
+}
+
+/**
+ * Loads badge term IDs that are currently pending for a member.
+ */
+function _appointment_facilitator_load_pending_badge_term_ids(int $member_uid): array {
+  if ($member_uid <= 0) {
+    return [];
+  }
+
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'badge_request')
+    ->condition('field_member_to_badge.target_id', $member_uid)
+    ->condition('field_badge_status.value', 'pending');
+
+  $nids = $query->execute();
+  if (!$nids) {
+    return [];
+  }
+
+  $ids = [];
+  $requests = \Drupal::entityTypeManager()->getStorage('node')->loadMultiple($nids);
+  foreach ($requests as $request) {
+    if (!$request->hasField('field_badge_requested') || $request->get('field_badge_requested')->isEmpty()) {
+      continue;
+    }
+    foreach ($request->get('field_badge_requested')->getValue() as $item) {
+      $tid = isset($item['target_id']) ? (int) $item['target_id'] : 0;
+      if ($tid > 0) {
+        $ids[] = $tid;
+      }
+    }
+  }
+
+  $ids = array_values(array_unique($ids));
+  sort($ids);
+  return $ids;
 }
 
 /**
@@ -641,7 +764,7 @@ function _appointment_facilitator_parse_slot_time(string $base_date, string $tim
   // Full ISO string with timezone.
   if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})$/i', $time_value)) {
     try {
-      return new \DateTimeImmutable($time_value);
+      return (new \DateTimeImmutable($time_value))->setTimezone($base_timezone);
     }
     catch (\Exception $e) {
       // Fall through.

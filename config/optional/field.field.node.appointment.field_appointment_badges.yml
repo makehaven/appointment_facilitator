@@ -20,6 +20,6 @@ settings:
   handler_settings:
     view:
       view_name: badgers_reference
-      display_name: badge_reference_w_time
+      display_name: badge_reference_w_time_pending_only
       arguments: {  }
 field_type: entity_reference
