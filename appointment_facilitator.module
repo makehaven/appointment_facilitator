@@ -9,6 +9,7 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Session\AccountInterface;
+use Drupal\views\ViewExecutable;
 
 /**
  * Compute effective capacity for an appointment node.
@@ -301,42 +302,57 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   }
 
   $account = \Drupal::currentUser();
-  if ($account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields')) {
-    return;
-  }
+  $is_admin = $account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields');
 
   if ($form_id === 'node_appointment_form') {
-    $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
-
-    // Pre-select the facilitator when coming from the badge next-steps page
-    // via ?host={uid}. This sets the default value on the host autocomplete.
-    $host_uid = (int) \Drupal::request()->query->get('host', 0);
+    // Pre-select facilitator from scheduler links. Supports both current
+    // and legacy query keys.
+    $request = \Drupal::request();
+    $host_uid = (int) $request->query->get('host-uid', $request->query->get('host', 0));
     if ($host_uid > 0 && isset($form['field_appointment_host'])) {
       $host_user = \Drupal::entityTypeManager()->getStorage('user')->load($host_uid);
       if ($host_user) {
         $form['field_appointment_host']['widget'][0]['target_id']['#default_value'] = $host_user;
       }
     }
+
+    // Pre-select a badge when supplied from /badges/complete.
+    $badge_tid = (int) $request->query->get('badge', $request->query->get('badge_tid', 0));
+    if ($badge_tid > 0 && $entity->hasField('field_appointment_badges')) {
+      // Populate entity defaults first so the widget renders selected state.
+      if ($entity->get('field_appointment_badges')->isEmpty()) {
+        $entity->set('field_appointment_badges', [['target_id' => $badge_tid]]);
+      }
+
+      if (isset($form['field_appointment_badges']['widget'])) {
+        $form['field_appointment_badges']['widget']['#default_value'] = [$badge_tid];
+        if (isset($form['field_appointment_badges']['widget'][$badge_tid])) {
+          $form['field_appointment_badges']['widget'][$badge_tid]['#default_value'] = $badge_tid;
+        }
+      }
+    }
+
+    // Pre-select purpose as "Badge Checkout" when entering from the
+    // badge-completion flow.
+    $from_badges_complete = (bool) $request->query->get('from-badges-complete', 0);
+    $purpose_hint = (string) $request->query->get('purpose', '');
+    if ($entity->hasField('field_appointment_purpose')
+      && ($from_badges_complete || $purpose_hint === 'checkout')
+      && $entity->get('field_appointment_purpose')->isEmpty()) {
+      $entity->set('field_appointment_purpose', 'checkout');
+
+      if (isset($form['field_appointment_purpose']['widget'])) {
+        $form['field_appointment_purpose']['widget']['#default_value'] = 'checkout';
+        if (isset($form['field_appointment_purpose']['widget'][0]['value'])) {
+          $form['field_appointment_purpose']['widget'][0]['value']['#default_value'] = 'checkout';
+        }
+      }
+    }
   }
 
-  unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
-
-  // Timerange is computed from slot selections on presave; hide it so members
-  // cannot accidentally set it directly.
-  if (isset($form['field_appointment_timerange'])) {
-    $form['field_appointment_timerange']['#access'] = FALSE;
-  }
-
-  // Attendees are added after creation via the Join workflow. The booking
-  // member is tracked as the node author, not via this field, so there is
-  // nothing for them to fill in here.
-  if (isset($form['field_appointment_attendees'])) {
-    $form['field_appointment_attendees']['#access'] = FALSE;
-  }
-
-  // Pass pending badge data to JS so it can annotate checkboxes in real-time
-  // and show the user which of their badges are eligible before they submit.
-  $member_uid = (int) \Drupal::currentUser()->id();
+  // Pass pending badge data and the admin bypass flag to JS. This runs for
+  // all users so the bypassPendingCheck flag always reaches the badge hints JS.
+  $member_uid = (int) $account->id();
   $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($member_uid);
 
   $pending_badge_data = [];
@@ -352,8 +368,6 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     }
   }
 
-  // Build a TID → URL map for every badge in the vocabulary so JS can link
-  // to the badge page for any non-pending selection.
   $all_badge_urls = [];
   $badges_vocab = \Drupal::config('appointment_facilitator.settings')->get('badges_vocab_machine_name') ?: 'badges';
   $all_tids = \Drupal::entityQuery('taxonomy_term')
@@ -368,7 +382,30 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     'pendingBadgeTids' => array_values($pending_tids),
     'pendingBadgeData' => $pending_badge_data,
     'allBadgeUrls' => $all_badge_urls,
+    'bypassPendingCheck' => $is_admin,
   ];
+
+  // Admins see the full form with all fields intact — stop here.
+  if ($is_admin) {
+    return;
+  }
+
+  if ($form_id === 'node_appointment_form') {
+    $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
+  }
+
+  unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
+
+  // Timerange is computed from slot selections on presave; hide it so members
+  // cannot accidentally set it directly.
+  if (isset($form['field_appointment_timerange'])) {
+    $form['field_appointment_timerange']['#access'] = FALSE;
+  }
+
+  // Attendees are added after creation via the Join workflow.
+  if (isset($form['field_appointment_attendees'])) {
+    $form['field_appointment_attendees']['#access'] = FALSE;
+  }
 }
 
 /**
@@ -377,6 +414,11 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 function appointment_facilitator_validate_pending_badges(array &$form, FormStateInterface $form_state): void {
   $entity = $form_state->getFormObject()?->getEntity();
   if (!$entity instanceof NodeInterface || $entity->bundle() !== 'appointment') {
+    return;
+  }
+
+  // Admins are trusted to select badges on behalf of members.
+  if (\Drupal::currentUser()->hasPermission('administer nodes')) {
     return;
   }
 
@@ -942,4 +984,28 @@ function _appointment_facilitator_normalize_date(?string $value): ?string {
   }
 
   return $date->format('Y-m-d');
+}
+
+/**
+ * Implements hook_views_pre_render().
+ *
+ * Injects a "Join" link into the Appointment Summary field on the main
+ * /appointments listing so additional members can join open sessions directly.
+ */
+function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
+  if ($view->id() !== 'appointments' || $view->current_display !== 'appointment_list') {
+    return;
+  }
+
+  if (!isset($view->field['nothing'])) {
+    return;
+  }
+
+  $join_html = '<a href="/appointment/{{ nid }}/join" class="btn btn-outline-success btn-sm ms-1">+ Join</a>';
+
+  if (str_contains($view->field['nothing']->options['alter']['text'] ?? '', '/join')) {
+    return;
+  }
+
+  $view->field['nothing']->options['alter']['text'] .= "\n" . $join_html;
 }

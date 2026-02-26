@@ -164,10 +164,19 @@ class CancelUpcomingAppointmentForm extends FormBase {
       ];
     }
 
+    $notification_recipients = $this->buildCancellationRecipientSummary($appointment);
+    $warning_text = $this->t('Cancelling marks affected appointments as <em>Cancel this reservation</em> via the reservation cancellation field.');
+    if ($notification_recipients !== '') {
+      $warning_text .= ' ' . $this->t('Notification emails will be sent to: @recipients.', ['@recipients' => $notification_recipients]);
+    }
+    else {
+      $warning_text .= ' ' . $this->t('The standard cancellation automation can then send notifications.');
+    }
+
     $form['warning'] = [
       '#type' => 'container',
       '#attributes' => ['class' => ['messages', 'messages--warning']],
-      'text' => ['#markup' => $this->t('Cancelling marks affected appointments as <em>Cancel this reservation</em> via the reservation cancellation field. The standard cancellation automation can then send notifications.')],
+      'text' => ['#markup' => $warning_text],
     ];
 
     $form['cancel_scope'] = [
@@ -495,6 +504,33 @@ class CancelUpcomingAppointmentForm extends FormBase {
     }
 
     return $items;
+  }
+
+  /**
+   * Builds a readable recipient summary for cancellation notifications.
+   */
+  protected function buildCancellationRecipientSummary(NodeInterface $appointment): string {
+    if (function_exists('_appointment_notifications_cancel_recipient_labels')) {
+      $labels = _appointment_notifications_cancel_recipient_labels($appointment);
+      if (!empty($labels)) {
+        return implode(', ', $labels);
+      }
+    }
+
+    $labels = [];
+    $owner = $appointment->getOwner();
+    if ($owner && method_exists($owner, 'getDisplayName')) {
+      $labels[] = (string) $owner->getDisplayName();
+    }
+    if ($appointment->hasField('field_appointment_host') && !$appointment->get('field_appointment_host')->isEmpty()) {
+      $host = $appointment->get('field_appointment_host')->entity;
+      if ($host && method_exists($host, 'getDisplayName')) {
+        $labels[] = (string) $host->getDisplayName();
+      }
+    }
+
+    $labels = array_values(array_unique(array_filter($labels)));
+    return implode(', ', $labels);
   }
 
   /**
