@@ -5,6 +5,9 @@ appointment_facilitator.settings:
     show_always_join_cta:
       type: boolean
       label: 'Always show Join CTA even when effective capacity is 1'
+    system_wide_joiner_cap:
+      type: integer
+      label: 'System-wide Joiner Cap'
     badges_vocab_machine_name:
       type: string
       label: 'Badges vocabulary machine name'

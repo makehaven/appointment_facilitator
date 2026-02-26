@@ -17,6 +17,15 @@ class SettingsForm extends ConfigFormBase {
   public function buildForm(array $form, FormStateInterface $form_state) {
     $conf = $this->config('appointment_facilitator.settings');
 
+    $form['system_wide_joiner_cap'] = [
+      '#type' => 'number',
+      '#title' => $this->t('System-wide Joiner Cap'),
+      '#description' => $this->t('The maximum number of additional members allowed to join an appointment (beyond the person who scheduled it). Set to 0 to disable joining for all sessions, even if the badge or facilitator allows more. Default: <code>0</code>.'),
+      '#default_value' => (int) ($conf->get('system_wide_joiner_cap') ?? 0),
+      '#min' => 0,
+      '#required' => TRUE,
+    ];
+
     $form['show_always_join_cta'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Always show Join button'),
@@ -74,6 +83,7 @@ class SettingsForm extends ConfigFormBase {
 
   public function submitForm(array &$form, FormStateInterface $form_state) {
     $this->configFactory->getEditable('appointment_facilitator.settings')
+      ->set('system_wide_joiner_cap', (int) $form_state->getValue('system_wide_joiner_cap'))
       ->set('show_always_join_cta', (bool) $form_state->getValue('show_always_join_cta'))
       ->set('badges_vocab_machine_name', (string) $form_state->getValue('badges_vocab_machine_name'))
       ->set('facilitator_profile_bundle', (string) $form_state->getValue('facilitator_profile_bundle'))

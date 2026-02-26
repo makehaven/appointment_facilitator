@@ -1,4 +1,5 @@
 show_always_join_cta: false
+system_wide_joiner_cap: 0
 badges_vocab_machine_name: badges
 facilitator_profile_bundle: coordinator
 arrival_grace_minutes: 5

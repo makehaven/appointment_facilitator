@@ -55,7 +55,13 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
   }
 
   $caps = array_filter(array_map('intval', $caps), fn($v) => $v > 0);
-  return $caps ? min($caps) : 1;
+  $base_capacity = $caps ? min($caps) : 1;
+
+  $config = \Drupal::config('appointment_facilitator.settings');
+  $system_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
+
+  // Total allowed = Initial person + additional joiners.
+  return min($base_capacity, 1 + $system_cap);
 }
 
 /**
