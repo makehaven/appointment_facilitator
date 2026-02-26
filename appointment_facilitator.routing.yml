@@ -48,6 +48,14 @@ appointment_facilitator.self_stats_details:
   requirements:
     _permission: 'view own facilitator stats'
 
+appointment_facilitator.badge_next_steps:
+  path: '/my-badges'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\BadgeNextStepsController::build'
+    _title: 'My Badge Options'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+
 appointment_facilitator.cancel_next:
   path: '/appointment/my-next/cancel'
   defaults:

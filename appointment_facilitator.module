@@ -308,6 +308,16 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 
   if ($form_id === 'node_appointment_form') {
     $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
+
+    // Pre-select the facilitator when coming from the badge next-steps page
+    // via ?host={uid}. This sets the default value on the host autocomplete.
+    $host_uid = (int) \Drupal::request()->query->get('host', 0);
+    if ($host_uid > 0 && isset($form['field_appointment_host'])) {
+      $host_user = \Drupal::entityTypeManager()->getStorage('user')->load($host_uid);
+      if ($host_user) {
+        $form['field_appointment_host']['widget'][0]['target_id']['#default_value'] = $host_user;
+      }
+    }
   }
 
   unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
