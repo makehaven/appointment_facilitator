@@ -145,8 +145,15 @@ class BadgeNextStepsController extends ControllerBase {
     if ($facilitators) {
       $has_options = TRUE;
       $items = [];
-      foreach ($facilitators as $user) {
-        $items[] = $this->buildFacilitatorItem($user);
+      foreach ($facilitators as $entry) {
+        $items[] = $this->buildFacilitatorItem($entry['user'], $entry['availability']);
+      }
+      $grid = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['facilitator-cards-grid']],
+      ];
+      foreach ($items as $idx => $item) {
+        $grid['f_' . $idx] = $item;
       }
       $section['options']['book'] = [
         '#type' => 'container',
@@ -156,7 +163,7 @@ class BadgeNextStepsController extends ControllerBase {
           '#tag' => 'h4',
           '#value' => $this->t('Book a one-on-one session'),
         ],
-        'items' => $items,
+        'grid' => $grid,
       ];
     }
 
@@ -256,20 +263,68 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
-   * Returns facilitators who can be booked for a badge session.
+   * Returns facilitators with active availability for a badge.
    *
-   * Checks field_badge_issuer_on_request first (people who explicitly do
-   * on-request sessions), then falls back to field_badge_issuer (all
-   * authorised badge issuers) so the list is populated even when the
-   * on-request field hasn't been filled in.
+   * Resolves badge issuers (on-request first, then all issuers), loads each
+   * facilitator's coordinator profile, and keeps only those who have
+   * field_coordinator_hours set — indicating they are actively accepting
+   * sessions. Returns an array of ['user', 'availability'] entries.
    */
   protected function getFacilitatorsForBadge(TermInterface $term): array {
+    $users = [];
     foreach (['field_badge_issuer_on_request', 'field_badge_issuer'] as $field) {
       if ($term->hasField($field) && !$term->get($field)->isEmpty()) {
-        return $term->get($field)->referencedEntities();
+        $users = $term->get($field)->referencedEntities();
+        break;
       }
     }
-    return [];
+    if (!$users) {
+      return [];
+    }
+
+    $bundle = \Drupal::config('appointment_facilitator.settings')
+      ->get('facilitator_profile_bundle') ?: 'coordinator';
+    $profile_storage = $this->entityTypeManager()->getStorage('profile');
+
+    $available = [];
+    foreach ($users as $user) {
+      $profiles = $profile_storage->loadByUser($user, $bundle);
+      $profile = is_array($profiles) ? reset($profiles) : $profiles;
+      if (!$profile || !$profile->hasField('field_coordinator_hours') || $profile->get('field_coordinator_hours')->isEmpty()) {
+        continue;
+      }
+      $available[] = [
+        'user' => $user,
+        'availability' => $this->formatCoordinatorHours($profile),
+      ];
+    }
+    return $available;
+  }
+
+  /**
+   * Formats coordinator hours into a human-readable availability string.
+   *
+   * Reads the stored field_coordinator_hours items, extracts the day-of-week
+   * and time window from each, deduplicates by day, and returns a compact
+   * string such as "Mon 6–8pm · Wed 6–8pm".
+   */
+  protected function formatCoordinatorHours($profile): string {
+    $slots = [];
+    foreach ($profile->get('field_coordinator_hours') as $item) {
+      $start_ts = (int) ($item->value ?? 0);
+      $end_ts   = (int) ($item->end_value ?? 0);
+      if ($start_ts <= 0) {
+        continue;
+      }
+      $day   = $this->dateFormatter->format($start_ts, 'custom', 'D');
+      $start = $this->dateFormatter->format($start_ts, 'custom', 'g:ia');
+      $end   = $end_ts > $start_ts
+        ? $this->dateFormatter->format($end_ts, 'custom', 'g:ia')
+        : '';
+      $label = $end ? "$day $start–$end" : "$day $start";
+      $slots[$day] = $label;
+    }
+    return implode(' · ', array_values($slots));
   }
 
   /**
@@ -355,27 +410,29 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
-   * Renders a row for a facilitator with a booking link.
-   *
-   * The booking link passes ?host={uid} so the appointment form can
-   * pre-select the facilitator via hook_form_node_form_alter().
+   * Renders a card for a facilitator with availability and a booking link.
    */
-  protected function buildFacilitatorItem($user): array {
+  protected function buildFacilitatorItem($user, string $availability = ''): array {
     $schedule_url = Url::fromRoute('node.add', ['node_type' => 'appointment'], [
       'query' => ['host' => $user->id()],
     ]);
 
+    $name = htmlspecialchars($user->getDisplayName(), ENT_QUOTES, 'UTF-8');
+    $avail_html = $availability
+      ? '<span class="facilitator-hours">' . htmlspecialchars($availability, ENT_QUOTES, 'UTF-8') . '</span>'
+      : '';
+
     return [
       '#type' => 'container',
-      '#attributes' => ['class' => ['facilitator-item']],
-      'name' => [
-        '#markup' => '<span class="facilitator-name">' . htmlspecialchars($user->getDisplayName(), ENT_QUOTES, 'UTF-8') . '</span> ',
+      '#attributes' => ['class' => ['facilitator-card']],
+      'info' => [
+        '#markup' => '<span class="facilitator-name">' . $name . '</span>' . $avail_html,
       ],
       'link' => [
         '#type' => 'link',
-        '#title' => $this->t('Schedule a session'),
+        '#title' => $this->t('Schedule'),
         '#url' => $schedule_url,
-        '#attributes' => ['class' => ['button', 'button--small']],
+        '#attributes' => ['class' => ['facilitator-schedule-btn']],
       ],
     ];
   }
