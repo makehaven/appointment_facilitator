@@ -213,6 +213,12 @@ class BadgeNextStepsController extends ControllerBase {
     $open = [];
     foreach ($storage->loadMultiple($nids) as $node) {
       $capacity = appointment_facilitator_effective_capacity($node);
+      // Only surface group sessions (capacity > 1). Capacity-1 appointments
+      // are 1-on-1s that must be freshly booked; the JoinAppointmentForm also
+      // returns empty for them, so linking there would show a blank page.
+      if ($capacity <= 1) {
+        continue;
+      }
       $attendee_count = count($node->get('field_appointment_attendees')->getValue());
       if ($attendee_count < $capacity) {
         $open[] = $node;
@@ -250,13 +256,20 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
-   * Returns facilitators from field_badge_issuer_on_request on the badge term.
+   * Returns facilitators who can be booked for a badge session.
+   *
+   * Checks field_badge_issuer_on_request first (people who explicitly do
+   * on-request sessions), then falls back to field_badge_issuer (all
+   * authorised badge issuers) so the list is populated even when the
+   * on-request field hasn't been filled in.
    */
   protected function getFacilitatorsForBadge(TermInterface $term): array {
-    if (!$term->hasField('field_badge_issuer_on_request') || $term->get('field_badge_issuer_on_request')->isEmpty()) {
-      return [];
+    foreach (['field_badge_issuer_on_request', 'field_badge_issuer'] as $field) {
+      if ($term->hasField($field) && !$term->get($field)->isEmpty()) {
+        return $term->get($field)->referencedEntities();
+      }
     }
-    return $term->get('field_badge_issuer_on_request')->referencedEntities();
+    return [];
   }
 
   /**
