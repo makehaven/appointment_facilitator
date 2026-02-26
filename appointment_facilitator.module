@@ -42,11 +42,10 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
     if ($user && \Drupal::moduleHandler()->moduleExists('profile') && $bundle) {
       $profiles = \Drupal::entityTypeManager()->getStorage('profile')->loadByUser($user, $bundle);
       if ($profiles) {
-        $profile = NULL;
-        foreach ($profiles as $p) {
-          $profile = $p;
-          break;
-        }
+        // loadByUser() may return a single entity or a keyed array depending on
+        // the Profile module version; handle both without iterating over the
+        // entity itself (which would yield FieldItemList objects, not the profile).
+        $profile = is_array($profiles) ? reset($profiles) : $profiles;
         if (is_object($profile) && $profile->hasField('field_coordinator_capacity') && !$profile->get('field_coordinator_capacity')->isEmpty()) {
           $caps[] = (int) $profile->get('field_coordinator_capacity')->value;
         }
