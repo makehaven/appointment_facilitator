@@ -6,6 +6,7 @@ use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Field\FieldDefinitionInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Url;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Session\AccountInterface;
 
@@ -323,6 +324,42 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   if (isset($form['field_appointment_attendees'])) {
     $form['field_appointment_attendees']['#access'] = FALSE;
   }
+
+  // Pass pending badge data to JS so it can annotate checkboxes in real-time
+  // and show the user which of their badges are eligible before they submit.
+  $member_uid = (int) \Drupal::currentUser()->id();
+  $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($member_uid);
+
+  $pending_badge_data = [];
+  if ($pending_tids) {
+    $pending_terms = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->loadMultiple($pending_tids);
+    foreach ($pending_tids as $tid) {
+      if (isset($pending_terms[$tid])) {
+        $pending_badge_data[(string) $tid] = [
+          'label' => $pending_terms[$tid]->label(),
+          'url' => Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $tid])->toString(),
+        ];
+      }
+    }
+  }
+
+  // Build a TID → URL map for every badge in the vocabulary so JS can link
+  // to the badge page for any non-pending selection.
+  $all_badge_urls = [];
+  $badges_vocab = \Drupal::config('appointment_facilitator.settings')->get('badges_vocab_machine_name') ?: 'badges';
+  $all_tids = \Drupal::entityQuery('taxonomy_term')
+    ->accessCheck(FALSE)
+    ->condition('vid', $badges_vocab)
+    ->execute();
+  foreach ($all_tids as $tid) {
+    $all_badge_urls[(string) $tid] = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $tid])->toString();
+  }
+
+  $form['#attached']['drupalSettings']['appointmentFacilitator'] = [
+    'pendingBadgeTids' => array_values($pending_tids),
+    'pendingBadgeData' => $pending_badge_data,
+    'allBadgeUrls' => $all_badge_urls,
+  ];
 }
 
 /**
