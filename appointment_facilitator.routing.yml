@@ -12,7 +12,15 @@ appointment_facilitator.settings:
   path: '/admin/config/people/appointment-facilitator'
   defaults:
     _form: '\Drupal\appointment_facilitator\Form\SettingsForm'
-    _title: 'Appointment Facilitator settings'
+    _title: 'Appointment Facilitator Settings'
+  requirements:
+    _permission: 'administer site configuration'
+
+appointment_facilitator.settings_services:
+  path: '/admin/config/services/appointment-facilitator'
+  defaults:
+    _form: '\Drupal\appointment_facilitator\Form\SettingsForm'
+    _title: 'Appointment Facilitator Settings'
   requirements:
     _permission: 'administer site configuration'
 

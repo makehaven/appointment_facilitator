@@ -198,6 +198,13 @@ class JoinAppointmentForm extends FormBase {
       ];
     }
 
+    if ($this->requiresPendingBadge($node) && !$this->userHasPendingBadgeForAppointment($node, $uid)) {
+      $form['message'] = [
+        '#markup' => '<p>' . $this->t('This session checks out badge(s). Ask staff to mark one of these badges as pending on your profile before joining.') . '</p>',
+      ];
+      return $this->addCacheContexts($form);
+    }
+
     // --- Already joined / Full / Join button ---
     if (in_array($uid, $current_ids, TRUE)) {
       $form['message'] = ['#markup' => '<p>' . $this->t('You are already on this appointment.') . '</p>'];
@@ -282,6 +289,12 @@ class JoinAppointmentForm extends FormBase {
     $current_count = count($attendee_values);
     if ($current_count >= $capacity) {
       $this->messenger()->addWarning($this->t('This appointment is full.'));
+      $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
+      return;
+    }
+
+    if ($this->requiresPendingBadge($node) && !$this->userHasPendingBadgeForAppointment($node, $uid)) {
+      $this->messenger()->addError($this->t('You can only join checkout sessions for badges currently pending on your profile.'));
       $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
       return;
     }
@@ -380,6 +393,43 @@ class JoinAppointmentForm extends FormBase {
     $contexts[] = 'url.path';
     $form['#cache']['contexts'] = array_values(array_unique($contexts));
     return $form;
+  }
+
+  /**
+   * Returns TRUE when this appointment is a badge checkout session.
+   */
+  protected function requiresPendingBadge(NodeInterface $node): bool {
+    if (!$node->hasField('field_appointment_purpose') || $node->get('field_appointment_purpose')->isEmpty()) {
+      return FALSE;
+    }
+    return (string) $node->get('field_appointment_purpose')->value === 'checkout';
+  }
+
+  /**
+   * Returns TRUE if user has at least one pending badge on this appointment.
+   */
+  protected function userHasPendingBadgeForAppointment(NodeInterface $node, int $uid): bool {
+    if ($uid <= 0) {
+      return FALSE;
+    }
+    if (!$node->hasField('field_appointment_badges') || $node->get('field_appointment_badges')->isEmpty()) {
+      // Checkout session without badge terms configured should not hard-block.
+      return TRUE;
+    }
+
+    $pending = array_flip(_appointment_facilitator_load_pending_badge_term_ids($uid));
+    if (!$pending) {
+      return FALSE;
+    }
+
+    foreach ($node->get('field_appointment_badges')->getValue() as $item) {
+      $tid = (int) ($item['target_id'] ?? 0);
+      if ($tid > 0 && isset($pending[$tid])) {
+        return TRUE;
+      }
+    }
+
+    return FALSE;
   }
 
 }

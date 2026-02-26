@@ -1,8 +1,15 @@
 appointment_facilitator.settings:
-  title: 'Appointment Facilitator'
+  title: 'Appointment Facilitator Settings'
   description: 'Configure Join button behavior'
   parent: system.admin_config_people
   route_name: appointment_facilitator.settings
+  weight: 100
+
+appointment_facilitator.settings_services:
+  title: 'Appointment Facilitator Settings'
+  description: 'Configure appointment scheduling and join behavior'
+  parent: system.admin_config_services
+  route_name: appointment_facilitator.settings_services
   weight: 100
 
 appointment_facilitator.stats:
