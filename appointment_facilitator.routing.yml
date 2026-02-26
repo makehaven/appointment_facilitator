@@ -48,6 +48,14 @@ appointment_facilitator.self_stats_details:
   requirements:
     _permission: 'view own facilitator stats'
 
+appointment_facilitator.member_badges:
+  path: '/badges/my'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\MemberBadgesController::build'
+    _title: 'My Badges'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+
 appointment_facilitator.badge_next_steps:
   path: '/badges/complete'
   defaults:
