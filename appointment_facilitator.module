@@ -327,6 +327,13 @@ function appointment_facilitator_validate_pending_badges(array &$form, FormState
     return;
   }
 
+  // Only validate badges for checkout appointments; informational appointments
+  // don't require badge selection and the badges field is hidden via #states.
+  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
+  if ($purpose !== 'checkout') {
+    return;
+  }
+
   $selected = _appointment_facilitator_extract_badge_ids_from_form_value($form_state->getValue('field_appointment_badges'));
   if (!$selected) {
     return;
