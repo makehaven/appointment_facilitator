@@ -310,6 +310,12 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   }
 
   unset($form['field_facilitator_arrival_status'], $form['field_facilitator_arrival_time']);
+
+  // Timerange is computed from slot selections on presave; hide it so members
+  // cannot accidentally set it directly.
+  if (isset($form['field_appointment_timerange'])) {
+    $form['field_appointment_timerange']['#access'] = FALSE;
+  }
 }
 
 /**
@@ -438,10 +444,11 @@ function _appointment_facilitator_populate_timerange_from_slots(NodeInterface $n
   if (!$node->hasField('field_appointment_timerange') || !$node->hasField('field_appointment_slot')) {
     return;
   }
-  if (!$node->get('field_appointment_timerange')->isEmpty()) {
-    // Do not overwrite existing data unless the field is empty.
-    return;
-  }
+  // When slots are absent, leave any existing timerange value alone (e.g. an
+  // admin may have set it directly). When slots are present they are always the
+  // authoritative source, so recalculate even on edits where timerange is
+  // already populated — this keeps the stored value in sync if slot selections
+  // change.
   if ($node->get('field_appointment_slot')->isEmpty()) {
     return;
   }

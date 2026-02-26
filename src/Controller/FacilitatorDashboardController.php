@@ -2,6 +2,7 @@
 
 namespace Drupal\appointment_facilitator\Controller;
 
+use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
@@ -21,6 +22,7 @@ class FacilitatorDashboardController extends ControllerBase {
     protected readonly EntityFieldManagerInterface $entityFieldManagerService,
     protected readonly DateFormatterInterface $dateFormatterService,
     protected readonly AppointmentStats $statsHelper,
+    protected readonly BadgePrerequisiteGate $badgeGate,
   ) {}
 
   /**
@@ -32,6 +34,7 @@ class FacilitatorDashboardController extends ControllerBase {
       $container->get('entity_field.manager'),
       $container->get('date.formatter'),
       $container->get('appointment_facilitator.stats'),
+      $container->get('appointment_facilitator.badge_gate'),
     );
   }
 
@@ -474,13 +477,21 @@ class FacilitatorDashboardController extends ControllerBase {
 
     $links = [];
     foreach ($appointment->get('field_appointment_badges')->referencedEntities() as $term) {
+      $gate = $this->badgeGate->evaluate($member_uid, $term);
+      $status_text = $gate['allowed']
+        ? (string) $this->t('approved')
+        : (string) $this->t('blocked');
+      $status_detail = $this->buildFacilitatorGateDetail($gate);
       $url = Url::fromUri('internal:/badge/user/' . $member_uid . '?badgeid=' . $term->id());
       $links[] = [
         '#type' => 'link',
-        '#title' => $term->label(),
+        '#title' => $term->label() . ' (' . $status_text . ($status_detail ? ': ' . $status_detail : '') . ')',
         '#url' => $url,
         '#options' => [
           'attributes' => ['class' => ['afd-inline-link']],
+          'title' => $gate['allowed']
+            ? (string) $this->t('Member can proceed with this badge.')
+            : (!empty($gate['reasons']) ? implode(' ', $gate['reasons']) : (string) $this->t('Member is blocked by prerequisites or documentation approval.')),
         ],
       ];
     }
@@ -490,6 +501,27 @@ class FacilitatorDashboardController extends ControllerBase {
       '#items' => $links,
       '#attributes' => ['class' => ['afd-inline-list']],
     ];
+  }
+
+  /**
+   * Builds an inline detail string for facilitator badge gate status.
+   */
+  protected function buildFacilitatorGateDetail(array $gate): string {
+    if (!empty($gate['allowed'])) {
+      return '';
+    }
+
+    $parts = [];
+    if (!empty($gate['requires_documentation']) && empty($gate['documentation_approved'])) {
+      $parts[] = (string) $this->t('documentation approval required');
+    }
+    if (!empty($gate['prerequisites_missing_labels'])) {
+      $parts[] = (string) $this->t('missing prerequisites: @badges', [
+        '@badges' => implode(', ', $gate['prerequisites_missing_labels']),
+      ]);
+    }
+
+    return implode('; ', $parts);
   }
 
   /**

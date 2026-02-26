@@ -13,6 +13,7 @@ Instead of being set manually on each appointment, capacity is calculated automa
   - **Facilitator Profile:** A configurable Profile entity for the appointment host.
 - **Join Workflow:** A "Join" button is shown to logged-in users on appointments. It only appears if the calculated capacity is greater than one, or if the "always show" setting is enabled. The system prevents users from joining a full appointment.
 - **Configurable Entities:** You can specify the machine names for the Badges vocabulary and the Facilitator Profile bundle, allowing the module to integrate with your existing site structure.
+- **Badge Gate Service:** Provides a shared gate checker that enforces badge prerequisites and training-documentation approval (from linked webforms) before quiz-based badge progression.
 - **Automated Setup:** The module automatically creates and configures all required fields on installation and update, including fields on your specified vocabulary and profile type.
 - **Status Report Integration:** The module adds warnings to the Drupal status report if required fields, vocabularies, or profile types are missing, helping administrators diagnose configuration issues.
 - **Smart Date Integration:** Uses the Smart Date module for the appointment time range field if it is available, falling back gracefully to the core Date Range field.

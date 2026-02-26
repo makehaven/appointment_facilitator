@@ -6,3 +6,9 @@ services:
       - '@entity_field.manager'
       - '@logger.factory'
       - '@cache.default'
+
+  appointment_facilitator.badge_gate:
+    class: Drupal\appointment_facilitator\Service\BadgePrerequisiteGate
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
