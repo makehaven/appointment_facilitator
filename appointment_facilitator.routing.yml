@@ -49,10 +49,10 @@ appointment_facilitator.self_stats_details:
     _permission: 'view own facilitator stats'
 
 appointment_facilitator.badge_next_steps:
-  path: '/my-badges'
+  path: '/badges/complete'
   defaults:
     _controller: '\Drupal\appointment_facilitator\Controller\BadgeNextStepsController::build'
-    _title: 'My Badge Options'
+    _title: 'Complete Your Badges'
   requirements:
     _user_is_logged_in: 'TRUE'
 
