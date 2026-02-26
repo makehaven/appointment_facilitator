@@ -316,6 +316,13 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   if (isset($form['field_appointment_timerange'])) {
     $form['field_appointment_timerange']['#access'] = FALSE;
   }
+
+  // Attendees are added after creation via the Join workflow. The booking
+  // member is tracked as the node author, not via this field, so there is
+  // nothing for them to fill in here.
+  if (isset($form['field_appointment_attendees'])) {
+    $form['field_appointment_attendees']['#access'] = FALSE;
+  }
 }
 
 /**
