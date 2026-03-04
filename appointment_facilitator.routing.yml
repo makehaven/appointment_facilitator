@@ -8,6 +8,14 @@ appointment_facilitator.join:
     _user_is_logged_in: 'TRUE'
     node: '\d+'
 
+appointment_facilitator.feedback_form:
+  path: '/appointment/{node}/feedback'
+  defaults:
+    _form: '\Drupal\appointment_facilitator\Form\AppointmentFeedbackForm'
+    _title: 'Appointment Feedback'
+  requirements:
+    _permission: 'access content'
+
 appointment_facilitator.settings:
   path: '/admin/config/people/appointment-facilitator'
   defaults:

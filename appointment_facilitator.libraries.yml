@@ -20,3 +20,9 @@ member_node_add_filter:
   version: 1.x
   js:
     js/member-node-add-filter.js: {}
+
+appointment_feedback_form:
+  version: 1.x
+  css:
+    theme:
+      css/appointment-feedback-form.css: {}
