@@ -15,3 +15,8 @@ stats_report:
   css:
     theme:
       css/stats-report.css: {}
+
+member_node_add_filter:
+  version: 1.x
+  js:
+    js/member-node-add-filter.js: {}

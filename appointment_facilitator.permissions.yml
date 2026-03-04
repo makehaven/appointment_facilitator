@@ -15,3 +15,7 @@ manage facilitator arrival fields:
   title: 'Manage facilitator arrival tracking fields'
   description: 'Edit facilitator arrival status and arrival time fields on appointments.'
   restrict access: true
+
+approve badge requests:
+  title: 'Approve badge requests'
+  description: 'Allow facilitators to activate pending badge instances without full node edit access.'

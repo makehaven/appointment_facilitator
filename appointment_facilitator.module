@@ -67,38 +67,82 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
 /**
  * Implements hook_entity_view().
  *
- * Adds the capacity information and a "Join" CTA to appointment nodes.
+ * Adds appointment join controls and badge-request quick approval actions.
  */
 function appointment_facilitator_entity_view(array &$build, EntityInterface $entity, $view_mode, $langcode) {
-  if ($entity->getEntityTypeId() !== 'node' || $entity->bundle() !== 'appointment' || $view_mode !== 'full') {
+  if ($entity->getEntityTypeId() !== 'node') {
+    return;
+  }
+
+  if ($entity->bundle() === 'appointment' && $view_mode === 'full') {
+    $account = \Drupal::currentUser();
+    $effective_capacity = appointment_facilitator_effective_capacity($entity);
+
+    // Add a capacity summary.
+    $build['appointment_capacity_summary'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['appointment-capacity-summary']],
+      'summary' => ['#markup' => '<div><strong>' . t('Capacity') . ':</strong> ' . $effective_capacity . '</div>'],
+      '#weight' => -60,
+    ];
+
+    // Gate the Join CTA.
+    if ($account->isAnonymous() || !$entity->hasField('field_appointment_attendees')) {
+      return;
+    }
+
+    $form = \Drupal::formBuilder()->getForm(JoinAppointmentForm::class, $entity);
+    if ($form) {
+      $build['appointment_join'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['appointment-join-cta']],
+        'form' => $form,
+        '#weight' => -50,
+      ];
+    }
+    return;
+  }
+
+  if ($entity->bundle() !== 'badge_request' || !$entity->hasField('field_badge_status') || $entity->get('field_badge_status')->isEmpty()) {
     return;
   }
 
   $account = \Drupal::currentUser();
-  $effective_capacity = appointment_facilitator_effective_capacity($entity);
-
-  // Add a capacity summary.
-  $build['appointment_capacity_summary'] = [
-    '#type' => 'container',
-    '#attributes' => ['class' => ['appointment-capacity-summary']],
-    'summary' => ['#markup' => '<div><strong>' . t('Capacity') . ':</strong> ' . $effective_capacity . '</div>'],
-    '#weight' => -60,
-  ];
-
-  // Gate the Join CTA.
-  if ($account->isAnonymous() || !$entity->hasField('field_appointment_attendees')) {
+  $status = (string) $entity->get('field_badge_status')->value;
+  if ($status !== 'pending' || !_appointment_facilitator_can_approve_badge_request($entity, $account)) {
     return;
   }
 
-  $form = \Drupal::formBuilder()->getForm(JoinAppointmentForm::class, $entity);
-  if ($form) {
-    $build['appointment_join'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['appointment-join-cta']],
-      'form' => $form,
-      '#weight' => -50,
-    ];
+  $build['appointment_facilitator_badge_actions'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['badge-request-quick-actions']],
+    '#weight' => 90,
+    'approve' => [
+      '#type' => 'link',
+      '#title' => t('Approve badge'),
+      '#url' => Url::fromRoute(
+        'appointment_facilitator.badge_request_approve',
+        ['node' => $entity->id()],
+        ['query' => ['destination' => \Drupal::service('path.current')->getPath()]]
+      ),
+      '#attributes' => [
+        'class' => ['button', 'button--small', 'button--primary'],
+      ],
+    ],
+  ];
+}
+
+/**
+ * Checks whether an account can approve a badge request instance.
+ */
+function _appointment_facilitator_can_approve_badge_request(NodeInterface $node, AccountInterface $account): bool {
+  if ($node->bundle() !== 'badge_request' || !$node->hasField('field_badge_status')) {
+    return FALSE;
   }
+
+  return $account->hasPermission('administer nodes')
+    || $account->hasPermission('approve badge requests')
+    || $account->hasPermission('edit any badge_request content');
 }
 
 /**
@@ -154,6 +198,60 @@ function appointment_facilitator_entity_form_display_alter(&$form_display, $cont
  */
 function appointment_facilitator_navigation_menu_link_tree_alter(array &$tree): void {
   _appointment_facilitator_normalize_navigation_menu_icons($tree);
+}
+
+/**
+ * Implements hook_preprocess_node_add_list().
+ */
+function appointment_facilitator_preprocess_node_add_list(array &$variables): void {
+  if (!_appointment_facilitator_user_has_role('member')) {
+    return;
+  }
+
+  if (!empty($variables['types'])) {
+    foreach ($variables['types'] as $key => $type) {
+      $type_id = is_array($type) ? ($type['type'] ?? NULL) : NULL;
+      if (in_array($type_id, ['appointment', 'reservation'], TRUE)) {
+        unset($variables['types'][$key]);
+      }
+    }
+  }
+  elseif (!empty($variables['content'])) {
+    foreach ($variables['content'] as $key => $item) {
+      if (!is_object($item) || !method_exists($item, 'id')) {
+        continue;
+      }
+      if (in_array($item->id(), ['appointment', 'reservation'], TRUE)) {
+        unset($variables['content'][$key]);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_preprocess_breadcrumb().
+ */
+function appointment_facilitator_preprocess_breadcrumb(array &$variables): void {
+  if (!_appointment_facilitator_user_has_role('member') || empty($variables['breadcrumb'])) {
+    return;
+  }
+
+  foreach ($variables['breadcrumb'] as $key => $item) {
+    if (($item['text'] ?? '') === 'Back to site') {
+      unset($variables['breadcrumb'][$key]);
+    }
+  }
+
+  $variables['breadcrumb'] = array_values($variables['breadcrumb']);
+  $variables['#cache']['contexts'][] = 'user.roles';
+}
+
+/**
+ * Checks whether current user has the provided role.
+ */
+function _appointment_facilitator_user_has_role(string $role): bool {
+  $account = \Drupal::currentUser();
+  return in_array($role, $account->getRoles(), TRUE);
 }
 
 /**
@@ -272,6 +370,11 @@ function appointment_facilitator_cron(): void {
 function appointment_facilitator_page_attachments(array &$attachments): void {
   $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
   $attachments['#attached']['drupalSettings']['appointment_facilitator']['siteTimezone'] = $site_timezone;
+
+  $route_name = \Drupal::routeMatch()->getRouteName();
+  if ($route_name === 'node.add_page' && _appointment_facilitator_user_has_role('member')) {
+    $attachments['#attached']['library'][] = 'appointment_facilitator/member_node_add_filter';
+  }
 }
 
 /**
