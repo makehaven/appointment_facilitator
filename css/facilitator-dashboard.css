@@ -25,6 +25,11 @@
   color: var(--afd-muted);
 }
 
+.appointment-facilitator-dashboard .afd-muted {
+  color: var(--afd-muted);
+  margin-top: 0;
+}
+
 .appointment-facilitator-dashboard .afd-card {
   background: var(--afd-card);
   border: 1px solid var(--afd-line);
@@ -37,6 +42,12 @@
   margin: 0 0 0.85rem;
   font-size: 1.12rem;
   color: var(--afd-primary);
+}
+
+.appointment-facilitator-dashboard .afd-card h4 {
+  margin: 1rem 0 0.55rem;
+  font-size: 0.96rem;
+  color: var(--afd-text);
 }
 
 .appointment-facilitator-dashboard .afd-actions {
@@ -150,6 +161,10 @@
 
 .appointment-facilitator-dashboard .afd-badge-list li {
   margin-bottom: 0.4rem;
+}
+
+.appointment-facilitator-dashboard .afd-task-links {
+  margin-top: 0.7rem;
 }
 
 /* Fix operations dropdown overflow */

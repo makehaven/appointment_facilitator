@@ -232,6 +232,40 @@ class JoinAppointmentForm extends FormBase {
       '#value' => $node->id(),
     ];
 
+    // --- Pace & Experience Warning ---
+    $form['pace_warning'] = [
+      '#type' => 'container',
+      '#attributes' => [
+        'class' => ['messages', 'messages--warning'],
+        'style' => 'margin-top: 20px; border-left: 5px solid #ffc107;',
+      ],
+      'title' => [
+        '#markup' => '<strong>' . $this->t('Important: Pace Warning') . '</strong>',
+      ],
+      'body' => [
+        '#markup' => '<p>' . $this->t('By joining this appointment, you agree to follow along at the primary attendee\'s pace. The facilitator will prioritize the needs of the person who originally scheduled the session.') . '</p>',
+      ],
+    ];
+
+    $form['experience_level'] = [
+      '#type' => 'select',
+      '#title' => $this->t('Your Experience Level with these tools/badges'),
+      '#options' => [
+        'beginner' => $this->t('Beginner (Never used / First time)'),
+        'intermediate' => $this->t('Intermediate (Some experience / Needs refresher)'),
+        'advanced' => $this->t('Advanced (Very familiar / Just need checkout)'),
+      ],
+      '#required' => TRUE,
+      '#description' => $this->t('This helps the facilitator and other potential joiners understand the group pace.'),
+    ];
+
+    $form['join_note'] = [
+      '#type' => 'textarea',
+      '#title' => $this->t('Notes for the Facilitator (Optional)'),
+      '#description' => $this->t('Any specific questions or context you want to share.'),
+      '#rows' => 3,
+    ];
+
     $form['actions'] = ['#type' => 'actions'];
     $form['actions']['submit'] = [
       '#type' => 'submit',
@@ -300,6 +334,22 @@ class JoinAppointmentForm extends FormBase {
     }
 
     $attendee_field->appendItem($uid);
+
+    // Append joiner info to notes if possible.
+    if ($node->hasField('field_appointment_note')) {
+      $exp = $form_state->getValue('experience_level');
+      $note = $form_state->getValue('join_note');
+      $user_name = $this->currentUser()->getDisplayName();
+      
+      $extra_note = "\n\n--- Joiner: {$user_name} ---\nExperience: {$exp}";
+      if (!empty($note)) {
+        $extra_note .= "\nNote: {$note}";
+      }
+      
+      $current_note = (string) $node->get('field_appointment_note')->value;
+      $node->set('field_appointment_note', $current_note . $extra_note);
+    }
+
     try {
       $node->save();
       $this->messenger()->addStatus($this->t('You have joined this appointment.'));

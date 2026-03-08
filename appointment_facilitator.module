@@ -1,5 +1,6 @@
 <?php
 
+use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Entity\EntityInterface;
@@ -9,6 +10,7 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Session\AccountInterface;
+use Drupal\taxonomy\TermInterface;
 use Drupal\views\ViewExecutable;
 
 /**
@@ -70,6 +72,11 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
  * Adds appointment join controls and badge-request quick approval actions.
  */
 function appointment_facilitator_entity_view(array &$build, EntityInterface $entity, $view_mode, $langcode) {
+  if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
+    _appointment_facilitator_enforce_badge_page_flow($build, $entity);
+    return;
+  }
+
   if ($entity->getEntityTypeId() !== 'node') {
     return;
   }
@@ -100,6 +107,44 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
         '#weight' => -50,
       ];
     }
+
+    // Show badge checklist for facilitators.
+    if ($account->hasRole('facilitator') || $account->hasPermission('administer nodes')) {
+      $checklists = [];
+      if ($entity->hasField('field_appointment_badges') && !$entity->get('field_appointment_badges')->isEmpty()) {
+        foreach ($entity->get('field_appointment_badges')->referencedEntities() as $term) {
+          $checklist_html = '';
+          if ($term->hasField('field_badge_internal_checklist') && !$term->get('field_badge_internal_checklist')->isEmpty()) {
+            $checklist_html = $term->get('field_badge_internal_checklist')->value;
+          }
+          elseif ($term->hasField('field_badge_checklist') && !$term->get('field_badge_checklist')->isEmpty()) {
+            $url = $term->get('field_badge_checklist')->first()->getUrl();
+            $checklist_html = '<p>' . t('External Checklist: <a href="@url" target="_blank">@url</a>', ['@url' => $url->toString()]) . '</p>';
+          }
+
+          if ($checklist_html) {
+            $checklists[] = [
+              'title' => ['#markup' => '<h4>' . $term->label() . ' ' . t('Checklist') . '</h4>'],
+              'content' => ['#markup' => '<div>' . $checklist_html . '</div>'],
+            ];
+          }
+        }
+      }
+
+      if ($checklists) {
+        $build['appointment_checklists'] = [
+          '#type' => 'container',
+          '#attributes' => [
+            'class' => ['appointment-badge-checklists', 'messages', 'messages--status'],
+            'style' => 'margin-top: 30px; border-left: 5px solid #28a745; background-color: #f8fff9;',
+          ],
+          'title' => ['#markup' => '<h3>' . t('Facilitator Checklists') . '</h3>'],
+          'items' => $checklists,
+          '#weight' => 100,
+        ];
+      }
+    }
+
     return;
   }
 
@@ -130,6 +175,224 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       ],
     ],
   ];
+}
+
+/**
+ * Applies prerequisite/pending enforcement for badge taxonomy term pages.
+ */
+function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInterface $badge): void {
+  $route_match = \Drupal::routeMatch();
+  if ($route_match->getRouteName() !== 'entity.taxonomy_term.canonical') {
+    return;
+  }
+
+  $route_term = $route_match->getParameter('taxonomy_term');
+  if ($route_term instanceof TermInterface && (int) $route_term->id() !== (int) $badge->id()) {
+    return;
+  }
+
+  $account = \Drupal::currentUser();
+  $uid = (int) $account->id();
+  $is_admin = $account->hasPermission('administer nodes');
+
+  // This depends on user-specific badge_request and webform submission state.
+  $build['#cache']['contexts'][] = 'user';
+  $build['#cache']['max-age'] = 0;
+
+  $pending_tids = $uid > 0 ? _appointment_facilitator_load_pending_badge_term_ids($uid) : [];
+  $has_pending_instance = in_array((int) $badge->id(), $pending_tids, TRUE);
+
+  $has_prerequisites = $badge->hasField('field_badge_prerequisite') && !$badge->get('field_badge_prerequisite')->isEmpty();
+  $checkout_requirement = '';
+  if ($badge->hasField('field_badge_checkout_requirement') && !$badge->get('field_badge_checkout_requirement')->isEmpty()) {
+    $checkout_requirement = strtolower(trim((string) $badge->get('field_badge_checkout_requirement')->value));
+  }
+  // Align with quiz-result flow: treat any non-"no" value as requiring checkout.
+  $requires_checkout = ($checkout_requirement !== '' && $checkout_requirement !== 'no');
+
+  $gate_result = NULL;
+  if (!$is_admin && $uid > 0 && \Drupal::hasService('appointment_facilitator.badge_gate')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgePrerequisiteGate $gate */
+    $gate = \Drupal::service('appointment_facilitator.badge_gate');
+    $gate_result = $gate->evaluate($uid, $badge);
+  }
+
+  $blocked_by_gate = is_array($gate_result) && empty($gate_result['allowed']);
+  if ($blocked_by_gate) {
+    _appointment_facilitator_hide_badge_page_components($build, [
+      'field_badge_quiz_reference',
+      'field_badge_quiz',
+      'group_quiz',
+      'group_contact_badger',
+      'group_checkout',
+      'field_badge_checklist',
+      'field_badge_checkout_minutes',
+      'field_badge_issuer_on_request',
+      'field_badge_issuer',
+      'facilitator_schedules_facilitator_schedule_tool_eva',
+      'event_upcoming_badging_badge_events',
+    ]);
+
+    $parts = [
+      t('This badge has prerequisites. Complete them first to unlock quiz and checkout scheduling.'),
+    ];
+    if (!empty($gate_result['prerequisites_missing_labels'])) {
+      $parts[] = t('Missing prerequisite badges: @badges', [
+        '@badges' => implode(', ', $gate_result['prerequisites_missing_labels']),
+      ]);
+    }
+    if (!empty($gate_result['requires_documentation']) && empty($gate_result['documentation_approved'])) {
+      if (!empty($gate_result['documentation_form_url'])) {
+        $parts[] = t('Required documentation must be approved first: @url', [
+          '@url' => $gate_result['documentation_form_url'],
+        ]);
+      }
+      else {
+        $parts[] = t('Required documentation must be approved before continuing.');
+      }
+    }
+
+    $build['appointment_facilitator_badge_gate_warning'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--warning']],
+      '#weight' => -200,
+      'message' => [
+        '#markup' => '<p>' . implode(' ', $parts) . '</p>',
+      ],
+    ];
+    if ($requires_checkout) {
+      _appointment_facilitator_add_checkout_unavailable_notice(
+        $build,
+        (string) t('Checkout is required for this badge. Scheduling will be revealed after prerequisites are complete and you pass the quiz.')
+      );
+    }
+    _appointment_facilitator_attach_badge_checkout_gate_css($build);
+    return;
+  }
+
+  // Keep facilitator schedules hidden until the member has a pending instance.
+  if (!$has_pending_instance) {
+    _appointment_facilitator_hide_badge_page_components($build, [
+      'group_contact_badger',
+      'group_checkout',
+      'field_badge_issuer_on_request',
+      'facilitator_schedules_facilitator_schedule_tool_eva',
+      'facilitator_schedules_facilitator_profile_badger_list',
+      'event_upcoming_badging_badge_events',
+    ]);
+    $build['appointment_facilitator_badge_pending_notice'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--status']],
+      '#weight' => -190,
+      'message' => [
+        '#markup' => '<p>' . t('Checkout scheduling appears after you pass this badge quiz and your badge is marked pending.') . '</p>',
+      ],
+    ];
+    if ($requires_checkout) {
+      _appointment_facilitator_add_checkout_unavailable_notice(
+        $build,
+        (string) t('Checkout is required for this badge. Scheduling will be revealed after you pass the quiz and your badge is marked pending.')
+      );
+    }
+    _appointment_facilitator_attach_badge_checkout_gate_css($build);
+  }
+  elseif ($has_pending_instance) {
+    // Replace legacy schedule/event blocks with the new schedule table format.
+    _appointment_facilitator_hide_badge_page_components($build, [
+      'facilitator_schedules_facilitator_schedule_tool_eva',
+      'facilitator_schedules_facilitator_profile_badger_list',
+      'event_upcoming_badging_badge_events',
+    ]);
+
+    /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
+    $controller = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
+    if ($controller instanceof BadgeNextStepsController) {
+      $schedule_section = $controller->buildScheduleSectionForBadgeTerm($badge, $uid);
+      if (!empty($schedule_section)) {
+        $schedule_section['#weight'] = -185;
+        $schedule_section['#attached']['library'][] = 'appointment_facilitator/badge_term_cleanup';
+        $build['appointment_facilitator_badge_schedule_section'] = $schedule_section;
+      }
+    }
+  }
+  elseif ($uid <= 0 && $has_prerequisites) {
+    $build['appointment_facilitator_badge_prereq_notice'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--warning']],
+      '#weight' => -190,
+      'message' => [
+        '#markup' => '<p>' . t('This badge has prerequisites that must be completed before quiz and checkout scheduling are available.') . '</p>',
+      ],
+    ];
+  }
+}
+
+/**
+ * Removes specified components from badge term render arrays.
+ */
+function _appointment_facilitator_hide_badge_page_components(array &$build, array $component_keys): void {
+  $targets = array_fill_keys($component_keys, TRUE);
+  _appointment_facilitator_unset_render_keys_recursive($build, $targets);
+}
+
+/**
+ * Adds an in-place checkout notice where scheduling normally appears.
+ */
+function _appointment_facilitator_add_checkout_unavailable_notice(array &$build, string $message): void {
+  $build['appointment_facilitator_checkout_unavailable_notice'] = [
+    '#type' => 'container',
+    '#attributes' => [
+      'class' => [
+        'group-checkout',
+        'field-group-fieldset',
+        'appointment-facilitator-checkout-notice',
+      ],
+    ],
+    '#weight' => 7,
+    'title' => [
+      '#type' => 'html_tag',
+      '#tag' => 'h2',
+      '#value' => t('Facilitator Checkout'),
+      '#attributes' => ['class' => ['appointment-facilitator-checkout-notice__title']],
+    ],
+    'body' => [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => $message,
+      '#attributes' => ['class' => ['appointment-facilitator-checkout-notice__text']],
+    ],
+  ];
+}
+
+/**
+ * Hides checkout scheduling UI for gated badge-page states.
+ */
+function _appointment_facilitator_attach_badge_checkout_gate_css(array &$build): void {
+  $css = '.group-checkout:not(.appointment-facilitator-checkout-notice), .group-contact-badger, a[href*="/node/add/appointment"] { display: none !important; }';
+  $build['#attached']['html_head'][] = [
+    [
+      '#tag' => 'style',
+      '#value' => $css,
+      '#attributes' => ['id' => 'appointment-facilitator-badge-gate-hide-checkout'],
+    ],
+    'appointment_facilitator_badge_gate_hide_checkout',
+  ];
+}
+
+/**
+ * Recursively unsets render-array keys that match target component keys.
+ */
+function _appointment_facilitator_unset_render_keys_recursive(array &$element, array $targets): void {
+  foreach (array_keys($element) as $key) {
+    if (isset($targets[$key])) {
+      unset($element[$key]);
+      continue;
+    }
+
+    if (is_array($element[$key])) {
+      _appointment_facilitator_unset_render_keys_recursive($element[$key], $targets);
+    }
+  }
 }
 
 /**
@@ -378,6 +641,64 @@ function appointment_facilitator_page_attachments(array &$attachments): void {
 }
 
 /**
+ * Implements hook_form_alter().
+ *
+ * Forces coordinator-hour "Manage Instances" links to non-AJAX navigation.
+ * This avoids intermittent AJAX parser failures on large/repeated responses.
+ */
+function appointment_facilitator_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  if (!isset($form['field_coordinator_hours']) || !is_array($form['field_coordinator_hours'])) {
+    return;
+  }
+
+  _appointment_facilitator_force_non_ajax_manage_instances($form['field_coordinator_hours']);
+}
+
+/**
+ * Recursively updates Smart Date Recur "Manage Instances" links in an element.
+ */
+function _appointment_facilitator_force_non_ajax_manage_instances(array &$element): void {
+  if (isset($element['#url']) && $element['#url'] instanceof Url) {
+    $url = $element['#url'];
+    if ($url->isRouted() && $url->getRouteName() === 'smart_date_recur.instances') {
+      $classes = $element['#attributes']['class'] ?? [];
+      if (is_array($classes)) {
+        $classes = array_values(array_filter($classes, static fn($class) => $class !== 'use-ajax'));
+        $element['#attributes']['class'] = $classes;
+      }
+      unset($element['#attributes']['data-dialog-type'], $element['#attributes']['data-dialog-options']);
+
+      $params = $url->getRouteParameters();
+      if (isset($params['rrule']) && (int) $params['rrule'] > 0) {
+        $query = $url->getOption('query') ?? [];
+        $element['#url'] = Url::fromRoute('smart_date_recur.instances', [
+          'rrule' => (int) $params['rrule'],
+          'modal' => 0,
+        ], [
+          'query' => is_array($query) ? $query : [],
+        ]);
+      }
+
+      if (isset($element['#attached']['library']) && is_array($element['#attached']['library'])) {
+        $element['#attached']['library'] = array_values(array_filter(
+          $element['#attached']['library'],
+          static fn($library) => $library !== 'core/drupal.dialog.ajax'
+        ));
+      }
+    }
+  }
+
+  foreach ($element as $key => &$child) {
+    if (is_int($key) || (is_string($key) && $key !== '' && $key[0] !== '#')) {
+      if (is_array($child)) {
+        _appointment_facilitator_force_non_ajax_manage_instances($child);
+      }
+    }
+  }
+  unset($child);
+}
+
+/**
  * Implements hook_entity_field_access().
  */
 function appointment_facilitator_entity_field_access(string $operation, FieldDefinitionInterface $field_definition, AccountInterface $account, ?FieldItemListInterface $items = NULL): AccessResult {
@@ -422,6 +743,25 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
       $host_user = \Drupal::entityTypeManager()->getStorage('user')->load($host_uid);
       if ($host_user) {
         $form['field_appointment_host']['widget'][0]['target_id']['#default_value'] = $host_user;
+
+        // Add facilitator intro message if available.
+        $intro = _appointment_facilitator_get_user_intro($host_user);
+        if ($intro) {
+          $form['facilitator_intro_display'] = [
+            '#type' => 'container',
+            '#attributes' => [
+              'class' => ['facilitator-intro-message', 'messages', 'messages--status'],
+              'style' => 'margin-bottom: 20px; border-left: 5px solid #007bff;',
+            ],
+            'title' => [
+              '#markup' => '<h4>' . t('Message from @name', ['@name' => $host_user->getDisplayName()]) . '</h4>',
+            ],
+            'body' => [
+              '#markup' => '<div>' . nl2br($intro) . '</div>',
+            ],
+            '#weight' => -100,
+          ];
+        }
       }
     }
 
@@ -494,8 +834,15 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     'bypassPendingCheck' => $is_admin,
   ];
 
+  // Add custom validation to prevent duplicate badge requests.
+  $form['#validate'][] = '_appointment_facilitator_validate_no_duplicates';
+
+  // Add reservation conflict checking.
+  $form['#validate'][] = '_appointment_facilitator_validate_reservation_conflicts';
+
   if ($form_id === 'node_appointment_form') {
     $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
+    $form['#validate'][] = 'appointment_facilitator_validate_slot_coverage';
   }
 
   // Admins still bypass form field visibility restrictions below, but pending
@@ -516,6 +863,163 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   if (isset($form['field_appointment_attendees'])) {
     $form['field_appointment_attendees']['#access'] = FALSE;
   }
+}
+
+/**
+ * Custom validation handler to prevent duplicate badge requests or appointments.
+ */
+function _appointment_facilitator_validate_no_duplicates(array &$form, FormStateInterface $form_state): void {
+  $form_id = $form['#form_id'];
+  $account = \Drupal::currentUser();
+
+  // Skip validation for admins.
+  if ($account->hasPermission('administer nodes')) {
+    return;
+  }
+
+  $badge_tids = [];
+  $member_uid = (int) $account->id();
+
+  if ($form_id === 'node_appointment_form') {
+    $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value']);
+    if ($purpose !== 'checkout') {
+      return;
+    }
+    $badge_values = $form_state->getValue('field_appointment_badges') ?: [];
+    foreach ($badge_values as $item) {
+      if (!empty($item['target_id'])) {
+        $badge_tids[] = (int) $item['target_id'];
+      }
+    }
+  }
+  elseif ($form_id === 'node_badge_request_form') {
+    $badge_tid = (int) $form_state->getValue(['field_badge_requested', 0, 'target_id']);
+    if ($badge_tid > 0) {
+      $badge_tids[] = $badge_tid;
+    }
+  }
+
+  if (empty($badge_tids)) {
+    return;
+  }
+
+  /** @var \Drupal\appointment_facilitator\Service\BadgePrerequisiteGate $gate */
+  $gate = \Drupal::service('appointment_facilitator.badge_gate');
+
+  foreach ($badge_tids as $tid) {
+    if ($gate->memberHasActiveOrBlankBadge($member_uid, $tid)) {
+      $term = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->load($tid);
+      $badge_label = $term ? $term->label() : ('Badge ' . $tid);
+
+      $form_state->setErrorByName($form_id === 'node_appointment_form' ? 'field_appointment_badges' : 'field_badge_requested',
+        t('You already have the @badge badge or a pending request for it. You only need to earn each badge once.', [
+          '@badge' => $badge_label,
+        ])
+      );
+    }
+  }
+}
+
+/**
+ * Custom validation handler to check for tool reservation conflicts.
+ */
+function _appointment_facilitator_validate_reservation_conflicts(array &$form, FormStateInterface $form_state): void {
+  if ($form['#form_id'] !== 'node_appointment_form') {
+    return;
+  }
+
+  // Only check for checkout appointments.
+  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value']);
+  if ($purpose !== 'checkout') {
+    return;
+  }
+
+  // Ensure makerspace_reservations service is available.
+  if (!\Drupal::hasService('makerspace_reservations.conflict_checker')) {
+    return;
+  }
+
+  /** @var \Drupal\makerspace_reservations\ReservationConflictChecker $checker */
+  $checker = \Drupal::service('makerspace_reservations.conflict_checker');
+
+  $badge_tids = [];
+  $badge_values = $form_state->getValue('field_appointment_badges') ?: [];
+  foreach ($badge_values as $item) {
+    if (!empty($item['target_id'])) {
+      $badge_tids[] = (int) $item['target_id'];
+    }
+  }
+
+  if (empty($badge_tids)) {
+    return;
+  }
+
+  // Find assets (tools) for these badges.
+  $asset_nids = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'item')
+    ->condition('field_member_badges.target_id', $badge_tids, 'IN')
+    ->execute();
+
+  if (empty($asset_nids)) {
+    return;
+  }
+
+  // Get appointment time range.
+  $entity = $form_state->getFormObject()->getEntity();
+  _appointment_facilitator_populate_timerange_from_slots($entity);
+  
+  if ($entity->get('field_appointment_timerange')->isEmpty()) {
+    return;
+  }
+
+  $timerange = $entity->get('field_appointment_timerange')->first();
+  $start_ts = (int) $timerange->value;
+  $end_ts = (int) $timerange->end_value;
+
+  $conflicts = [];
+  $account = \Drupal::currentUser();
+  $is_staff = $account->hasPermission('administer nodes');
+
+  foreach ($asset_nids as $asset_nid) {
+    $result = $checker->checkConflicts((int) $asset_nid, $start_ts, $end_ts);
+    
+    // We only care about blocking conflicts for badging appointments.
+    if ($result->hasBlockingConflicts($is_staff)) {
+      foreach ($result->getBlockingConflicts($is_staff) as $conflict) {
+        $conflicts[] = $checker->formatConflictMessage($conflict, 'direct', 'the required tool');
+      }
+    }
+  }
+
+  if ($conflicts) {
+    $conflicts = array_unique($conflicts);
+    $message = t('This appointment conflicts with existing tool reservations/events:');
+    $message .= '<ul><li>' . implode('</li><li>', $conflicts) . '</li></ul>';
+    $message .= t('Please choose a different time or coordinate with the event organizer.');
+    
+    $form_state->setErrorByName('field_appointment_slot', $message);
+  }
+}
+
+/**
+ * Loads the facilitator intro from the user's profiles.
+ */
+function _appointment_facilitator_get_user_intro(AccountInterface $user): ?string {
+  if (!\Drupal::moduleHandler()->moduleExists('profile')) {
+    return NULL;
+  }
+
+  $bundles = ['coordinator', 'instructor'];
+  foreach ($bundles as $bundle) {
+    $profiles = \Drupal::entityTypeManager()->getStorage('profile')->loadByUser($user, $bundle);
+    $profile = is_array($profiles) ? reset($profiles) : $profiles;
+    if ($profile instanceof EntityInterface && $profile->hasField('field_facilitator_intro') && !$profile->get('field_facilitator_intro')->isEmpty()) {
+      return (string) $profile->get('field_facilitator_intro')->value;
+    }
+  }
+
+  return NULL;
 }
 
 /**
@@ -563,6 +1067,55 @@ function appointment_facilitator_validate_pending_badges(array &$form, FormState
 }
 
 /**
+ * Validates checkout appointments have an appropriate slot count for badges.
+ */
+function appointment_facilitator_validate_slot_coverage(array &$form, FormStateInterface $form_state): void {
+  $entity = $form_state->getFormObject()?->getEntity();
+  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'appointment') {
+    return;
+  }
+
+  // Keep an admin override path for emergency scheduling edits.
+  if (\Drupal::currentUser()->hasPermission('administer nodes')) {
+    return;
+  }
+
+  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
+  if ($purpose !== 'checkout') {
+    return;
+  }
+
+  $badge_ids = _appointment_facilitator_extract_badge_ids_from_form_value($form_state->getValue('field_appointment_badges'));
+  if (!$badge_ids) {
+    return;
+  }
+
+  $required_minutes = _appointment_facilitator_total_checkout_minutes_for_badges($badge_ids);
+  if ($required_minutes <= 0) {
+    return;
+  }
+
+  $selected_slots = _appointment_facilitator_count_selected_slots($form_state->getValue('field_appointment_slot'));
+  $required_slots = max(1, (int) ceil($required_minutes / 30));
+
+  if ($selected_slots < $required_slots) {
+    $form_state->setErrorByName('field_appointment_slot', t('Please select enough slots. You selected @selected slot(s); @required required for the selected badges (@minutes min total).', [
+      '@selected' => $selected_slots,
+      '@required' => $required_slots,
+      '@minutes' => $required_minutes,
+    ]));
+    return;
+  }
+
+  if ($selected_slots > $required_slots) {
+    $form_state->setErrorByName('field_appointment_slot', t('You selected too many slots. You selected @selected slot(s); please select no more than @max slot(s) for these badges.', [
+      '@selected' => $selected_slots,
+      '@max' => $required_slots,
+    ]));
+  }
+}
+
+/**
  * Extracts badge term IDs from the appointment form value.
  */
 function _appointment_facilitator_extract_badge_ids_from_form_value($value): array {
@@ -604,6 +1157,55 @@ function _appointment_facilitator_extract_badge_ids_from_form_value($value): arr
   $ids = array_filter($ids, fn($id) => $id > 0);
   sort($ids);
   return array_values(array_unique($ids));
+}
+
+/**
+ * Calculates total checkout minutes from selected badge terms.
+ */
+function _appointment_facilitator_total_checkout_minutes_for_badges(array $badge_ids): int {
+  $total = 0;
+  if (!$badge_ids) {
+    return $total;
+  }
+
+  $terms = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->loadMultiple($badge_ids);
+  foreach ($badge_ids as $tid) {
+    if (empty($terms[$tid])) {
+      continue;
+    }
+    $term = $terms[$tid];
+    if (!$term->hasField('field_badge_checkout_minutes') || $term->get('field_badge_checkout_minutes')->isEmpty()) {
+      continue;
+    }
+    $raw = (string) $term->get('field_badge_checkout_minutes')->value;
+    if (preg_match('/(\d+)/', $raw, $matches)) {
+      $total += (int) $matches[1];
+    }
+  }
+
+  return $total;
+}
+
+/**
+ * Counts selected slot values from appointment form submission.
+ */
+function _appointment_facilitator_count_selected_slots($slot_value): int {
+  if (!is_array($slot_value)) {
+    return 0;
+  }
+
+  $count = 0;
+  foreach ($slot_value as $item) {
+    if (is_array($item) && isset($item['value']) && $item['value'] !== '' && $item['value'] !== NULL) {
+      $count++;
+      continue;
+    }
+    if (is_scalar($item) && (string) $item !== '') {
+      $count++;
+    }
+  }
+
+  return $count;
 }
 
 /**

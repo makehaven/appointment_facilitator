@@ -4,10 +4,12 @@ namespace Drupal\appointment_facilitator\Controller;
 
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
+use Drupal\appointment_facilitator\Service\AppointmentSlackService;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\node\NodeInterface;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\RedirectResponse;
@@ -23,6 +25,7 @@ class FacilitatorDashboardController extends ControllerBase {
     protected readonly DateFormatterInterface $dateFormatterService,
     protected readonly AppointmentStats $statsHelper,
     protected readonly BadgePrerequisiteGate $badgeGate,
+    protected readonly AppointmentSlackService $slackService,
   ) {}
 
   /**
@@ -35,7 +38,37 @@ class FacilitatorDashboardController extends ControllerBase {
       $container->get('date.formatter'),
       $container->get('appointment_facilitator.stats'),
       $container->get('appointment_facilitator.badge_gate'),
+      $container->get('appointment_facilitator.slack'),
     );
+  }
+
+  /**
+   * Sends a "running late" notification to the attendee.
+   */
+  public function runningLate(NodeInterface $node): RedirectResponse {
+    if ($node->bundle() !== 'appointment') {
+      return $this->redirect('appointment_facilitator.dashboard');
+    }
+
+    $attendee = $node->getOwner();
+    $host = $this->currentUser();
+
+    if ($attendee) {
+      $message = $this->t('Hi @name, your facilitator (@host) is running a few minutes late for your appointment. They are on their way!', [
+        '@name' => $attendee->getDisplayName(),
+        '@host' => $host->getDisplayName(),
+      ]);
+
+      $success = $this->slackService->sendMessageToUser($attendee, (string) $message);
+      if ($success) {
+        $this->messenger()->addStatus($this->t('Notification sent to @name via Slack.', ['@name' => $attendee->getDisplayName()]));
+      }
+      else {
+        $this->messenger()->addWarning($this->t('Failed to send Slack notification. They may not have a Slack ID linked or Slack is misconfigured.'));
+      }
+    }
+
+    return $this->redirect('appointment_facilitator.dashboard');
   }
 
   /**
@@ -56,6 +89,7 @@ class FacilitatorDashboardController extends ControllerBase {
     $upcoming_appointments = $this->loadUpcomingAppointments($uid, $now, 8);
     $pending_followups = $this->loadPendingFollowUps($uid, $now, 10);
     $qualified_badges = $this->loadQualifiedBadges($uid, 24);
+    $task_buckets = $this->loadOpenTaskBuckets($uid, 120);
 
     return [
       '#type' => 'container',
@@ -144,6 +178,55 @@ class FacilitatorDashboardController extends ControllerBase {
             '#value' => $this->t('Pending follow-ups for your appointments'),
           ],
           'table' => $this->buildPendingTable($pending_followups),
+        ],
+        'tasks' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-card', 'afd-col-full']],
+          'title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Task opportunities'),
+          ],
+          'subtitle' => [
+            '#type' => 'html_tag',
+            '#tag' => 'p',
+            '#attributes' => ['class' => ['afd-muted']],
+            '#value' => $this->t('Tasks can be generic or asset-linked. Maintenance tasks are highlighted when your badges qualify you.'),
+          ],
+          'my_tasks_title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h4',
+            '#value' => $this->t('Assigned to me'),
+          ],
+          'my_tasks' => $this->buildTaskTable($task_buckets['assigned'], $this->t('No open tasks are currently assigned to you.')),
+          'qualified_tasks_title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h4',
+            '#value' => $this->t('Maintenance tasks I am qualified for'),
+          ],
+          'qualified_tasks' => $this->buildTaskTable($task_buckets['maintenance_qualified'], $this->t('No open maintenance tasks currently match your badges.')),
+          'general_tasks_title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h4',
+            '#value' => $this->t('General open tasks'),
+          ],
+          'general_tasks' => $this->buildTaskTable($task_buckets['general'], $this->t('No open general tasks right now.')),
+          'locked_tasks_title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h4',
+            '#value' => $this->t('Maintenance tasks requiring additional badges'),
+          ],
+          'locked_tasks' => $this->buildTaskTable($task_buckets['maintenance_locked'], $this->t('No maintenance tasks are currently blocked by badge requirements.')),
+          'footer_links' => [
+            '#type' => 'container',
+            '#attributes' => ['class' => ['afd-task-links']],
+            'open_tasks' => [
+              '#type' => 'link',
+              '#title' => $this->t('Open full task board'),
+              '#url' => Url::fromUri('internal:/tasks'),
+              '#options' => ['attributes' => ['class' => ['afd-inline-link']]],
+            ],
+          ],
         ],
       ],
     ];
@@ -237,6 +320,14 @@ class FacilitatorDashboardController extends ControllerBase {
         $actions['pending'] = [
           'title' => $this->t('Member pending'),
           'url' => Url::fromUri('internal:/badges/pending/user/' . $member_id),
+        ];
+        $actions['running_late'] = [
+          'title' => $this->t('Running late'),
+          'url' => Url::fromRoute('appointment_facilitator.running_late', ['node' => $appointment->id()]),
+          'attributes' => [
+            'class' => ['use-ajax', 'btn', 'btn-warning', 'btn-xs'],
+            'title' => $this->t('Notify attendee via Slack that you are running late.'),
+          ],
         ];
       }
 
@@ -453,6 +544,203 @@ class FacilitatorDashboardController extends ControllerBase {
       '#theme' => 'item_list',
       '#items' => $items,
       '#attributes' => ['class' => ['afd-badge-list']],
+    ];
+  }
+
+  /**
+   * Builds open task buckets for facilitator operations.
+   */
+  protected function loadOpenTaskBuckets(int $uid, int $scanLimit): array {
+    $buckets = [
+      'assigned' => [],
+      'maintenance_qualified' => [],
+      'maintenance_locked' => [],
+      'general' => [],
+    ];
+    $seen = [];
+
+    $storage = $this->entityTypeManagerService->getStorage('node');
+    $nids = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'task')
+      ->condition('status', 1)
+      ->sort('field_task_priority_value', 'ASC')
+      ->sort('created', 'DESC')
+      ->range(0, $scanLimit)
+      ->execute();
+
+    if (!$nids) {
+      return $buckets;
+    }
+
+    $completed = $this->loadCompletedTaskIds($nids);
+    $tasks = $storage->loadMultiple($nids);
+
+    foreach ($tasks as $task) {
+      $nid = (int) $task->id();
+      if (isset($completed[$nid])) {
+        continue;
+      }
+
+      $required_badge = NULL;
+      if ($task->hasField('field_task_required_badge') && !$task->get('field_task_required_badge')->isEmpty()) {
+        $required_badge = $task->get('field_task_required_badge')->entity;
+      }
+
+      $is_assigned = $this->isTaskAssignedToFacilitator($task, $uid);
+      $is_maintenance = (bool) $required_badge;
+      $is_qualified = FALSE;
+      if ($is_maintenance && $required_badge) {
+        $is_qualified = $this->badgeGate->memberHasActiveOrBlankBadge($uid, (int) $required_badge->id());
+      }
+
+      $row = $this->buildTaskRow($task, $required_badge, $is_maintenance, $is_qualified);
+
+      if ($is_assigned && !isset($seen['assigned'][$nid])) {
+        $buckets['assigned'][] = $row;
+        $seen['assigned'][$nid] = TRUE;
+      }
+
+      if ($is_maintenance) {
+        $bucket = $is_qualified ? 'maintenance_qualified' : 'maintenance_locked';
+        if (!isset($seen[$bucket][$nid])) {
+          $buckets[$bucket][] = $row;
+          $seen[$bucket][$nid] = TRUE;
+        }
+      }
+      else {
+        if (!isset($seen['general'][$nid])) {
+          $buckets['general'][] = $row;
+          $seen['general'][$nid] = TRUE;
+        }
+      }
+    }
+
+    foreach (['assigned', 'maintenance_qualified', 'maintenance_locked', 'general'] as $bucket) {
+      $buckets[$bucket] = array_slice($buckets[$bucket], 0, 8);
+    }
+
+    return $buckets;
+  }
+
+  /**
+   * Returns TRUE when a task is assigned to facilitator directly or by group.
+   */
+  protected function isTaskAssignedToFacilitator($task, int $uid): bool {
+    if ($uid <= 0) {
+      return FALSE;
+    }
+
+    if ($task->hasField('field_task_lead') && !$task->get('field_task_lead')->isEmpty()) {
+      foreach ($task->get('field_task_lead')->getValue() as $lead) {
+        if ((int) ($lead['target_id'] ?? 0) === $uid) {
+          return TRUE;
+        }
+      }
+    }
+
+    if ($task->hasField('field_task_group') && !$task->get('field_task_group')->isEmpty()) {
+      foreach ($task->get('field_task_group')->referencedEntities() as $group_term) {
+        if (!$group_term->hasField('field_group_lead') || $group_term->get('field_group_lead')->isEmpty()) {
+          continue;
+        }
+        foreach ($group_term->get('field_group_lead')->getValue() as $lead) {
+          if ((int) ($lead['target_id'] ?? 0) === $uid) {
+            return TRUE;
+          }
+        }
+      }
+    }
+
+    return FALSE;
+  }
+
+  /**
+   * Loads a map of completed task ids.
+   */
+  protected function loadCompletedTaskIds(array $taskNids): array {
+    if (!$taskNids) {
+      return [];
+    }
+
+    $results = \Drupal::database()->select('flagging', 'f')
+      ->fields('f', ['entity_id'])
+      ->condition('f.flag_id', 'task_completed')
+      ->condition('f.entity_id', $taskNids, 'IN')
+      ->distinct()
+      ->execute()
+      ->fetchCol();
+
+    $map = [];
+    foreach ($results as $entity_id) {
+      $map[(int) $entity_id] = TRUE;
+    }
+    return $map;
+  }
+
+  /**
+   * Builds a dashboard row for a task.
+   */
+  protected function buildTaskRow($task, $required_badge, bool $isMaintenance, bool $isQualified): array {
+    $asset = (string) $this->t('General');
+    if ($task->hasField('field_task_equipment') && !$task->get('field_task_equipment')->isEmpty()) {
+      $item = $task->get('field_task_equipment')->entity;
+      if ($item) {
+        $asset = $item->label();
+      }
+    }
+
+    $priority = (string) $this->fieldLabelOrFallback($task, 'field_task_priority');
+    $requirement = (string) $this->t('None');
+    if ($required_badge) {
+      $requirement = $required_badge->label() . ($isQualified ? ' (' . (string) $this->t('qualified') . ')' : ' (' . (string) $this->t('missing') . ')');
+    }
+    elseif ($isMaintenance) {
+      $requirement = (string) $this->t('Maintenance badge required');
+    }
+
+    return [
+      'task' => [
+        'data' => [
+          '#type' => 'link',
+          '#title' => $task->label(),
+          '#url' => $task->toUrl(),
+          '#options' => ['attributes' => ['class' => ['afd-inline-link']]],
+        ],
+      ],
+      'asset' => $asset,
+      'requirement' => $requirement,
+      'priority' => $priority,
+      'actions' => [
+        'data' => [
+          '#type' => 'link',
+          '#title' => $this->t('Open'),
+          '#url' => $task->toUrl(),
+          '#options' => ['attributes' => ['class' => ['afd-inline-link']]],
+        ],
+      ],
+    ];
+  }
+
+  /**
+   * Renders a task table with common schema.
+   */
+  protected function buildTaskTable(array $rows, $emptyMessage): array {
+    if (!$rows) {
+      return ['#markup' => $emptyMessage];
+    }
+
+    return [
+      '#type' => 'table',
+      '#header' => [
+        $this->t('Task'),
+        $this->t('Asset/Area'),
+        $this->t('Badge requirement'),
+        $this->t('Priority'),
+        $this->t('Actions'),
+      ],
+      '#rows' => $rows,
+      '#attributes' => ['class' => ['afd-table', 'afd-task-table']],
     ];
   }
 

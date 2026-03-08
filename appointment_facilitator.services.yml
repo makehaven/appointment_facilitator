@@ -12,3 +12,10 @@ services:
     arguments:
       - '@entity_type.manager'
       - '@logger.factory'
+
+  appointment_facilitator.slack:
+    class: Drupal\appointment_facilitator\Service\AppointmentSlackService
+    arguments:
+      - '@http_client'
+      - '@config.factory'
+      - '@logger.factory'

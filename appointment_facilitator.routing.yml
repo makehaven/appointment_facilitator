@@ -97,3 +97,12 @@ appointment_facilitator.badge_request_approve:
     _custom_access: '\Drupal\appointment_facilitator\Controller\BadgeRequestApprovalController::access'
     _user_is_logged_in: 'TRUE'
     node: '\d+'
+
+appointment_facilitator.running_late:
+  path: '/facilitator/appointment/{node}/running-late'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\FacilitatorDashboardController::runningLate'
+    _title: 'Running late'
+  requirements:
+    _permission: 'view own facilitator stats'
+    node: '\d+'

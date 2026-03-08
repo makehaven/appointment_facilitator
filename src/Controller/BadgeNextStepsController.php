@@ -5,6 +5,7 @@ namespace Drupal\appointment_facilitator\Controller;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Url;
+use Drupal\Component\Utility\Html;
 use Drupal\node\NodeInterface;
 use Drupal\taxonomy\TermInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -90,6 +91,60 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
+   * Builds a schedule-first section for a single badge term page.
+   *
+   * Only returns content when the member has this specific badge in pending
+   * state, matching the gating used by /badges/complete.
+   */
+  public function buildScheduleSectionForBadgeTerm(TermInterface $term, int $uid): array {
+    if ($uid <= 0) {
+      return [];
+    }
+
+    $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($uid);
+    if (!in_array((int) $term->id(), $pending_tids, TRUE)) {
+      return [];
+    }
+
+    $pending_since = 0;
+    $request_nids = $this->entityTypeManager()->getStorage('node')->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'badge_request')
+      ->condition('status', 1)
+      ->condition('field_member_to_badge.target_id', $uid)
+      ->condition('field_badge_status', 'pending')
+      ->condition('field_badge_requested.target_id', (int) $term->id())
+      ->sort('created', 'ASC')
+      ->range(0, 1)
+      ->execute();
+    if ($request_nids) {
+      $request = $this->entityTypeManager()->getStorage('node')->load(reset($request_nids));
+      if ($request) {
+        $pending_since = (int) $request->getCreatedTime();
+      }
+    }
+
+    $section = $this->buildBadgeSection($term, $uid, $pending_since);
+    unset($section['heading']);
+    $section['#attributes']['class'][] = 'badge-next-step-card--term-page';
+    return $section;
+  }
+
+  /**
+   * Builds only the schedule-table portion for a badge term.
+   *
+   * This is used by other pages (e.g. quiz result pages) that want the
+   * schedule matrix above legacy facilitator listings.
+   */
+  public function buildScheduleTableForBadgeTerm(TermInterface $term): array {
+    $facilitators = $this->getFacilitatorsForBadge($term);
+    if (!$facilitators) {
+      return [];
+    }
+    return $this->buildFacilitatorScheduleTable($facilitators, (int) $term->id());
+  }
+
+  /**
    * Builds the card for a single pending badge.
    */
   protected function buildBadgeSection(TermInterface $term, int $uid, int $pending_since = 0): array {
@@ -109,7 +164,7 @@ class BadgeNextStepsController extends ControllerBase {
       $age_text = $this->t('pending for @days days', ['@days' => $days]);
     }
     $notice_text = $this->t(
-      'This badge has been @age — complete your checkout with a facilitator to activate it.',
+      'This badge has been @age — choose a time below to complete checkout and activate it.',
       ['@age' => $age_text]
     );
 
@@ -178,9 +233,9 @@ class BadgeNextStepsController extends ControllerBase {
         'heading' => [
           '#type' => 'html_tag',
           '#tag' => 'h4',
-          '#value' => $this->t('Join an upcoming session'),
+          '#value' => $this->t('Next available sessions'),
         ],
-        'note' => ['#markup' => '<p class="badge-option-note">' . $this->t('A facilitator is already scheduled — most efficient option.') . '</p>'],
+        'note' => ['#markup' => '<p class="badge-option-note">' . $this->t('Fastest path: join an existing open session.') . '</p>'],
         'slots' => $rows,
       ];
     }
@@ -203,7 +258,7 @@ class BadgeNextStepsController extends ControllerBase {
           'heading' => [
             '#type' => 'html_tag',
             '#tag' => 'h4',
-            '#value' => $this->t('Attend an upcoming class'),
+            '#value' => $this->t('Upcoming classes'),
           ],
           'items' => $items,
         ];
@@ -214,31 +269,16 @@ class BadgeNextStepsController extends ControllerBase {
     $facilitators = $this->getFacilitatorsForBadge($term);
     if ($facilitators) {
       $has_options = TRUE;
-      $items = [];
-      foreach ($facilitators as $entry) {
-        $items[] = $this->buildFacilitatorItem(
-          $entry['user'],
-          $tid,
-          $entry['availability'],
-          (int) ($entry['soonest_ts'] ?? 0),
-        );
-      }
-      $grid = [
-        '#type' => 'container',
-        '#attributes' => ['class' => ['facilitator-cards-grid']],
-      ];
-      foreach ($items as $idx => $item) {
-        $grid['f_' . $idx] = $item;
-      }
+      $schedule = $this->buildFacilitatorScheduleTable($facilitators, $tid);
       $section['options']['book'] = [
         '#type' => 'container',
         '#attributes' => ['class' => ['badge-option', 'badge-option--book']],
         'heading' => [
           '#type' => 'html_tag',
           '#tag' => 'h4',
-          '#value' => $this->t('Schedule a session with a facilitator'),
+          '#value' => $this->t('Book a new session time'),
         ],
-        'grid' => $grid,
+        'table' => $schedule,
       ];
     }
 
@@ -415,6 +455,12 @@ class BadgeNextStepsController extends ControllerBase {
 
     $available = [];
     foreach ($users as $user) {
+      // Match the legacy facilitator card list behavior: only users with the
+      // facilitator role should appear in scheduling options.
+      if (!$user->hasRole('facilitator')) {
+        continue;
+      }
+
       $profiles = $profile_storage->loadByUser($user, $bundle);
       $profile = is_array($profiles) ? reset($profiles) : $profiles;
       if (!$profile) {
@@ -434,22 +480,30 @@ class BadgeNextStepsController extends ControllerBase {
 
       // Find the soonest slot within the availability window.
       $soonest_ts = NULL;
+      $slot_rows = [];
       foreach ($profile->get('field_coordinator_hours') as $item) {
         $slot_ts = (int) ($item->value ?? 0);
         if ($slot_ts >= $window_start && $slot_ts <= $window_end) {
           if ($soonest_ts === NULL || $slot_ts < $soonest_ts) {
             $soonest_ts = $slot_ts;
           }
+          $slot_rows[] = [
+            'start' => $slot_ts,
+            'end' => (int) ($item->end_value ?? 0),
+          ];
         }
       }
       if ($soonest_ts === NULL) {
         continue;
       }
 
+      usort($slot_rows, fn($a, $b) => $a['start'] <=> $b['start']);
+
       $available[] = [
         'user' => $user,
         'availability' => $this->formatCoordinatorHours($profile),
         'soonest_ts' => $soonest_ts,
+        'slots' => $slot_rows,
       ];
     }
 
@@ -457,6 +511,195 @@ class BadgeNextStepsController extends ControllerBase {
     usort($available, fn($a, $b) => $a['soonest_ts'] <=> $b['soonest_ts']);
 
     return $available;
+  }
+
+  /**
+   * Builds a week-style schedule table from facilitator availability slots.
+   */
+  protected function buildFacilitatorScheduleTable(array $facilitators, int $badge_tid): array {
+    $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+    $timezone = new \DateTimeZone($timezone_name);
+
+    // Match the Calendly chooser layout cadence.
+    $time_blocks = [
+      'morning' => ['label' => (string) $this->t('Morning (9 AM - 11 AM)'), 'start' => 9, 'end' => 11],
+      'midday' => ['label' => (string) $this->t('Mid Day (11 AM - 2 PM)'), 'start' => 11, 'end' => 14],
+      'evening' => ['label' => (string) $this->t('Evening (5 PM - 8 PM)'), 'start' => 17, 'end' => 20],
+    ];
+
+    $days_to_show = 15;
+    $start_day = new \DateTimeImmutable('today', $timezone);
+    $days = [];
+    for ($i = 0; $i < $days_to_show; $i++) {
+      $day_dt = $start_day->modify('+' . $i . ' days');
+      $key = $day_dt->format('Y-m-d');
+      $days[$key] = [
+        'label' => $this->dateFormatter->format($day_dt->getTimestamp(), 'custom', 'l'),
+        'date' => $this->dateFormatter->format($day_dt->getTimestamp(), 'custom', 'F j, Y'),
+        'blocks' => [
+          'morning' => [],
+          'midday' => [],
+          'evening' => [],
+        ],
+      ];
+    }
+
+    foreach ($facilitators as $facilitator) {
+      $user = $facilitator['user'] ?? NULL;
+      if (!$user || empty($facilitator['slots']) || !is_iterable($facilitator['slots'])) {
+        continue;
+      }
+
+      foreach ($facilitator['slots'] as $slot) {
+        $slot_ts = (int) ($slot['start'] ?? 0);
+        if ($slot_ts <= 0) {
+          continue;
+        }
+
+        $slot_dt = (new \DateTimeImmutable('@' . $slot_ts))->setTimezone($timezone);
+        $day_key = $slot_dt->format('Y-m-d');
+        if (!isset($days[$day_key])) {
+          continue;
+        }
+
+        $hour = (int) $slot_dt->format('G');
+        $block_key = NULL;
+        foreach ($time_blocks as $key => $def) {
+          if ($hour >= $def['start'] && $hour < $def['end']) {
+            $block_key = $key;
+            break;
+          }
+        }
+        if ($block_key === NULL) {
+          continue;
+        }
+
+        $days[$day_key]['blocks'][$block_key][] = [
+          'ts' => $slot_ts,
+          'label' => $this->dateFormatter->format($slot_ts, 'custom', 'g:ia'),
+          'host' => $user->getDisplayName(),
+          'url' => $this->buildScheduleUrl($user->id(), $badge_tid, $slot_ts),
+        ];
+      }
+    }
+
+    // Hide empty days/columns to match the Calendly chooser behavior.
+    foreach ($days as $day_key => $day) {
+      $has_any = FALSE;
+      foreach (array_keys($time_blocks) as $block_key) {
+        if (!empty($day['blocks'][$block_key])) {
+          $has_any = TRUE;
+          usort($days[$day_key]['blocks'][$block_key], fn($a, $b) => $a['ts'] <=> $b['ts']);
+        }
+      }
+      if (!$has_any) {
+        unset($days[$day_key]);
+      }
+    }
+
+    if (!$days) {
+      return [
+        '#markup' => '<p>' . $this->t('No schedule slots currently available.') . '</p>',
+      ];
+    }
+
+    $active_blocks = [];
+    foreach (array_keys($time_blocks) as $block_key) {
+      foreach ($days as $day) {
+        if (!empty($day['blocks'][$block_key])) {
+          $active_blocks[$block_key] = TRUE;
+          break;
+        }
+      }
+    }
+    $time_blocks = array_intersect_key($time_blocks, $active_blocks);
+
+    $table = [
+      '#type' => 'table',
+      '#header' => array_merge(
+        [(string) $this->t('Day')],
+        array_map(fn($block) => $block['label'], $time_blocks)
+      ),
+      '#attributes' => ['class' => ['table', 'table-bordered', 'calendly-week-table']],
+    ];
+
+    foreach ($days as $day) {
+      $row = [];
+      $row[] = [
+        'data' => [
+          '#markup' => '<strong>' . Html::escape($day['label']) . '</strong><br><small>' . Html::escape($day['date']) . '</small>',
+        ],
+      ];
+
+      foreach (array_keys($time_blocks) as $block_key) {
+        $slots = $day['blocks'][$block_key];
+        if (!$slots) {
+          $row[] = ['data' => ['#markup' => '&nbsp;']];
+          continue;
+        }
+
+        $cell = [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['calendly-slot-list-item']],
+        ];
+
+        foreach ($slots as $i => $slot) {
+          $cell['slot_' . $i] = [
+            '#type' => 'container',
+            '#attributes' => ['class' => ['calendly-slot-entry']],
+            'event' => [
+              '#markup' => '<div class="calendly-slot-event-name"><small>' . $this->t('Facilitator badge checkout') . '</small></div>',
+            ],
+            'link' => [
+              '#type' => 'link',
+              '#title' => $this->t('Schedule @time', ['@time' => $slot['label']]),
+              '#url' => $slot['url'],
+              '#attributes' => ['class' => ['btn', 'btn-primary', 'btn-sm']],
+            ],
+            'details' => [
+              '#markup' => '<div class="calendly-slot-details">' . $this->t('With @name', ['@name' => $slot['host']]) . '</div>',
+            ],
+          ];
+        }
+
+        $row[] = ['data' => $cell];
+      }
+
+      $table['#rows'][] = $row;
+    }
+
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['calendly-availability-week-schedule', 'responsive-table']],
+      'table' => $table,
+    ];
+  }
+
+  /**
+   * Builds the appointment add form URL for a host/badge slot.
+   */
+  protected function buildScheduleUrl(int $host_uid, int $badge_tid, int $slot_ts): Url {
+    $query = [
+      'host-uid' => $host_uid,
+      'host' => $host_uid,
+      'badge' => $badge_tid,
+      'purpose' => 'checkout',
+      'from-badges-complete' => 1,
+    ];
+
+    if ($slot_ts > 0) {
+      $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+      try {
+        $slot = (new \DateTimeImmutable('@' . $slot_ts))->setTimezone(new \DateTimeZone($timezone_name));
+        $query['date'] = $slot->format('Y-m-d');
+        $query['start_time'] = (string) $slot_ts;
+      }
+      catch (\Exception $e) {
+        // Fall back to host + badge preselection only.
+      }
+    }
+
+    return Url::fromRoute('node.add', ['node_type' => 'appointment'], ['query' => $query]);
   }
 
   /**
@@ -529,9 +772,12 @@ class BadgeNextStepsController extends ControllerBase {
     }
 
     $spots_label = $this->formatPlural($open_spots, '1 spot left', '@count spots left');
-    $info = $date . ' at ' . $time
-      . ($host_name ? ' with ' . htmlspecialchars($host_name, ENT_QUOTES, 'UTF-8') : '')
-      . ' &mdash; ' . $spots_label;
+    $info = $date . ' at ' . $time . ' &mdash; ' . $spots_label;
+    if ($host_name !== '') {
+      $info .= ' <span class="slot-host">('
+        . $this->t('Facilitator: @name', ['@name' => $host_name])
+        . ')</span>';
+    }
 
     $row = [
       '#type' => 'container',
@@ -586,46 +832,29 @@ class BadgeNextStepsController extends ControllerBase {
    * Renders a card for a facilitator with availability and a booking link.
    */
   protected function buildFacilitatorItem($user, int $badge_tid, string $availability = '', int $soonest_ts = 0): array {
-    $query = [
-      // Keep both query keys for compatibility with existing defaults.
-      'host-uid' => $user->id(),
-      'host' => $user->id(),
-      'badge' => $badge_tid,
-      'purpose' => 'checkout',
-      'from-badges-complete' => 1,
-    ];
+    $schedule_url = $this->buildScheduleUrl((int) $user->id(), $badge_tid, $soonest_ts);
 
+    $name = $user->getDisplayName();
+    $soonest_label = '';
     if ($soonest_ts > 0) {
-      $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
-      try {
-        $slot = (new \DateTimeImmutable('@' . $soonest_ts))->setTimezone(new \DateTimeZone($timezone_name));
-        $query['date'] = $slot->format('Y-m-d');
-        // Mirrors existing scheduler links that send a start_time hint.
-        $query['start_time'] = (string) $soonest_ts;
-      }
-      catch (\Exception $e) {
-        // Fall back to host + badge preselection only.
-      }
+      $soonest_label = $this->dateFormatter->format($soonest_ts, 'custom', 'D, M j g:ia');
     }
-
-    $schedule_url = Url::fromRoute('node.add', ['node_type' => 'appointment'], [
-      'query' => $query,
-    ]);
-
-    $name = htmlspecialchars($user->getDisplayName(), ENT_QUOTES, 'UTF-8');
     $avail_html = $availability
       ? '<span class="facilitator-hours">' . htmlspecialchars($availability, ENT_QUOTES, 'UTF-8') . '</span>'
+      : '';
+    $soonest_html = $soonest_label !== ''
+      ? '<span class="facilitator-next">' . htmlspecialchars($this->t('Next: @time', ['@time' => $soonest_label]), ENT_QUOTES, 'UTF-8') . '</span>'
       : '';
 
     return [
       '#type' => 'container',
       '#attributes' => ['class' => ['facilitator-card']],
       'info' => [
-        '#markup' => '<span class="facilitator-name">' . $name . '</span>' . $avail_html,
+        '#markup' => $soonest_html . $avail_html . '<span class="facilitator-name">' . $this->t('Facilitator: @name', ['@name' => $name]) . '</span>',
       ],
       'link' => [
         '#type' => 'link',
-        '#title' => $this->t('Schedule'),
+        '#title' => $this->t('Choose this time window'),
         '#url' => $schedule_url,
         '#attributes' => ['class' => ['facilitator-schedule-btn']],
       ],

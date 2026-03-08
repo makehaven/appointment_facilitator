@@ -26,3 +26,10 @@ appointment_feedback_form:
   css:
     theme:
       css/appointment-feedback-form.css: {}
+
+badge_term_cleanup:
+  version: 1.x
+  js:
+    js/badge-term-cleanup.js: {}
+  dependencies:
+    - core/drupal
