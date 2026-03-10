@@ -12,6 +12,7 @@ services:
     arguments:
       - '@entity_type.manager'
       - '@logger.factory'
+      - '@?asset_status.availability'
 
   appointment_facilitator.slack:
     class: Drupal\appointment_facilitator\Service\AppointmentSlackService

@@ -304,10 +304,34 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
   $requires_checkout = ($checkout_requirement !== '' && $checkout_requirement !== 'no');
 
   $gate_result = NULL;
-  if (!$is_admin && $uid > 0 && \Drupal::hasService('appointment_facilitator.badge_gate')) {
+  $gate = NULL;
+  if (\Drupal::hasService('appointment_facilitator.badge_gate')) {
     /** @var \Drupal\appointment_facilitator\Service\BadgePrerequisiteGate $gate */
     $gate = \Drupal::service('appointment_facilitator.badge_gate');
-    $gate_result = $gate->evaluate($uid, $badge);
+    if ($uid > 0 && !$is_admin) {
+      $gate_result = $gate->evaluate($uid, $badge);
+    }
+  }
+
+  // --- Tool offline check ---
+  if ($gate && $gate->isBadgeOffline($badge)) {
+    _appointment_facilitator_hide_badge_page_components($build, [
+      'group_checkout',
+      'field_badge_issuer_on_request',
+      'field_badge_issuer',
+      'facilitator_schedules_facilitator_schedule_tool_eva',
+      'facilitator_schedules_facilitator_profile_badger_list',
+      'event_upcoming_badging_badge_events',
+    ]);
+
+    $build['appointment_facilitator_offline_warning'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--error', 'badge-offline-notice']],
+      '#weight' => -200,
+      'message' => [
+        '#markup' => '<p>' . t('<strong>Tool currently out of service:</strong> The tool(s) required for this badge checkout are currently marked as offline for maintenance. Scheduling for this badge is temporarily unavailable.') . '</p>',
+      ],
+    ];
   }
 
   $blocked_by_gate = is_array($gate_result) && empty($gate_result['allowed']);
@@ -990,7 +1014,7 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   // Add reservation conflict checking.
   $form['#validate'][] = '_appointment_facilitator_validate_reservation_conflicts';
 
-  if ($form_id === 'node_appointment_form') {
+  if ($form_id === 'node_appointment_form' || $form_id === 'node_appointment_edit_form') {
     $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
     $form['#validate'][] = 'appointment_facilitator_validate_slot_coverage';
   }
@@ -1225,12 +1249,12 @@ function appointment_facilitator_validate_slot_coverage(array &$form, FormStateI
     return;
   }
 
-  // Keep an admin override path for emergency scheduling edits.
-  if (\Drupal::currentUser()->hasPermission('administer nodes')) {
-    return;
+  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
+
+  if (!_appointment_facilitator_are_slots_consecutive($form_state->getValue('field_appointment_slot'))) {
+    $form_state->setErrorByName('field_appointment_slot', t('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.'));
   }
 
-  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
   if ($purpose !== 'checkout') {
     return;
   }
@@ -2202,7 +2226,7 @@ function _appointment_facilitator_resolve_checkout_reservation_purpose(NodeInter
     return NULL;
   }
 
-  $allowed = $reservation->getFieldDefinition()->getSetting('allowed_values');
+  $allowed = $reservation->getFieldDefinition('field_reservation_purpose')->getSetting('allowed_values');
   if (!is_array($allowed) || $allowed === []) {
     return NULL;
   }
@@ -2268,6 +2292,43 @@ function _appointment_facilitator_extract_slot_offsets(NodeInterface $node): arr
   }
   sort($offsets);
   return array_values(array_unique($offsets));
+}
+
+/**
+ * Checks if the selected slots are consecutive.
+ *
+ * @param mixed $slot_value
+ *   The field values from field_appointment_slot.
+ *
+ * @return bool
+ *   TRUE if slots are consecutive or fewer than 2 are selected.
+ */
+function _appointment_facilitator_are_slots_consecutive($slot_value): bool {
+  if (!is_array($slot_value)) {
+    return TRUE;
+  }
+
+  $map = _appointment_facilitator_slot_offset_map();
+  $offsets = [];
+  foreach ($slot_value as $item) {
+    $value = is_array($item) ? ($item['value'] ?? NULL) : $item;
+    if ($value !== NULL && isset($map[$value])) {
+      $offsets[] = (int) $map[$value];
+    }
+  }
+
+  if (count($offsets) <= 1) {
+    return TRUE;
+  }
+
+  sort($offsets);
+  for ($i = 0; $i < count($offsets) - 1; $i++) {
+    if ($offsets[$i + 1] - $offsets[$i] !== 30) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
 }
 
 /**

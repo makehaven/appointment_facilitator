@@ -2,6 +2,7 @@
 
 namespace Drupal\appointment_facilitator\Service;
 
+use Drupal\asset_status\Service\AssetAvailability;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\taxonomy\TermInterface;
@@ -14,6 +15,7 @@ class BadgePrerequisiteGate {
   public function __construct(
     protected EntityTypeManagerInterface $entityTypeManager,
     LoggerChannelFactoryInterface $loggerFactory,
+    protected readonly ?AssetAvailability $assetAvailability = NULL,
   ) {
     $this->logger = $loggerFactory->get('appointment_facilitator');
   }
@@ -24,6 +26,56 @@ class BadgePrerequisiteGate {
    * @var \Drupal\Core\Logger\LoggerChannelInterface
    */
   protected $logger;
+
+  /**
+   * Checks if the tool(s) required for this badge are currently offline.
+   *
+   * A badge is considered "offline" if it has associated items and ALL of those
+   * items have an "offline" status (i.e., not Operational or Degraded). If no
+   * items are linked to the badge, it is assumed to be "online".
+   */
+  public function isBadgeOffline(TermInterface $term): bool {
+    if (!$this->assetAvailability) {
+      return FALSE;
+    }
+
+    $tid = (int) $term->id();
+    $storage = $this->entityTypeManager->getStorage('node');
+
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'item')
+      ->condition('status', 1);
+
+    $group = $query->orConditionGroup()
+      ->condition('field_member_badges', $tid)
+      ->condition('field_additional_badges', $tid);
+
+    $nids = $query->condition($group)->execute();
+
+    if (empty($nids)) {
+      return FALSE;
+    }
+
+    $items = $storage->loadMultiple($nids);
+    $any_usable = FALSE;
+
+    foreach ($items as $item) {
+      if (!$item->hasField('field_item_status') || $item->get('field_item_status')->isEmpty()) {
+        // If no status is explicitly set, assume it's usable.
+        $any_usable = TRUE;
+        break;
+      }
+
+      $status_term = $item->get('field_item_status')->entity;
+      if ($status_term instanceof TermInterface && $this->assetAvailability->isUsable($status_term)) {
+        $any_usable = TRUE;
+        break;
+      }
+    }
+
+    return !$any_usable;
+  }
 
   /**
    * Evaluates whether a member can progress on a badge.

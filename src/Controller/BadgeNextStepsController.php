@@ -2,6 +2,7 @@
 
 namespace Drupal\appointment_facilitator\Controller;
 
+use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Url;
@@ -26,6 +27,7 @@ class BadgeNextStepsController extends ControllerBase {
 
   public function __construct(
     protected readonly DateFormatterInterface $dateFormatter,
+    protected readonly BadgePrerequisiteGate $badgeGate,
   ) {}
 
   /**
@@ -34,6 +36,7 @@ class BadgeNextStepsController extends ControllerBase {
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('date.formatter'),
+      $container->get('appointment_facilitator.badge_gate'),
     );
   }
 
@@ -91,6 +94,17 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
+   * Checks if the tool(s) required for this badge are currently offline.
+   *
+   * A badge is considered "offline" if it has associated items and ALL of those
+   * items have an "offline" status (i.e., not Operational or Degraded). If no
+   * items are linked to the badge, it is assumed to be "online".
+   */
+  protected function isBadgeOffline(TermInterface $term): bool {
+    return $this->badgeGate->isBadgeOffline($term);
+  }
+
+  /**
    * Builds a schedule-first section for a single badge term page.
    *
    * Only returns content when the member has this specific badge in pending
@@ -137,6 +151,16 @@ class BadgeNextStepsController extends ControllerBase {
    * schedule matrix above legacy facilitator listings.
    */
   public function buildScheduleTableForBadgeTerm(TermInterface $term): array {
+    if ($this->isBadgeOffline($term)) {
+      return [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--error', 'badge-offline-notice']],
+        'message' => [
+          '#markup' => '<p>' . $this->t('<strong>Scheduling currently unavailable:</strong> The tool(s) required for this badge checkout are currently marked as offline for maintenance. Please check back later.') . '</p>',
+        ],
+      ];
+    }
+
     $facilitators = $this->getFacilitatorsForBadge($term);
     if (!$facilitators) {
       return [];
@@ -192,6 +216,18 @@ class BadgeNextStepsController extends ControllerBase {
         '#attributes' => ['class' => ['badge-options']],
       ],
     ];
+
+    // --- Tool offline check ---
+    if ($this->isBadgeOffline($term)) {
+      $section['options']['offline'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--error', 'badge-offline-notice']],
+        'message' => [
+          '#markup' => '<p>' . $this->t('<strong>Scheduling currently unavailable:</strong> The tool(s) required for this badge checkout are currently marked as offline for maintenance. Please check back later when the tool status is restored to Operational.') . '</p>',
+        ],
+      ];
+      return $section;
+    }
 
     // --- Already scheduled? Show when and skip all booking options ---
     $existing = $this->findExistingAppointmentForBadge($tid, $uid);
