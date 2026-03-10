@@ -33,3 +33,10 @@ badge_term_cleanup:
     js/badge-term-cleanup.js: {}
   dependencies:
     - core/drupal
+
+appointment_slot_prefill:
+  version: 1.x
+  js:
+    js/appointment-slot-prefill.js: {}
+  dependencies:
+    - core/drupal

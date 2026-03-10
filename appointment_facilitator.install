@@ -399,6 +399,7 @@ function appointment_facilitator_install() {
   _appointment_facilitator_ensure_timerange_and_displays();
   appointment_facilitator_ensure_fields($badges, $bundle);
   appointment_facilitator_ensure_displays($badges, $bundle);
+  _appointment_facilitator_ensure_reservation_source_field();
 }
 
 /**
@@ -662,4 +663,56 @@ function appointment_facilitator_update_9019() {
   // On larger sites this can run for a long time and block deployments.
   node_access_needs_rebuild(TRUE);
   return t('Marked node access grants for rebuild.');
+}
+
+/**
+ * Add reservation source appointment linkage for appointment-driven holds.
+ */
+function appointment_facilitator_update_9020() {
+  _appointment_facilitator_ensure_reservation_source_field();
+  return t('Ensured the reservation source appointment field exists.');
+}
+
+/**
+ * Ensures reservation nodes can reference their source appointment.
+ */
+function _appointment_facilitator_ensure_reservation_source_field(): void {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  if (!$entity_type_manager->hasDefinition('node_type')) {
+    return;
+  }
+
+  $node_type_storage = $entity_type_manager->getStorage('node_type');
+  if (!$node_type_storage->load('reservation') || !$node_type_storage->load('appointment')) {
+    return;
+  }
+
+  if (!FieldStorageConfig::loadByName('node', 'field_source_appointment')) {
+    FieldStorageConfig::create([
+      'field_name' => 'field_source_appointment',
+      'entity_type' => 'node',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'node',
+      ],
+      'cardinality' => 1,
+    ])->save();
+  }
+
+  if (!FieldConfig::loadByName('node', 'reservation', 'field_source_appointment')) {
+    FieldConfig::create([
+      'field_name' => 'field_source_appointment',
+      'entity_type' => 'node',
+      'bundle' => 'reservation',
+      'label' => 'Source Appointment',
+      'settings' => [
+        'handler' => 'default:node',
+        'handler_settings' => [
+          'target_bundles' => [
+            'appointment' => 'appointment',
+          ],
+        ],
+      ],
+    ])->save();
+  }
 }

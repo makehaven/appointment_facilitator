@@ -54,9 +54,11 @@ class FacilitatorDashboardController extends ControllerBase {
     $host = $this->currentUser();
 
     if ($attendee) {
-      $message = $this->t('Hi @name, your facilitator (@host) is running a few minutes late for your appointment. They are on their way!', [
+      $appointment_url = $node->toUrl()->setAbsolute()->toString();
+      $message = $this->t('Hi @name, your facilitator (@host) is running a few minutes late for your appointment. They are on their way! Appointment: @url', [
         '@name' => $attendee->getDisplayName(),
         '@host' => $host->getDisplayName(),
+        '@url' => $appointment_url,
       ]);
 
       $success = $this->slackService->sendMessageToUser($attendee, (string) $message);

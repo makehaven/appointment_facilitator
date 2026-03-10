@@ -4,10 +4,13 @@ use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\Display\EntityViewDisplayInterface;
 use Drupal\Core\Field\FieldDefinitionInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Component\Utility\Unicode;
 use Drupal\Core\Url;
+use Drupal\node\Entity\Node;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\taxonomy\TermInterface;
@@ -71,13 +74,48 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
  *
  * Adds appointment join controls and badge-request quick approval actions.
  */
-function appointment_facilitator_entity_view(array &$build, EntityInterface $entity, $view_mode, $langcode) {
+function appointment_facilitator_entity_view(array &$build, EntityInterface $entity, $display = NULL, $view_mode = NULL): void {
+  // Support Drupal's current hook signature and older direct test calls that
+  // passed ($build, $entity, $view_mode, $langcode).
+  if (is_string($display) && is_string($view_mode)) {
+    $view_mode = $display;
+    $display = NULL;
+  }
+  elseif ($view_mode === NULL && is_string($display)) {
+    $view_mode = $display;
+    $display = NULL;
+  }
+
+  if ($display !== NULL && !$display instanceof EntityViewDisplayInterface) {
+    return;
+  }
+
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
     _appointment_facilitator_enforce_badge_page_flow($build, $entity);
     return;
   }
 
   if ($entity->getEntityTypeId() !== 'node') {
+    return;
+  }
+
+  if ($entity instanceof NodeInterface) {
+    _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
+  }
+}
+
+/**
+ * Implements hook_node_view().
+ */
+function appointment_facilitator_node_view(array &$build, NodeInterface $entity, EntityViewDisplayInterface $display, $view_mode): void {
+  _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
+}
+
+/**
+ * Adds appointment/reservation related UI to node view builds.
+ */
+function _appointment_facilitator_build_node_view(array &$build, NodeInterface $entity, ?string $view_mode): void {
+  if ($view_mode === NULL) {
     return;
   }
 
@@ -92,6 +130,40 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       'summary' => ['#markup' => '<div><strong>' . t('Capacity') . ':</strong> ' . $effective_capacity . '</div>'],
       '#weight' => -60,
     ];
+
+    $reservation_links = _appointment_facilitator_build_link_items(_appointment_facilitator_load_linked_reservations($entity));
+    if ($reservation_links) {
+      $build['appointment_related_reservations'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['appointment-related-links', 'messages', 'messages--status']],
+        '#weight' => -45,
+        'title' => [
+          '#type' => 'html_tag',
+          '#tag' => 'h3',
+          '#value' => t('Tool Reservations'),
+        ],
+        'links' => [
+          '#theme' => 'item_list',
+          '#items' => $reservation_links,
+        ],
+      ];
+    }
+
+    $unresolved_badges = _appointment_facilitator_should_hold_tools_for_appointment($entity)
+      ? _appointment_facilitator_collect_unresolved_reservation_badges($entity)
+      : [];
+    if ($unresolved_badges) {
+      $build['appointment_reservation_warning'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--warning', 'appointment-reservation-warning']],
+        '#weight' => -44,
+        'message' => [
+          '#markup' => '<p>' . t('No automatic tool reservation was made for: @badges. This badge maps to multiple tools, so a manual reservation may still be needed.', [
+            '@badges' => implode(', ', $unresolved_badges),
+          ]) . '</p>',
+        ],
+      ];
+    }
 
     // Gate the Join CTA.
     if ($account->isAnonymous() || !$entity->hasField('field_appointment_attendees')) {
@@ -145,6 +217,27 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       }
     }
 
+    return;
+  }
+
+  if ($entity->bundle() === 'reservation' && $view_mode === 'full') {
+    $appointment = _appointment_facilitator_load_source_appointment($entity);
+    if ($appointment instanceof NodeInterface) {
+      $build['reservation_source_appointment'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['reservation-related-links', 'messages', 'messages--status']],
+        '#weight' => -45,
+        'title' => [
+          '#type' => 'html_tag',
+          '#tag' => 'h3',
+          '#value' => t('Related Appointment'),
+        ],
+        'links' => [
+          '#theme' => 'item_list',
+          '#items' => _appointment_facilitator_build_link_items([$appointment]),
+        ],
+      ];
+    }
     return;
   }
 
@@ -550,6 +643,48 @@ function appointment_facilitator_node_presave(NodeInterface $node) {
   }
   _appointment_facilitator_populate_timerange_from_slots($node);
   _appointment_facilitator_sync_date_from_timerange($node);
+  _appointment_facilitator_ensure_title($node);
+}
+
+/**
+ * Implements hook_node_insert().
+ */
+function appointment_facilitator_node_insert(NodeInterface $node): void {
+  if ($node->bundle() !== 'appointment') {
+    return;
+  }
+
+  if (_appointment_facilitator_skip_nested_reservation_sync()) {
+    return;
+  }
+
+  _appointment_facilitator_sync_tool_reservations($node);
+}
+
+/**
+ * Implements hook_node_update().
+ */
+function appointment_facilitator_node_update(NodeInterface $node): void {
+  if ($node->bundle() !== 'appointment') {
+    return;
+  }
+
+  if (_appointment_facilitator_skip_nested_reservation_sync()) {
+    return;
+  }
+
+  _appointment_facilitator_sync_tool_reservations($node);
+}
+
+/**
+ * Implements hook_node_predelete().
+ */
+function appointment_facilitator_node_predelete(NodeInterface $node): void {
+  if ($node->bundle() !== 'appointment') {
+    return;
+  }
+
+  _appointment_facilitator_cancel_linked_reservations($node);
 }
 
 /**
@@ -797,6 +932,8 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
         }
       }
     }
+
+    _appointment_facilitator_prefill_slot_defaults($form, $entity);
   }
 
   // Pass pending badge data and the admin bypass flag to JS. This runs for
@@ -818,21 +955,34 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   }
 
   $all_badge_urls = [];
+  $badge_checkout_minutes = [];
   $badges_vocab = \Drupal::config('appointment_facilitator.settings')->get('badges_vocab_machine_name') ?: 'badges';
   $all_tids = \Drupal::entityQuery('taxonomy_term')
     ->accessCheck(FALSE)
     ->condition('vid', $badges_vocab)
     ->execute();
-  foreach ($all_tids as $tid) {
-    $all_badge_urls[(string) $tid] = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $tid])->toString();
+  if ($all_tids) {
+    $all_terms = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->loadMultiple($all_tids);
+    foreach ($all_tids as $tid) {
+      $all_badge_urls[(string) $tid] = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $tid])->toString();
+
+      if (isset($all_terms[$tid]) && $all_terms[$tid]->hasField('field_badge_checkout_minutes') && !$all_terms[$tid]->get('field_badge_checkout_minutes')->isEmpty()) {
+        $raw_minutes = (string) $all_terms[$tid]->get('field_badge_checkout_minutes')->value;
+        if (preg_match('/(\d+)/', $raw_minutes, $matches)) {
+          $badge_checkout_minutes[(string) $tid] = (int) $matches[1];
+        }
+      }
+    }
   }
 
   $form['#attached']['drupalSettings']['appointmentFacilitator'] = [
     'pendingBadgeTids' => array_values($pending_tids),
     'pendingBadgeData' => $pending_badge_data,
     'allBadgeUrls' => $all_badge_urls,
+    'badgeCheckoutMinutes' => $badge_checkout_minutes,
     'bypassPendingCheck' => $is_admin,
   ];
+  $form['#attached']['library'][] = 'appointment_facilitator/appointment_slot_prefill';
 
   // Add custom validation to prevent duplicate badge requests.
   $form['#validate'][] = '_appointment_facilitator_validate_no_duplicates';
@@ -1209,6 +1359,51 @@ function _appointment_facilitator_count_selected_slots($slot_value): int {
 }
 
 /**
+ * Preselects the earliest contiguous available slots for checkout appointments.
+ */
+function _appointment_facilitator_prefill_slot_defaults(array &$form, NodeInterface $appointment): void {
+  if (!$appointment->hasField('field_appointment_purpose') || (string) $appointment->get('field_appointment_purpose')->value !== 'checkout') {
+    return;
+  }
+
+  if (!$appointment->hasField('field_appointment_badges') || $appointment->get('field_appointment_badges')->isEmpty()) {
+    return;
+  }
+
+  if (!isset($form['field_appointment_slot']['widget']) || !is_array($form['field_appointment_slot']['widget'])) {
+    return;
+  }
+
+  $required_slots = max(1, (int) ceil(_appointment_facilitator_total_checkout_minutes_for_badges(array_map(
+    static fn($item) => (int) ($item['target_id'] ?? 0),
+    $appointment->get('field_appointment_badges')->getValue()
+  )) / 30));
+
+  $available_keys = [];
+  foreach ($form['field_appointment_slot']['widget'] as $key => $element) {
+    if (!is_string($key) || $key === '' || $key[0] === '#' || !is_array($element)) {
+      continue;
+    }
+    if (($element['#type'] ?? NULL) !== 'checkbox' || !empty($element['#disabled'])) {
+      continue;
+    }
+    $available_keys[] = $key;
+  }
+
+  if (count($available_keys) < $required_slots) {
+    return;
+  }
+
+  $selected_keys = array_slice($available_keys, 0, $required_slots);
+  $form['field_appointment_slot']['widget']['#default_value'] = $selected_keys;
+  foreach ($selected_keys as $slot_key) {
+    if (isset($form['field_appointment_slot']['widget'][$slot_key])) {
+      $form['field_appointment_slot']['widget'][$slot_key]['#default_value'] = $slot_key;
+    }
+  }
+}
+
+/**
  * Loads badge term IDs that are currently pending for a member.
  */
 function _appointment_facilitator_load_pending_badge_term_ids(int $member_uid): array {
@@ -1487,6 +1682,562 @@ function _appointment_facilitator_sync_date_from_timerange(NodeInterface $node):
   }
 
   $node->set('field_appointment_date', $date->format('Y-m-d'));
+}
+
+/**
+ * Ensures appointment nodes always have a descriptive title before save.
+ */
+function _appointment_facilitator_ensure_title(NodeInterface $node): void {
+  $current_title = trim((string) $node->label());
+  if ($current_title !== '') {
+    return;
+  }
+
+  $title = _appointment_facilitator_build_title($node);
+  if ($title === '') {
+    $title = 'Appointment';
+  }
+
+  $node->setTitle(Unicode::truncate($title, 255, TRUE, TRUE));
+}
+
+/**
+ * Builds a fallback appointment title from the available appointment context.
+ */
+function _appointment_facilitator_build_title(NodeInterface $node): string {
+  $subject = 'Appointment';
+  $purpose = '';
+
+  if ($node->hasField('field_appointment_purpose') && !$node->get('field_appointment_purpose')->isEmpty()) {
+    $purpose_value = (string) $node->get('field_appointment_purpose')->value;
+    $allowed_values = $node->get('field_appointment_purpose')->getFieldDefinition()->getSetting('allowed_values') ?? [];
+    $purpose = trim((string) ($allowed_values[$purpose_value] ?? $purpose_value));
+  }
+
+  $badge_labels = [];
+  if ($node->hasField('field_appointment_badges') && !$node->get('field_appointment_badges')->isEmpty()) {
+    foreach ($node->get('field_appointment_badges')->referencedEntities() as $term) {
+      $label = trim((string) $term->label());
+      if ($label !== '') {
+        $badge_labels[] = $label;
+      }
+    }
+  }
+
+  if ($purpose !== '') {
+    $subject = $purpose;
+  }
+  if ($badge_labels) {
+    $badge_text = implode(', ', $badge_labels);
+    $subject = $purpose === 'Badge Checkout'
+      ? 'Badge Checkout: ' . $badge_text
+      : $subject . ' - ' . $badge_text;
+  }
+
+  $host_name = '';
+  if ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()) {
+    $host_name = trim((string) $node->get('field_appointment_host')->entity?->label());
+  }
+  if ($host_name !== '') {
+    $subject .= ' with ' . $host_name;
+  }
+
+  $when = _appointment_facilitator_build_title_datetime_suffix($node);
+  if ($when !== '') {
+    $subject .= ' on ' . $when;
+  }
+
+  return trim(preg_replace('/\s+/', ' ', $subject) ?? $subject);
+}
+
+/**
+ * Builds a human-readable date/time suffix for generated appointment titles.
+ */
+function _appointment_facilitator_build_title_datetime_suffix(NodeInterface $node): string {
+  $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $timezone = new \DateTimeZone($site_timezone);
+  $date = NULL;
+
+  if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
+    $item = $node->get('field_appointment_timerange')->first();
+    try {
+      if (is_numeric($item?->value)) {
+        $item_timezone = $item->timezone ?: $site_timezone;
+        $date = (new \DateTimeImmutable('@' . (int) $item->value))
+          ->setTimezone(new \DateTimeZone($item_timezone));
+      }
+      elseif (!empty($item?->value)) {
+        $date = new \DateTimeImmutable($item->value, $timezone);
+      }
+    }
+    catch (\Exception $e) {
+      $date = NULL;
+    }
+
+    if ($date instanceof \DateTimeImmutable) {
+      return $date->format('Y-m-d g:ia');
+    }
+  }
+
+  if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
+    try {
+      $date = new \DateTimeImmutable((string) $node->get('field_appointment_date')->value . ' 00:00:00', $timezone);
+      return $date->format('Y-m-d');
+    }
+    catch (\Exception $e) {
+      return '';
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Creates, updates, or cancels linked tool reservations for an appointment.
+ */
+function _appointment_facilitator_sync_tool_reservations(NodeInterface $appointment): void {
+  if (!_appointment_facilitator_can_sync_tool_reservations($appointment)) {
+    return;
+  }
+
+  $linked_reservations = _appointment_facilitator_load_linked_reservations($appointment);
+
+  if (!_appointment_facilitator_should_hold_tools_for_appointment($appointment)) {
+    _appointment_facilitator_cancel_reservation_nodes($linked_reservations);
+    return;
+  }
+
+  $time_range = _appointment_facilitator_extract_reservation_time_range($appointment);
+  if (!$time_range) {
+    _appointment_facilitator_cancel_reservation_nodes($linked_reservations);
+    return;
+  }
+
+  $asset_ids = _appointment_facilitator_resolve_reservation_asset_ids($appointment);
+  $unresolved_badges = _appointment_facilitator_collect_unresolved_reservation_badges($appointment);
+  if ($unresolved_badges) {
+    _appointment_facilitator_notify_manual_reservation_needed($unresolved_badges);
+  }
+  if (!$asset_ids) {
+    _appointment_facilitator_cancel_reservation_nodes($linked_reservations);
+    return;
+  }
+
+  $remaining_assets = array_fill_keys($asset_ids, TRUE);
+  foreach ($linked_reservations as $reservation) {
+    $asset_id = (int) ($reservation->get('field_reservation_asset')->target_id ?? 0);
+    if ($asset_id > 0 && isset($remaining_assets[$asset_id])) {
+      _appointment_facilitator_apply_reservation_values($reservation, $appointment, $asset_id, $time_range, 'confirmed');
+      $reservation->save();
+      unset($remaining_assets[$asset_id]);
+      continue;
+    }
+
+    _appointment_facilitator_apply_reservation_status($reservation, 'cancelled');
+    $reservation->save();
+  }
+
+  foreach (array_keys($remaining_assets) as $asset_id) {
+    $reservation = Node::create([
+      'type' => 'reservation',
+      'status' => 1,
+    ]);
+    _appointment_facilitator_apply_reservation_values($reservation, $appointment, (int) $asset_id, $time_range, 'confirmed');
+    $reservation->save();
+  }
+}
+
+/**
+ * Cancels any linked reservations when an appointment is removed.
+ *
+ * @param \Drupal\node\NodeInterface $appointment
+ *   The appointment node being deleted.
+ */
+function _appointment_facilitator_cancel_linked_reservations(NodeInterface $appointment): void {
+  if (!_appointment_facilitator_can_sync_tool_reservations($appointment)) {
+    return;
+  }
+
+  _appointment_facilitator_cancel_reservation_nodes(_appointment_facilitator_load_linked_reservations($appointment));
+}
+
+/**
+ * Returns whether reservation sync prerequisites exist on this site.
+ */
+function _appointment_facilitator_can_sync_tool_reservations(NodeInterface $appointment): bool {
+  if ($appointment->id() === NULL || $appointment->bundle() !== 'appointment') {
+    return FALSE;
+  }
+
+  if (!\Drupal::moduleHandler()->moduleExists('node')) {
+    return FALSE;
+  }
+
+  $entity_type_manager = \Drupal::entityTypeManager();
+  if (!$entity_type_manager->hasDefinition('node_type')) {
+    return FALSE;
+  }
+
+  $node_type_storage = $entity_type_manager->getStorage('node_type');
+  if (!$node_type_storage->load('reservation') || !$node_type_storage->load('item')) {
+    return FALSE;
+  }
+
+  $field_manager = \Drupal::service('entity_field.manager');
+  $reservation_fields = $field_manager->getFieldDefinitions('node', 'reservation');
+  foreach (['field_reservation_asset', 'field_reservation_time_range', 'field_reservation_status', 'field_source_appointment'] as $required) {
+    if (!isset($reservation_fields[$required])) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
+/**
+ * SQLite kernel tests cannot safely save nested nodes inside insert/update.
+ */
+function _appointment_facilitator_skip_nested_reservation_sync(): bool {
+  return \Drupal::database()->driver() === 'sqlite';
+}
+
+/**
+ * Returns whether the appointment should actively hold tools.
+ */
+function _appointment_facilitator_should_hold_tools_for_appointment(NodeInterface $appointment): bool {
+  if (!$appointment->hasField('field_appointment_purpose') || $appointment->get('field_appointment_purpose')->isEmpty()) {
+    return FALSE;
+  }
+  if ((string) $appointment->get('field_appointment_purpose')->value !== 'checkout') {
+    return FALSE;
+  }
+  if ($appointment->hasField('field_appointment_status') && !$appointment->get('field_appointment_status')->isEmpty()) {
+    if ((string) $appointment->get('field_appointment_status')->value === 'canceled') {
+      return FALSE;
+    }
+  }
+  if (!$appointment->hasField('field_appointment_badges') || $appointment->get('field_appointment_badges')->isEmpty()) {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Resolves item nodes that can be safely reserved for this appointment.
+ *
+ * Each selected badge must map to exactly one tool; ambiguous badge-to-tool
+ * relationships are skipped to avoid blocking every substitute tool.
+ *
+ * @return int[]
+ *   Unique item node IDs to reserve.
+ */
+function _appointment_facilitator_resolve_reservation_asset_ids(NodeInterface $appointment): array {
+  $asset_ids = [];
+  $terms = [];
+  foreach ($appointment->get('field_appointment_badges')->referencedEntities() as $term) {
+    $terms[(int) $term->id()] = $term;
+  }
+
+  foreach (array_keys($terms) as $badge_id) {
+    $matched_assets = _appointment_facilitator_load_item_ids_for_badge($badge_id);
+    if (count($matched_assets) === 1) {
+      $asset_ids[] = (int) reset($matched_assets);
+      continue;
+    }
+
+    \Drupal::logger('appointment_facilitator')->warning(
+      'Skipping automatic tool reservation for appointment @nid: badge "@badge" maps to @count tools.',
+      [
+        '@nid' => $appointment->id(),
+        '@badge' => $terms[$badge_id]->label(),
+        '@count' => count($matched_assets),
+      ]
+    );
+  }
+
+  $asset_ids = array_values(array_unique(array_filter(array_map('intval', $asset_ids), static fn(int $id): bool => $id > 0)));
+  sort($asset_ids);
+  return $asset_ids;
+}
+
+/**
+ * Collects selected badge labels that cannot be auto-mapped to one tool.
+ *
+ * @return string[]
+ *   Badge labels requiring manual reservation handling.
+ */
+function _appointment_facilitator_collect_unresolved_reservation_badges(NodeInterface $appointment): array {
+  if (!$appointment->hasField('field_appointment_badges') || $appointment->get('field_appointment_badges')->isEmpty()) {
+    return [];
+  }
+
+  $labels = [];
+  foreach ($appointment->get('field_appointment_badges')->referencedEntities() as $term) {
+    $matched_assets = _appointment_facilitator_load_item_ids_for_badge((int) $term->id());
+    if (count($matched_assets) !== 1) {
+      $labels[] = $term->label();
+    }
+  }
+
+  $labels = array_values(array_unique(array_filter(array_map('strval', $labels))));
+  sort($labels);
+  return $labels;
+}
+
+/**
+ * Warns the current UI user that a manual tool reservation may still be needed.
+ */
+function _appointment_facilitator_notify_manual_reservation_needed(array $badge_labels): void {
+  if (!$badge_labels || PHP_SAPI === 'cli') {
+    return;
+  }
+
+  $request = \Drupal::requestStack()->getCurrentRequest();
+  if (!$request || strtoupper($request->getMethod()) !== 'POST') {
+    return;
+  }
+
+  $message = t('Automatic tool reservation was skipped for @badges because the selected badge maps to multiple tools. A manual reservation may still be needed.', [
+    '@badges' => implode(', ', $badge_labels),
+  ]);
+  \Drupal::messenger()->addWarning($message);
+}
+
+/**
+ * Loads published item node IDs that reference the provided badge.
+ *
+ * @return int[]
+ *   Unique item node IDs.
+ */
+function _appointment_facilitator_load_item_ids_for_badge(int $badge_id): array {
+  if ($badge_id <= 0) {
+    return [];
+  }
+
+  $field_manager = \Drupal::service('entity_field.manager');
+  $item_fields = $field_manager->getFieldDefinitions('node', 'item');
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'item')
+    ->condition('status', 1);
+
+  $or = $query->orConditionGroup();
+  $has_conditions = FALSE;
+  foreach (['field_member_badges', 'field_additional_badges'] as $field_name) {
+    if (!isset($item_fields[$field_name])) {
+      continue;
+    }
+    $or->condition($field_name . '.target_id', $badge_id);
+    $has_conditions = TRUE;
+  }
+
+  if (!$has_conditions) {
+    return [];
+  }
+
+  $ids = $query->condition($or)->execute();
+  $ids = array_values(array_unique(array_map('intval', $ids)));
+  sort($ids);
+  return $ids;
+}
+
+/**
+ * Loads linked reservation nodes for an appointment.
+ *
+ * @return \Drupal\node\NodeInterface[]
+ *   Reservation nodes keyed by nid.
+ */
+function _appointment_facilitator_load_linked_reservations(NodeInterface $appointment): array {
+  $ids = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'reservation')
+    ->condition('field_source_appointment.target_id', (int) $appointment->id())
+    ->execute();
+
+  if (!$ids) {
+    return [];
+  }
+
+  return \Drupal::entityTypeManager()->getStorage('node')->loadMultiple($ids);
+}
+
+/**
+ * Loads the source appointment referenced by a reservation node, if any.
+ */
+function _appointment_facilitator_load_source_appointment(NodeInterface $reservation): ?NodeInterface {
+  if ($reservation->bundle() !== 'reservation' || !$reservation->hasField('field_source_appointment') || $reservation->get('field_source_appointment')->isEmpty()) {
+    return NULL;
+  }
+
+  $appointment = $reservation->get('field_source_appointment')->entity;
+  return $appointment instanceof NodeInterface ? $appointment : NULL;
+}
+
+/**
+ * Builds item-list link render arrays for related node links.
+ *
+ * @param \Drupal\node\NodeInterface[] $nodes
+ *   Nodes to link to.
+ *
+ * @return array
+ *   Item list entries.
+ */
+function _appointment_facilitator_build_link_items(array $nodes): array {
+  $items = [];
+
+  foreach ($nodes as $node) {
+    if (!$node instanceof NodeInterface) {
+      continue;
+    }
+
+    $items[] = [
+      '#type' => 'link',
+      '#title' => $node->label(),
+      '#url' => $node->toUrl(),
+    ];
+  }
+
+  return $items;
+}
+
+/**
+ * Converts the appointment timerange into a reservation daterange payload.
+ *
+ * @return array{value: string, end_value: string}|null
+ *   Reservation field values, or NULL if unavailable.
+ */
+function _appointment_facilitator_extract_reservation_time_range(NodeInterface $appointment): ?array {
+  if (!$appointment->hasField('field_appointment_timerange') || $appointment->get('field_appointment_timerange')->isEmpty()) {
+    return NULL;
+  }
+
+  $item = $appointment->get('field_appointment_timerange')->first();
+  if (!$item || $item->value === NULL || $item->value === '') {
+    return NULL;
+  }
+
+  $site_timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $timezone = $item->timezone ?: $site_timezone;
+
+  try {
+    if (is_numeric($item->value)) {
+      $start = (new \DateTimeImmutable('@' . (int) $item->value))
+        ->setTimezone(new \DateTimeZone($timezone));
+    }
+    else {
+      $start = new \DateTimeImmutable((string) $item->value, new \DateTimeZone($timezone));
+    }
+
+    if (is_numeric($item->end_value)) {
+      $end = (new \DateTimeImmutable('@' . (int) $item->end_value))
+        ->setTimezone(new \DateTimeZone($timezone));
+    }
+    else {
+      $end_value = (string) ($item->end_value ?? '');
+      if ($end_value === '') {
+        return NULL;
+      }
+      $end = new \DateTimeImmutable($end_value, new \DateTimeZone($timezone));
+    }
+  }
+  catch (\Exception $e) {
+    return NULL;
+  }
+
+  return [
+    'value' => $start->format('Y-m-d\TH:i:s'),
+    'end_value' => $end->format('Y-m-d\TH:i:s'),
+  ];
+}
+
+/**
+ * Applies appointment-derived values to a reservation node.
+ *
+ * @param \Drupal\node\Entity\Node $reservation
+ *   The reservation node to update.
+ * @param \Drupal\node\NodeInterface $appointment
+ *   The source appointment node.
+ * @param int $asset_id
+ *   The reserved item node ID.
+ * @param array{value: string, end_value: string} $time_range
+ *   Reservation daterange values.
+ * @param string $status
+ *   Reservation status value.
+ */
+function _appointment_facilitator_apply_reservation_values(Node $reservation, NodeInterface $appointment, int $asset_id, array $time_range, string $status): void {
+  $reservation->setOwnerId((int) $appointment->getOwnerId());
+  $reservation->set('field_source_appointment', ['target_id' => (int) $appointment->id()]);
+  $reservation->set('field_reservation_asset', ['target_id' => $asset_id]);
+  $reservation->set('field_reservation_time_range', [$time_range]);
+  _appointment_facilitator_apply_reservation_status($reservation, $status);
+
+  if ($reservation->hasField('field_reservation_purpose')) {
+    $purpose = _appointment_facilitator_resolve_checkout_reservation_purpose($reservation);
+    if ($purpose !== NULL) {
+      $reservation->set('field_reservation_purpose', $purpose);
+    }
+  }
+
+  $asset = \Drupal::entityTypeManager()->getStorage('node')->load($asset_id);
+  $asset_label = $asset ? trim((string) $asset->label()) : ('Tool ' . $asset_id);
+  $title = 'Tool reservation: ' . trim((string) $appointment->label()) . ' - ' . $asset_label;
+  $reservation->setTitle(Unicode::truncate($title, 255, TRUE, TRUE));
+}
+
+/**
+ * Sets reservation status if the field exists.
+ */
+function _appointment_facilitator_apply_reservation_status(NodeInterface $reservation, string $status): void {
+  if ($reservation->hasField('field_reservation_status')) {
+    $reservation->set('field_reservation_status', $status);
+  }
+}
+
+/**
+ * Chooses the reservation purpose value for badge checkout appointments.
+ */
+function _appointment_facilitator_resolve_checkout_reservation_purpose(NodeInterface $reservation): ?string {
+  if (!$reservation->hasField('field_reservation_purpose')) {
+    return NULL;
+  }
+
+  $allowed = $reservation->getFieldDefinition()->getSetting('allowed_values');
+  if (!is_array($allowed) || $allowed === []) {
+    return NULL;
+  }
+
+  if (isset($allowed['badge'])) {
+    return 'badge';
+  }
+
+  if (isset($allowed['education'])) {
+    return 'education';
+  }
+
+  $fallback = array_key_first($allowed);
+  return is_string($fallback) && $fallback !== '' ? $fallback : NULL;
+}
+
+/**
+ * Cancels a list of reservation nodes.
+ *
+ * @param \Drupal\node\NodeInterface[] $reservations
+ *   Reservation nodes to cancel.
+ */
+function _appointment_facilitator_cancel_reservation_nodes(array $reservations): void {
+  foreach ($reservations as $reservation) {
+    if (!$reservation instanceof NodeInterface || $reservation->bundle() !== 'reservation') {
+      continue;
+    }
+
+    if ($reservation->hasField('field_reservation_status') && (string) $reservation->get('field_reservation_status')->value === 'cancelled') {
+      continue;
+    }
+
+    _appointment_facilitator_apply_reservation_status($reservation, 'cancelled');
+    $reservation->save();
+  }
 }
 
 /**
