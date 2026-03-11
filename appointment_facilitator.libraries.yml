@@ -46,3 +46,13 @@ appointment_table:
   css:
     theme:
       css/appointment-table.css: {}
+
+appointments:
+  version: 1.x
+  css:
+    theme:
+      css/appointments.css: {}
+  js:
+    js/appointment-filter.js: {}
+  dependencies:
+    - core/drupal

@@ -1,0 +1,71 @@
+{#
+/**
+ * @file
+ * Template for a single appointment card.
+ *
+ * Available variables:
+ * - role:         'hosting' | 'attended' | 'attending' | 'hosted'
+ * - role_label:   Human-readable role string.
+ * - date:         Formatted date string, e.g. "Wed, Mar 11".
+ * - time:         Formatted time range, e.g. "4:00–5:00 pm".
+ * - url:          Path to the appointment node.
+ * - host:         Facilitator display name.
+ * - member:       Member (node owner) display name.
+ * - purpose:      Appointment purpose label.
+ * - badges:       Array of badge term names.
+ * - note:         Optional note text.
+ * - is_past:      Boolean, TRUE for past appointments.
+ * - feedback_url: URL for the feedback form (past only).
+ */
+#}
+<div class="appt-card appt-card--{{ role }}" data-href="{{ url }}">
+
+  <div class="appt-card__header">
+    <span class="appt-card__role-badge appt-card__role-badge--{{ role }}">{{ role_label }}</span>
+    <div class="appt-card__when">
+      <span class="appt-card__date">{{ date }}</span>
+      {% if time %}
+        <span class="appt-card__time">{{ time }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="appt-card__body">
+    {% if role == 'hosting' or role == 'hosted' %}
+      <div class="appt-card__person">
+        <span class="appt-card__person-label">Member</span>
+        <span class="appt-card__person-name">{{ member }}</span>
+      </div>
+    {% else %}
+      <div class="appt-card__person">
+        <span class="appt-card__person-label">Volunteer</span>
+        <span class="appt-card__person-name">{{ host }}</span>
+      </div>
+    {% endif %}
+
+    {% if purpose %}
+      <div class="appt-card__purpose">{{ purpose }}</div>
+    {% endif %}
+
+    {% if badges %}
+      <div class="appt-card__badges">
+        {% for badge in badges %}
+          <span class="appt-card__badge-pill">{{ badge }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if note %}
+      <div class="appt-card__note">{{ note }}</div>
+    {% endif %}
+  </div>
+
+  {% if is_past and feedback_url %}
+    <div class="appt-card__footer">
+      <a href="{{ feedback_url }}" class="appt-card__feedback-link" onclick="event.stopPropagation()">
+        Leave Feedback →
+      </a>
+    </div>
+  {% endif %}
+
+</div>

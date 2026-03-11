@@ -2580,3 +2580,34 @@ function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
     $view->element['#attached']['library'][] = 'appointment_facilitator/appointment_table';
   }
 }
+
+/**
+ * Implements hook_theme().
+ */
+function appointment_facilitator_theme(): array {
+  return [
+    'appointment_dashboard' => [
+      'variables' => [
+        'upcoming' => [],
+        'past'     => [],
+      ],
+    ],
+    'appointment_card' => [
+      'variables' => [
+        'role'         => 'attending',
+        'role_label'   => '',
+        'date'         => '',
+        'time'         => '',
+        'url'          => '',
+        'host'         => '',
+        'member'       => '',
+        'purpose'      => '',
+        'badges'       => [],
+        'note'         => '',
+        'is_past'      => FALSE,
+        'feedback_url' => '',
+        'sort_value'   => 0,
+      ],
+    ],
+  ];
+}

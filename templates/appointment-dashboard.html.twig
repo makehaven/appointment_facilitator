@@ -1,0 +1,58 @@
+{#
+/**
+ * @file
+ * Template for the appointment dashboard page (/appointments).
+ *
+ * Available variables:
+ * - upcoming: array of appointment_card render arrays.
+ * - past:     array of appointment_card render arrays.
+ */
+#}
+<div class="appt-dashboard">
+
+  <div class="appt-filter-bar" role="tablist" aria-label="Appointment time filter">
+    <button class="appt-filter-btn active"
+            role="tab"
+            aria-selected="true"
+            aria-controls="appt-upcoming"
+            data-target="upcoming">
+      Upcoming
+      {% if upcoming|length %}
+        <span class="appt-filter-count">{{ upcoming|length }}</span>
+      {% endif %}
+    </button>
+    <button class="appt-filter-btn"
+            role="tab"
+            aria-selected="false"
+            aria-controls="appt-past"
+            data-target="past">
+      Past
+    </button>
+
+    <div class="appt-filter-bar__links">
+      <a href="/appointments/past" class="appt-secondary-link">Everyone</a>
+      <a href="/appointments/feedback" class="appt-secondary-link">Feedback</a>
+    </div>
+  </div>
+
+  <div class="appt-section" id="appt-upcoming" role="tabpanel">
+    {% if upcoming %}
+      {% for card in upcoming %}
+        {{ card }}
+      {% endfor %}
+    {% else %}
+      <p class="appt-empty">No upcoming appointments. <a href="/facilitator/schedules">Schedule one →</a></p>
+    {% endif %}
+  </div>
+
+  <div class="appt-section appt-section--hidden" id="appt-past" role="tabpanel" hidden>
+    {% if past %}
+      {% for card in past %}
+        {{ card }}
+      {% endfor %}
+    {% else %}
+      <p class="appt-empty">No past appointments found.</p>
+    {% endif %}
+  </div>
+
+</div>

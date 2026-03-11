@@ -1,3 +1,11 @@
+appointment_facilitator.appointments_dashboard:
+  path: '/appointments'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\AppointmentDashboardController::dashboard'
+    _title: 'My Appointments'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+
 appointment_facilitator.join:
   path: '/appointment/{node}/join'
   defaults:
