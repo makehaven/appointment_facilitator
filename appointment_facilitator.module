@@ -2568,3 +2568,15 @@ function appointment_facilitator_preprocess_views_view_fields(array &$variables)
 
   $variables['fields']['nothing']->content = ($variables['fields']['nothing']->content ?? '') . ' ' . $join_html;
 }
+
+/**
+ * Implements hook_views_pre_render().
+ *
+ * Attaches the appointment table CSS library to all displays of the
+ * appointments view so times and layout are styled without inline styles.
+ */
+function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
+  if ($view->id() === 'appointments') {
+    $view->element['#attached']['library'][] = 'appointment_facilitator/appointment_table';
+  }
+}

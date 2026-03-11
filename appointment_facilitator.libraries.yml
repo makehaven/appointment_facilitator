@@ -40,3 +40,9 @@ appointment_slot_prefill:
     js/appointment-slot-prefill.js: {}
   dependencies:
     - core/drupal
+
+appointment_table:
+  version: 1.x
+  css:
+    theme:
+      css/appointment-table.css: {}
