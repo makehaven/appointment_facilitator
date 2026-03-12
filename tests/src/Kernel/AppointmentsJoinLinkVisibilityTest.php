@@ -70,7 +70,7 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
    */
   public function testJoinLinkHiddenWhenJoinCapacityIsZero(): void {
     $this->config('appointment_facilitator.settings')
-      ->set('always_show_join', FALSE)
+      ->set('system_wide_joiner_cap', 0)
       ->save();
 
     $viewer = User::create([
@@ -117,7 +117,7 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
    */
   public function testJoinLinkShownWhenCapacityOpen(): void {
     $this->config('appointment_facilitator.settings')
-      ->set('always_show_join', FALSE)
+      ->set('system_wide_joiner_cap', 2)
       ->save();
 
     $viewer = User::create([
@@ -229,4 +229,3 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
   }
 
 }
-

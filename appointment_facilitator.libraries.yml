@@ -16,6 +16,12 @@ stats_report:
     theme:
       css/stats-report.css: {}
 
+feedback_report:
+  version: 1.x
+  css:
+    theme:
+      css/feedback-report.css: {}
+
 member_node_add_filter:
   version: 1.x
   js:
@@ -33,6 +39,12 @@ badge_term_cleanup:
     js/badge-term-cleanup.js: {}
   dependencies:
     - core/drupal
+
+badge_related_tools:
+  version: 1.x
+  css:
+    theme:
+      css/badge-related-tools.css: {}
 
 appointment_slot_prefill:
   version: 1.x

@@ -713,10 +713,23 @@ class StatsController extends ControllerBase {
     }
 
     $url = Url::fromRoute('entity.user.canonical', ['user' => $uid]);
+    $feedback_url = Url::fromRoute('appointment_facilitator.feedback_report', [], [
+      'query' => ['host' => $uid],
+    ]);
+
     return [
-      '#type' => 'link',
-      '#title' => $name,
-      '#url' => $url,
+      '#type' => 'container',
+      '#attributes' => ['class' => ['appointment-facilitator-name-links']],
+      'profile' => [
+        '#type' => 'link',
+        '#title' => $name,
+        '#url' => $url,
+      ],
+      'feedback' => [
+        '#markup' => Link::fromTextAndUrl($this->t('Feedback'), $feedback_url)->toString(),
+        '#prefix' => '<div class="appointment-facilitator-name-links__secondary">',
+        '#suffix' => '</div>',
+      ],
     ];
   }
 
@@ -754,6 +767,9 @@ class StatsController extends ControllerBase {
       $arrival_status_labels = $this->getAllowedValues('field_facilitator_arrival_status');
       $items[] = Markup::create($this->t('Arrival status mix: @list', ['@list' => $this->formatDistribution($summary['arrival_status_totals'], $arrival_status_labels)]));
     }
+
+    $feedback_report_url = Url::fromRoute('appointment_facilitator.feedback_report');
+    $items[] = Link::fromTextAndUrl($this->t('View All Facilitator Feedback'), $feedback_report_url);
 
     return $items;
   }

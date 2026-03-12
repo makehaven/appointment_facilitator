@@ -5,6 +5,8 @@ namespace Drupal\appointment_facilitator\Controller;
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\appointment_facilitator\Service\AppointmentSlackService;
+use Drupal\asset_status\Service\AssetAvailability;
+use Drupal\Component\Utility\Html;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
@@ -19,6 +21,12 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
  */
 class FacilitatorDashboardController extends ControllerBase {
 
+  protected const FEEDBACK_DELAY_DAYS = 30;
+
+  protected const FEEDBACK_MINIMUM_COUNT = 3;
+
+  protected const FEEDBACK_DISPLAY_LIMIT = 6;
+
   public function __construct(
     protected readonly EntityTypeManagerInterface $entityTypeManagerService,
     protected readonly EntityFieldManagerInterface $entityFieldManagerService,
@@ -26,6 +34,7 @@ class FacilitatorDashboardController extends ControllerBase {
     protected readonly AppointmentStats $statsHelper,
     protected readonly BadgePrerequisiteGate $badgeGate,
     protected readonly AppointmentSlackService $slackService,
+    protected readonly AssetAvailability $assetAvailability,
   ) {}
 
   /**
@@ -39,6 +48,7 @@ class FacilitatorDashboardController extends ControllerBase {
       $container->get('appointment_facilitator.stats'),
       $container->get('appointment_facilitator.badge_gate'),
       $container->get('appointment_facilitator.slack'),
+      $container->get('asset_status.availability'),
     );
   }
 
@@ -86,11 +96,26 @@ class FacilitatorDashboardController extends ControllerBase {
       'include_cancelled' => TRUE,
       'use_facilitator_terms' => TRUE,
     ]);
+    $lifetime_summary = $this->statsHelper->summarize(NULL, NULL, [
+      'host_id' => $uid,
+      'include_cancelled' => TRUE,
+      'use_facilitator_terms' => FALSE,
+    ]);
     $facilitator = $summary['facilitators'][$uid] ?? $this->emptyFacilitatorStats($uid);
+    $lifetime = $lifetime_summary['facilitators'][$uid] ?? $this->emptyFacilitatorStats($uid);
+    $term = $this->statsHelper->getFacilitatorTermRange($uid);
+    $term_note = $this->t('These counts only include appointments in your active facilitator term.');
+    if ($term) {
+      $term_note = $this->t('Current term: @start to @end.', [
+        '@start' => $this->dateFormatterService->format($term['start']->getTimestamp(), 'custom', 'M j, Y'),
+        '@end' => $this->dateFormatterService->format($term['end']->getTimestamp(), 'custom', 'M j, Y'),
+      ]);
+    }
 
     $upcoming_appointments = $this->loadUpcomingAppointments($uid, $now, 8);
-    $pending_followups = $this->loadPendingFollowUps($uid, $now, 10);
-    $qualified_badges = $this->loadQualifiedBadges($uid, 24);
+    $qualified_badges = $this->loadQualifiedBadges($uid, 12);
+    $feedback_items = $this->loadAnonymizedFeedbackItems($uid);
+    $offline_tools = $this->loadOfflineToolsForIssuerBadges($uid, 8);
     $task_buckets = $this->loadOpenTaskBuckets($uid, 120);
 
     return [
@@ -142,18 +167,58 @@ class FacilitatorDashboardController extends ControllerBase {
       ],
       'stat_row' => [
         '#type' => 'container',
-        '#attributes' => ['class' => ['afd-stat-row']],
-        'appointments' => $this->buildStatCard($this->t('Appointments hosted'), (string) $facilitator['appointments']),
-        'attendees' => $this->buildStatCard($this->t('Attendees served'), (string) $facilitator['attendees']),
-        'eval' => $this->buildStatCard($this->t('Evaluation completion'), $this->formatPercent($facilitator['feedback_rate'])),
-        'arrival' => $this->buildStatCard($this->t('Arrival coverage'), $this->formatPercent($facilitator['arrival_rate'])),
+        '#attributes' => ['class' => ['afd-stat-section']],
+        'heading' => [
+          '#type' => 'html_tag',
+          '#tag' => 'h3',
+          '#value' => $this->t('Current term snapshot'),
+          '#attributes' => ['class' => ['afd-section-title']],
+        ],
+        'note' => [
+          '#type' => 'html_tag',
+          '#tag' => 'p',
+          '#value' => $term_note,
+          '#attributes' => ['class' => ['afd-section-note']],
+        ],
+        'cards' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-stat-row']],
+          'term_appointments' => $this->buildStatCard($this->t('Appointments'), (string) $facilitator['appointments']),
+          'term_attendees' => $this->buildStatCard($this->t('Attendees'), (string) $facilitator['attendees']),
+          'term_eval' => $this->buildStatCard($this->t('Feedback'), $this->formatPercent($facilitator['feedback_rate'])),
+          'term_arrival' => $this->buildStatCard($this->t('Arrival'), $this->formatPercent($facilitator['arrival_rate'])),
+        ],
+      ],
+      'lifetime_stat_row' => [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['afd-stat-section', 'afd-stat-section-secondary']],
+        'heading' => [
+          '#type' => 'html_tag',
+          '#tag' => 'h3',
+          '#value' => $this->t('Lifetime snapshot'),
+          '#attributes' => ['class' => ['afd-section-title']],
+        ],
+        'note' => [
+          '#type' => 'html_tag',
+          '#tag' => 'p',
+          '#value' => $this->t('These totals include your full appointment history as a facilitator.'),
+          '#attributes' => ['class' => ['afd-section-note']],
+        ],
+        'cards' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-stat-row', 'afd-stat-row-secondary']],
+          'lifetime_appointments' => $this->buildStatCard($this->t('Appointments'), (string) $lifetime['appointments'], TRUE),
+          'lifetime_attendees' => $this->buildStatCard($this->t('Attendees'), (string) $lifetime['attendees'], TRUE),
+          'lifetime_eval' => $this->buildStatCard($this->t('Feedback'), $this->formatPercent($lifetime['feedback_rate']), TRUE),
+          'lifetime_arrival' => $this->buildStatCard($this->t('Arrival'), $this->formatPercent($lifetime['arrival_rate']), TRUE),
+        ],
       ],
       'content_grid' => [
         '#type' => 'container',
         '#attributes' => ['class' => ['afd-grid']],
         'upcoming' => [
           '#type' => 'container',
-          '#attributes' => ['class' => ['afd-card', 'afd-col-wide']],
+          '#attributes' => ['class' => ['afd-card', 'afd-col-full']],
           'title' => [
             '#type' => 'html_tag',
             '#tag' => 'h3',
@@ -161,7 +226,25 @@ class FacilitatorDashboardController extends ControllerBase {
           ],
           'table' => $this->buildUpcomingTable($upcoming_appointments),
         ],
-        'badges' => [
+        'feedback' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-card', 'afd-col-wide']],
+          'title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('What members are saying'),
+          ],
+          'note' => [
+            '#type' => 'html_tag',
+            '#tag' => 'p',
+            '#value' => $this->t('Feedback is shown without member names or appointment dates, only after a @days-day delay, and in randomized order.', [
+              '@days' => self::FEEDBACK_DELAY_DAYS,
+            ]),
+            '#attributes' => ['class' => ['afd-muted']],
+          ],
+          'list' => $this->buildFeedbackList($feedback_items),
+        ],
+        'issuer_badges' => [
           '#type' => 'container',
           '#attributes' => ['class' => ['afd-card', 'afd-col-narrow']],
           'title' => [
@@ -170,16 +253,25 @@ class FacilitatorDashboardController extends ControllerBase {
             '#value' => $this->t('Badges you can issue'),
           ],
           'list' => $this->buildBadgeList($qualified_badges),
+          'earn_more' => [
+            '#markup' => '<div class="afd-note-card"><strong>' . $this->t('Earn more') . '</strong><p>' . $this->t('Earn the badge, arrange with another issuer to watch you badge someone else, then badge under their supervision. If that goes well, they can add you as an issuer.') . '</p></div>',
+          ],
         ],
-        'followups' => [
+        'offline_tools' => [
           '#type' => 'container',
           '#attributes' => ['class' => ['afd-card', 'afd-col-full']],
           'title' => [
             '#type' => 'html_tag',
             '#tag' => 'h3',
-            '#value' => $this->t('Pending follow-ups for your appointments'),
+            '#value' => $this->t('Tools currently offline'),
           ],
-          'table' => $this->buildPendingTable($pending_followups),
+          'note' => [
+            '#type' => 'html_tag',
+            '#tag' => 'p',
+            '#value' => $this->t('These tools are connected to badges you can issue, so members may ask about them.'),
+            '#attributes' => ['class' => ['afd-muted']],
+          ],
+          'list' => $this->buildOfflineToolList($offline_tools),
         ],
         'tasks' => [
           '#type' => 'container',
@@ -253,7 +345,7 @@ class FacilitatorDashboardController extends ControllerBase {
       if ($rrule_id) {
         $actions[] = $this->linkItem(
           $this->t('Manage recurring schedule instances'),
-          Url::fromRoute('smart_date_recur.instances', ['rrule' => $rrule_id, 'modal' => 'FALSE'])
+          Url::fromRoute('smart_date_recur.instances', ['rrule' => $rrule_id, 'modal' => 0])
         );
       }
       else {
@@ -313,38 +405,41 @@ class FacilitatorDashboardController extends ControllerBase {
       $member_id = $member ? (int) $member->id() : NULL;
       $badge_links = $this->buildBadgeIssueLinksForAppointment($appointment, $member?->id());
       $actions = [
-        'view' => [
-          'title' => $this->t('View'),
-          'url' => $appointment->toUrl(),
-        ],
       ];
       if ($member_id) {
         $actions['pending'] = [
           'title' => $this->t('Member pending'),
           'url' => Url::fromUri('internal:/badges/pending/user/' . $member_id),
+          'attributes' => [
+            'class' => ['afd-chip-link-secondary'],
+          ],
         ];
         $actions['running_late'] = [
           'title' => $this->t('Running late'),
           'url' => Url::fromRoute('appointment_facilitator.running_late', ['node' => $appointment->id()]),
           'attributes' => [
-            'class' => ['use-ajax', 'btn', 'btn-warning', 'btn-xs'],
+            'class' => ['use-ajax', 'afd-chip-link-warning'],
             'title' => $this->t('Notify attendee via Slack that you are running late.'),
           ],
         ];
       }
 
       $rows[] = [
-        'time' => $this->formatAppointmentDate($appointment),
+        'time' => [
+          'data' => [
+            '#type' => 'link',
+            '#title' => $this->formatAppointmentDate($appointment),
+            '#url' => $appointment->toUrl(),
+            '#options' => ['attributes' => ['class' => ['afd-date-link']]],
+          ],
+        ],
         'member' => $member ? $member->getDisplayName() : $this->t('Unknown member'),
         'purpose' => $this->fieldLabelOrFallback($appointment, 'field_appointment_purpose'),
         'badges' => [
           'data' => $badge_links,
         ],
         'actions' => [
-          'data' => [
-            '#type' => 'operations',
-            '#links' => $actions,
-          ],
+          'data' => $this->buildActionLinks($actions),
         ],
       ];
     }
@@ -463,10 +558,10 @@ class FacilitatorDashboardController extends ControllerBase {
   /**
    * Renders a stat tile.
    */
-  protected function buildStatCard(string $label, string $value): array {
+  protected function buildStatCard(string $label, string $value, bool $secondary = FALSE): array {
     return [
       '#type' => 'container',
-      '#attributes' => ['class' => ['afd-stat']],
+      '#attributes' => ['class' => array_filter(['afd-stat', $secondary ? 'afd-stat-secondary' : NULL])],
       'label' => [
         '#type' => 'html_tag',
         '#tag' => 'div',
@@ -483,6 +578,193 @@ class FacilitatorDashboardController extends ControllerBase {
   }
 
   /**
+   * Renders action links inline instead of a dropbutton for mobile access.
+   */
+  protected function buildActionLinks(array $actions): array {
+    $build = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['afd-action-links']],
+    ];
+
+    foreach ($actions as $key => $action) {
+      $attributes = ['class' => ['afd-chip-link']];
+      if (!empty($action['attributes']) && is_array($action['attributes'])) {
+        $attributes = array_replace_recursive($attributes, $action['attributes']);
+      }
+
+      $build[$key] = [
+        '#type' => 'link',
+        '#title' => $action['title'],
+        '#url' => $action['url'],
+        '#options' => [
+          'attributes' => $attributes,
+        ],
+      ];
+    }
+
+    return $build;
+  }
+
+  /**
+   * Renders anonymized delayed feedback.
+   */
+  protected function buildFeedbackList(array $items): array {
+    if (count($items) === 1 && is_string(reset($items))) {
+      return ['#markup' => (string) reset($items)];
+    }
+
+    return [
+      '#theme' => 'item_list',
+      '#items' => $items,
+      '#attributes' => ['class' => ['afd-feedback-list']],
+    ];
+  }
+
+  /**
+   * Loads anonymized delayed feedback items.
+   */
+  protected function loadAnonymizedFeedbackItems(int $uid): array {
+    $storage = $this->entityTypeManagerService->getStorage('node');
+    $cutoff = \Drupal::time()->getRequestTime() - (self::FEEDBACK_DELAY_DAYS * 86400);
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'appointment')
+      ->condition('status', 1)
+      ->condition('field_appointment_host.target_id', $uid)
+      ->exists('field_appointment_feedback.value')
+      ->condition('field_appointment_feedback.value', '', '<>')
+      ->sort('created', 'DESC');
+
+    $nids = $query->execute();
+    if (!$nids) {
+      return [(string) $this->t('No delayed feedback is available yet.')];
+    }
+
+    $nodes = $storage->loadMultiple($nids);
+    $items = [];
+    foreach ($nodes as $node) {
+      $feedback = trim((string) $node->get('field_appointment_feedback')->value);
+      if ($feedback === '') {
+        continue;
+      }
+      $appointment_ts = $this->extractAppointmentTimestamp($node);
+      if ($appointment_ts !== NULL && $appointment_ts > $cutoff) {
+        continue;
+      }
+      if ($appointment_ts === NULL && (int) $node->getCreatedTime() > $cutoff) {
+        continue;
+      }
+      $items[] = [
+        '#markup' => '<blockquote class="afd-feedback-quote">' . nl2br(Html::escape($feedback)) . '</blockquote>',
+      ];
+    }
+
+    if (count($items) < self::FEEDBACK_MINIMUM_COUNT) {
+      return [(string) $this->t('More delayed feedback is needed before anonymous comments can be shown.')];
+    }
+
+    $seed = ((int) floor(\Drupal::time()->getRequestTime() / 300)) + $uid;
+    mt_srand($seed);
+    shuffle($items);
+    mt_srand();
+
+    return array_slice($items, 0, self::FEEDBACK_DISPLAY_LIMIT);
+  }
+
+  /**
+   * Builds an item list for offline tools.
+   */
+  protected function buildOfflineToolList(array $tools): array {
+    if (!$tools) {
+      return [
+        '#markup' => $this->t('No offline tools are currently linked to badges you can issue.'),
+      ];
+    }
+
+    $items = [];
+    foreach ($tools as $tool) {
+      $items[] = [
+        '#markup' => '<div class="afd-offline-tool"><a class="afd-inline-link" href="' . Html::escape($tool['url']) . '">' . Html::escape($tool['label']) . '</a><div class="afd-offline-tool__meta">' . Html::escape($tool['status']) . ' · ' . Html::escape($tool['badges']) . '</div></div>',
+      ];
+    }
+
+    return [
+      '#theme' => 'item_list',
+      '#items' => $items,
+      '#attributes' => ['class' => ['afd-offline-list']],
+    ];
+  }
+
+  /**
+   * Loads offline tools tied to badges this facilitator can issue.
+   */
+  protected function loadOfflineToolsForIssuerBadges(int $uid, int $limit): array {
+    if ($uid <= 0) {
+      return [];
+    }
+
+    $term_storage = $this->entityTypeManagerService->getStorage('taxonomy_term');
+    $badge_ids = $term_storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('vid', 'badges')
+      ->condition('status', 1)
+      ->condition('field_badge_issuer.target_id', $uid)
+      ->exists('field_badge_prerequisite.target_id')
+      ->execute();
+
+    if (!$badge_ids) {
+      return [];
+    }
+
+    $badges = $term_storage->loadMultiple($badge_ids);
+    $tool_map = [];
+    foreach ($badges as $badge) {
+      if (!$badge->hasField('field_badge_prerequisite') || $badge->get('field_badge_prerequisite')->isEmpty()) {
+        continue;
+      }
+      foreach ($badge->get('field_badge_prerequisite')->referencedEntities() as $item) {
+        if (!$item instanceof NodeInterface || $item->bundle() !== 'item' || !$item->isPublished()) {
+          continue;
+        }
+        if (!$item->hasField('field_item_status') || $item->get('field_item_status')->isEmpty()) {
+          continue;
+        }
+        $status_term = $item->get('field_item_status')->entity;
+        if (!$status_term || $this->assetAvailability->isUsable($status_term)) {
+          continue;
+        }
+
+        $nid = (int) $item->id();
+        if (!isset($tool_map[$nid])) {
+          $tool_map[$nid] = [
+            'label' => $item->label(),
+            'status' => $status_term->label(),
+            'url' => $item->toUrl()->toString(),
+            'badges' => [],
+          ];
+        }
+        $tool_map[$nid]['badges'][$badge->id()] = $badge->label();
+      }
+    }
+
+    if (!$tool_map) {
+      return [];
+    }
+
+    uasort($tool_map, static function (array $a, array $b): int {
+      return strnatcasecmp($a['label'], $b['label']);
+    });
+
+    $items = [];
+    foreach (array_slice($tool_map, 0, $limit, TRUE) as $tool) {
+      $tool['badges'] = implode(', ', array_values($tool['badges']));
+      $items[] = $tool;
+    }
+
+    return $items;
+  }
+
+  /**
    * Renders upcoming appointments table.
    */
   protected function buildUpcomingTable(array $rows): array {
@@ -492,17 +774,38 @@ class FacilitatorDashboardController extends ControllerBase {
       ];
     }
     return [
-      '#type' => 'table',
-      '#header' => [
-        $this->t('When'),
-        $this->t('Member'),
-        $this->t('Purpose'),
-        $this->t('Badges'),
-        $this->t('Actions'),
+      '#type' => 'container',
+      '#attributes' => ['class' => ['afd-table-wrap']],
+      'table' => [
+        '#type' => 'table',
+        '#header' => [
+          $this->t('When'),
+          $this->t('Member'),
+          $this->t('Purpose'),
+          $this->t('Badges'),
+          $this->t('Actions'),
+        ],
+        '#rows' => $rows,
+        '#attributes' => ['class' => ['afd-table']],
       ],
-      '#rows' => $rows,
-      '#attributes' => ['class' => ['afd-table']],
     ];
+  }
+
+  /**
+   * Extracts the appointment timestamp from a node when possible.
+   */
+  protected function extractAppointmentTimestamp($node): ?int {
+    if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
+      $value = $node->get('field_appointment_timerange')->value;
+      return $value ? strtotime((string) $value) : NULL;
+    }
+
+    if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
+      $value = $node->get('field_appointment_date')->value;
+      return $value ? strtotime((string) $value . ' 12:00:00') : NULL;
+    }
+
+    return NULL;
   }
 
   /**
@@ -562,14 +865,18 @@ class FacilitatorDashboardController extends ControllerBase {
     $seen = [];
 
     $storage = $this->entityTypeManagerService->getStorage('node');
-    $nids = $storage->getQuery()
+    $query = $storage->getQuery()
       ->accessCheck(FALSE)
       ->condition('type', 'task')
       ->condition('status', 1)
-      ->sort('field_task_priority_value', 'ASC')
       ->sort('created', 'DESC')
-      ->range(0, $scanLimit)
-      ->execute();
+      ->range(0, $scanLimit);
+
+    if ($this->taskFieldExists('field_task_priority')) {
+      $query->sort('field_task_priority.value', 'ASC');
+    }
+
+    $nids = $query->execute();
 
     if (!$nids) {
       return $buckets;
@@ -871,6 +1178,14 @@ class FacilitatorDashboardController extends ControllerBase {
    */
   protected function appointmentFieldExists(string $field_name): bool {
     $definitions = $this->entityFieldManagerService->getFieldDefinitions('node', 'appointment');
+    return isset($definitions[$field_name]);
+  }
+
+  /**
+   * Checks whether a node field exists on task bundle.
+   */
+  protected function taskFieldExists(string $field_name): bool {
+    $definitions = $this->entityFieldManagerService->getFieldDefinitions('node', 'task');
     return isset($definitions[$field_name]);
   }
 

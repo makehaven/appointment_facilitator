@@ -56,6 +56,19 @@ class JoinAppointmentForm extends FormBase {
       return [];
     }
 
+    // When rendered as a standalone page via the _form: route, Drupal does not
+    // pass route parameters as buildForm() arguments. Retrieve the node from
+    // the route match in that case.
+    if (!$node instanceof NodeInterface) {
+      $route_node = \Drupal::routeMatch()->getParameter('node');
+      if ($route_node instanceof NodeInterface) {
+        $node = $route_node;
+      }
+      elseif (is_numeric($route_node)) {
+        $node = $this->entityTypeManager->getStorage('node')->load($route_node);
+      }
+    }
+
     if (!$node || $node->bundle() !== 'appointment') {
       $form['message'] = ['#markup' => $this->t('This appointment is unavailable.')];
       return $this->addCacheContexts($form);
@@ -66,22 +79,41 @@ class JoinAppointmentForm extends FormBase {
     }
 
     $config = $this->configFactory->get('appointment_facilitator.settings');
+    $joiner_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
     $show_always = (bool) $config->get('show_always_join_cta');
 
-    $effective_capacity = appointment_facilitator_effective_capacity($node);
-    if (!$show_always && $effective_capacity <= 1) {
+    // Show join button only when extra spots are enabled (or show_always is on).
+    if (!$show_always && $joiner_cap <= 0) {
       return [];
     }
+
+    // Respect the appointment creator's preference.
+    $open_to_join = !$node->hasField('field_appointment_open_to_join')
+      || $node->get('field_appointment_open_to_join')->isEmpty()
+      || (bool) $node->get('field_appointment_open_to_join')->value;
+    if (!$open_to_join) {
+      return [];
+    }
+
+    // Count only extra joiners — people in field_appointment_attendees who are
+    // NOT the node author (the primary member who booked the appointment).
+    $author_uid  = (int) $node->getOwnerId();
+    $host_uid    = $node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
+      ? (int) $node->get('field_appointment_host')->target_id : 0;
 
     $attendee_values = $node->get('field_appointment_attendees')->getValue();
     $current_ids = [];
     foreach ($attendee_values as $value) {
-      $current_ids[] = (int) ($value['target_id'] ?? 0);
+      $id = (int) ($value['target_id'] ?? 0);
+      if ($id > 0) {
+        $current_ids[] = $id;
+      }
     }
 
-    $current_ids = array_filter($current_ids, static fn($value) => $value > 0);
-    $current_count = count($current_ids);
-    $remaining = max(0, $effective_capacity - $current_count);
+    // Extra joiners = attendees who are not the primary member and not the host.
+    $joiner_ids   = array_values(array_filter($current_ids, fn($id) => $id !== $author_uid && $id !== $host_uid));
+    $joiner_count = count($joiner_ids);
+    $remaining    = max(0, $joiner_cap - $joiner_count);
 
     $form['#attributes']['class'][] = 'appointment-join-form';
 
@@ -110,7 +142,7 @@ class JoinAppointmentForm extends FormBase {
     if ($host_name) {
       $meta_parts[] = $this->t('with @name', ['@name' => $host_name]);
     }
-    $meta_parts[] = $this->formatPlural($remaining, '1 seat left', '@count seats left');
+    $meta_parts[] = $this->formatPlural($remaining, '1 extra spot available', '@count extra spots available');
 
     $form['session_meta'] = [
       '#type' => 'html_tag',
@@ -172,9 +204,22 @@ class JoinAppointmentForm extends FormBase {
           ],
           'items' => $badge_items,
           'hint' => [
-            '#markup' => '<p class="join-badge-hint">' . $this->t('Badges marked <em>not yet pending</em> can still be part of your session — ask a staff member to mark them pending on your profile first if you want them counted.') . '</p>',
+            '#markup' => '<p class="join-badge-hint">' . $this->t('Visit each badge page and follow the instructions to get it marked as pending before your session.') . '</p>',
           ],
         ];
+
+        // Checkout-specific notice: only pending badges will be issued.
+        if ($this->requiresPendingBadge($node)) {
+          $form['badge_issuance_notice'] = [
+            '#type'       => 'container',
+            '#attributes' => ['class' => ['join-experience-gate', 'join-experience-gate--notice']],
+            'icon'    => ['#markup' => '<div class="join-experience-gate__icon">ℹ️</div>'],
+            'content' => ['#type' => 'container', '#attributes' => ['class' => ['join-experience-gate__content']],
+              'heading' => ['#markup' => '<h3 class="join-experience-gate__heading">' . $this->t('Badge issuance at checkout') . '</h3>'],
+              'body'    => ['#markup' => '<p class="join-experience-gate__body">' . $this->t('<strong>Only badges already marked as pending on your profile will be issued</strong> during this session. You must complete each badge\'s request process and have it marked pending <em>before</em> your appointment — the facilitator cannot issue badges that aren\'t already pending.') . '</p>'],
+            ],
+          ];
+        }
       }
     }
 
@@ -198,10 +243,65 @@ class JoinAppointmentForm extends FormBase {
       ];
     }
 
+    // --- Experience level gate / warning ---
+    $form['#attached']['library'][] = 'appointment_facilitator/appointments';
+    $primary_exp = '';
+    if ($node->hasField('field_appointment_experience') && !$node->get('field_appointment_experience')->isEmpty()) {
+      $primary_exp = (string) $node->get('field_appointment_experience')->value;
+    }
+    if ($primary_exp) {
+      if ($primary_exp === 'advanced') {
+        $form['experience_gate'] = [
+          '#type'       => 'container',
+          '#attributes' => ['class' => ['join-experience-gate', 'join-experience-gate--blocked']],
+          'icon'    => ['#markup' => '<div class="join-experience-gate__icon">⚡</div>'],
+          'heading' => ['#markup' => '<h3 class="join-experience-gate__heading">' . $this->t('Advanced-pace session') . '</h3>'],
+          'body'    => ['#markup' => '<p class="join-experience-gate__body">' . $this->t('The primary attendee is <strong>advanced</strong>. This session will move at an advanced pace — beginners are not a good fit and will not be able to join.') . '</p>'],
+        ];
+      }
+      elseif ($primary_exp === 'beginner') {
+        $form['experience_notice'] = [
+          '#type'       => 'container',
+          '#attributes' => ['class' => ['join-experience-gate', 'join-experience-gate--notice']],
+          'icon'    => ['#markup' => '<div class="join-experience-gate__icon">🐢</div>'],
+          'heading' => ['#markup' => '<h3 class="join-experience-gate__heading">' . $this->t('Beginner-pace session') . '</h3>'],
+          'body'    => ['#markup' => '<p class="join-experience-gate__body">' . $this->t('The primary attendee is a <strong>beginner</strong>. The facilitator will prioritise their needs. If you are more experienced, you are welcome to join but must follow along at their pace.') . '</p>'],
+        ];
+      }
+      elseif ($primary_exp === 'intermediate') {
+        $form['experience_notice'] = [
+          '#type'       => 'container',
+          '#attributes' => ['class' => ['join-experience-gate', 'join-experience-gate--notice']],
+          'icon'    => ['#markup' => '<div class="join-experience-gate__icon">📋</div>'],
+          'heading' => ['#markup' => '<h3 class="join-experience-gate__heading">' . $this->t('Intermediate-pace session') . '</h3>'],
+          'body'    => ['#markup' => '<p class="join-experience-gate__body">' . $this->t('The primary attendee has intermediate experience. Beginners should be comfortable with the basics before joining.') . '</p>'],
+        ];
+      }
+    }
+
     if ($this->requiresPendingBadge($node) && !$this->userHasPendingBadgeForAppointment($node, $uid)) {
-      $form['message'] = [
-        '#markup' => '<p>' . $this->t('This session checks out badge(s). Ask staff to mark one of these badges as pending on your profile before joining.') . '</p>',
+      $form['#attached']['library'][] = 'appointment_facilitator/appointments';
+      $form['pending_required'] = [
+        '#type'       => 'container',
+        '#attributes' => ['class' => ['join-pending-gate']],
+        'icon'        => ['#markup' => '<div class="join-pending-gate__icon">🔒</div>'],
+        'heading'     => ['#markup' => '<h3 class="join-pending-gate__heading">' . $this->t('Get a badge pending to join') . '</h3>'],
+        'body'        => ['#markup' => '<p class="join-pending-gate__body">' . $this->t('To join this session you need at least one of its badges marked as pending on your profile. Visit the badge page, follow the steps to qualify, and come back once it\'s pending.') . '</p>'],
       ];
+
+      if ($node->hasField('field_appointment_badges') && !$node->get('field_appointment_badges')->isEmpty()) {
+        $buttons = ['#type' => 'container', '#attributes' => ['class' => ['join-pending-gate__buttons']]];
+        foreach ($node->get('field_appointment_badges')->referencedEntities() as $idx => $term) {
+          $buttons['badge_' . $idx] = [
+            '#type'       => 'link',
+            '#title'      => $this->t('Go to @badge →', ['@badge' => $term->label()]),
+            '#url'        => Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $term->id()]),
+            '#attributes' => ['class' => ['btn', 'btn-outline-primary', 'join-pending-gate__btn']],
+          ];
+        }
+        $form['pending_required']['buttons'] = $buttons;
+      }
+
       return $this->addCacheContexts($form);
     }
 
@@ -251,12 +351,13 @@ class JoinAppointmentForm extends FormBase {
       '#type' => 'select',
       '#title' => $this->t('Your Experience Level with these tools/badges'),
       '#options' => [
-        'beginner' => $this->t('Beginner (Never used / First time)'),
+        'beginner'     => $this->t('Beginner (Never used / First time)'),
         'intermediate' => $this->t('Intermediate (Some experience / Needs refresher)'),
-        'advanced' => $this->t('Advanced (Very familiar / Just need checkout)'),
+        'advanced'     => $this->t('Advanced (Very familiar / Just need checkout)'),
       ],
-      '#required' => TRUE,
-      '#description' => $this->t('This helps the facilitator and other potential joiners understand the group pace.'),
+      '#default_value' => 'beginner',
+      '#required'      => TRUE,
+      '#description'   => $this->t('This helps the facilitator and other potential joiners understand the group pace.'),
     ];
 
     $form['join_note'] = [
@@ -309,6 +410,15 @@ class JoinAppointmentForm extends FormBase {
       return;
     }
 
+    $open_to_join = !$node->hasField('field_appointment_open_to_join')
+      || $node->get('field_appointment_open_to_join')->isEmpty()
+      || (bool) $node->get('field_appointment_open_to_join')->value;
+    if (!$open_to_join) {
+      $this->messenger()->addError($this->t('This appointment is not open to additional attendees.'));
+      $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
+      return;
+    }
+
     $attendee_field = $node->get('field_appointment_attendees');
     $attendee_values = $attendee_field->getValue();
     foreach ($attendee_values as $value) {
@@ -319,12 +429,29 @@ class JoinAppointmentForm extends FormBase {
       }
     }
 
-    $capacity = appointment_facilitator_effective_capacity($node);
-    $current_count = count($attendee_values);
-    if ($current_count >= $capacity) {
+    $joiner_cap  = (int) ($this->configFactory->get('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
+    $author_uid  = (int) $node->getOwnerId();
+    $host_uid    = $node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
+      ? (int) $node->get('field_appointment_host')->target_id : 0;
+    $joiner_ids  = array_filter(
+      array_column($attendee_values, 'target_id'),
+      fn($id) => (int) $id !== $author_uid && (int) $id !== $host_uid && (int) $id > 0,
+    );
+    if (count($joiner_ids) >= $joiner_cap) {
       $this->messenger()->addWarning($this->t('This appointment is full.'));
       $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
       return;
+    }
+
+    // Block beginners from joining advanced-pace sessions.
+    if ($node->hasField('field_appointment_experience') && !$node->get('field_appointment_experience')->isEmpty()) {
+      $primary_exp  = (string) $node->get('field_appointment_experience')->value;
+      $joiner_exp   = (string) $form_state->getValue('experience_level');
+      if ($primary_exp === 'advanced' && $joiner_exp === 'beginner') {
+        $this->messenger()->addError($this->t('This session is paced for experienced attendees. Please find a beginner-friendly session instead.'));
+        $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
+        return;
+      }
     }
 
     if ($this->requiresPendingBadge($node) && !$this->userHasPendingBadgeForAppointment($node, $uid)) {

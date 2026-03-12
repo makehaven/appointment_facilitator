@@ -4,13 +4,15 @@
  * Template for a single appointment card.
  *
  * Available variables:
- * - role:         'hosting' | 'attended' | 'attending' | 'hosted'
+ * - role:         'hosting' | 'attended' | 'attending' | 'hosted' | 'all'
  * - role_label:   Human-readable role string.
  * - date:         Formatted date string, e.g. "Wed, Mar 11".
  * - time:         Formatted time range, e.g. "4:00–5:00 pm".
  * - url:          Path to the appointment node.
  * - host:         Facilitator display name.
  * - member:       Member (node owner) display name.
+ * - member_uid:   Member user ID (for pending badges link).
+ * - pending_url:  URL to member's pending badges (hosting/all only).
  * - purpose:      Appointment purpose label.
  * - badges:       Array of badge term names.
  * - note:         Optional note text.
@@ -21,25 +23,42 @@
 <div class="appt-card appt-card--{{ role }}" data-href="{{ url }}">
 
   <div class="appt-card__header">
-    <span class="appt-card__role-badge appt-card__role-badge--{{ role }}">{{ role_label }}</span>
-    <div class="appt-card__when">
-      <span class="appt-card__date">{{ date }}</span>
-      {% if time %}
-        <span class="appt-card__time">{{ time }}</span>
-      {% endif %}
+    <div class="appt-card__header-top">
+      <span class="appt-card__role-badge appt-card__role-badge--{{ role }}">{{ role_label }}</span>
+      <div class="appt-card__when">
+        <span class="appt-card__date">{{ date }}</span>
+        {% if time %}
+          <span class="appt-card__time">{{ time }}</span>
+        {% endif %}
+      </div>
     </div>
   </div>
 
   <div class="appt-card__body">
-    {% if role == 'hosting' or role == 'hosted' %}
+    {% if role == 'all' %}
       <div class="appt-card__person">
-        <span class="appt-card__person-label">Member</span>
-        <span class="appt-card__person-name">{{ member }}</span>
+        <span class="appt-card__person-label">Volunteer</span>
+        <span class="appt-card__person-name">{{ host }}</span>
+        {% if host_area %}
+          <span class="appt-card__host-area">{{ host_area }}</span>
+        {% endif %}
+      </div>
+      <div class="appt-card__person">
+        <span class="appt-card__person-label">Member{% if members|length > 1 %}s{% endif %}</span>
+        <span class="appt-card__person-name">{{ members|join(', ') ?: member }}</span>
+      </div>
+    {% elseif role == 'hosting' or role == 'hosted' %}
+      <div class="appt-card__person">
+        <span class="appt-card__person-label">Member{% if members|length > 1 %}s{% endif %}</span>
+        <span class="appt-card__person-name">{{ members|join(', ') ?: member }}</span>
       </div>
     {% else %}
       <div class="appt-card__person">
         <span class="appt-card__person-label">Volunteer</span>
         <span class="appt-card__person-name">{{ host }}</span>
+        {% if host_area %}
+          <span class="appt-card__host-area">{{ host_area }}</span>
+        {% endif %}
       </div>
     {% endif %}
 
@@ -60,11 +79,23 @@
     {% endif %}
   </div>
 
-  {% if is_past and feedback_url %}
+  {% if pending_url or join_url or (is_past and feedback_url) %}
     <div class="appt-card__footer">
-      <a href="{{ feedback_url }}" class="appt-card__feedback-link" onclick="event.stopPropagation()">
-        Leave Feedback →
-      </a>
+      {% if pending_url %}
+        <a href="{{ pending_url }}" class="appt-card__pending-link" onclick="event.stopPropagation()">
+          Pending Badges →
+        </a>
+      {% endif %}
+      {% if join_url %}
+        <a href="{{ join_url }}" class="appt-card__join-link" onclick="event.stopPropagation()">
+          Join Session →
+        </a>
+      {% endif %}
+      {% if is_past and feedback_url %}
+        <a href="{{ feedback_url }}" class="appt-card__feedback-link" onclick="event.stopPropagation()">
+          Leave Feedback →
+        </a>
+      {% endif %}
     </div>
   {% endif %}
 

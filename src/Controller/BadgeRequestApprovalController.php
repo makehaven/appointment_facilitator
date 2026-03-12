@@ -53,6 +53,9 @@ class BadgeRequestApprovalController extends ControllerBase {
     $node->save();
 
     $this->messenger()->addStatus($this->t('Badge approved and set to Active.'));
+    if (!_appointment_facilitator_is_badge_request_issuer($node, $this->currentUser())) {
+      $this->messenger()->addWarning(_appointment_facilitator_badge_issuer_warning($node));
+    }
     return $this->redirectToNode($node);
   }
 
@@ -60,7 +63,7 @@ class BadgeRequestApprovalController extends ControllerBase {
    * Redirects to destination query parameter or node canonical page.
    */
   protected function redirectToNode(NodeInterface $node): RedirectResponse {
-    $destination = (string) $this->getRequest()->query->get('destination', '');
+    $destination = (string) \Drupal::request()->query->get('destination', '');
     if ($destination !== '') {
       return new RedirectResponse(Url::fromUserInput('/' . ltrim($destination, '/'))->toString());
     }
@@ -69,4 +72,3 @@ class BadgeRequestApprovalController extends ControllerBase {
   }
 
 }
-

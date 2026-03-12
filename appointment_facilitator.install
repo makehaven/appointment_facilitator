@@ -716,3 +716,102 @@ function _appointment_facilitator_ensure_reservation_source_field(): void {
     ])->save();
   }
 }
+
+/**
+ * Add field_appointment_open_to_join boolean to appointment nodes.
+ */
+function appointment_facilitator_update_9022(): string {
+  if (!FieldStorageConfig::loadByName('node', 'field_appointment_open_to_join')) {
+    FieldStorageConfig::create([
+      'field_name'  => 'field_appointment_open_to_join',
+      'entity_type' => 'node',
+      'type'        => 'boolean',
+      'cardinality' => 1,
+    ])->save();
+  }
+
+  if (!FieldConfig::loadByName('node', 'appointment', 'field_appointment_open_to_join')) {
+    FieldConfig::create([
+      'field_name'   => 'field_appointment_open_to_join',
+      'entity_type'  => 'node',
+      'bundle'       => 'appointment',
+      'label'        => 'Allow others to join',
+      'required'     => FALSE,
+      'default_value' => [['value' => 1]],
+    ])->save();
+  }
+
+  return 'Added field_appointment_open_to_join to appointment content type.';
+}
+
+/**
+ * Add field_appointment_experience to capture primary member's experience level.
+ */
+function appointment_facilitator_update_9021(): string {
+  $allowed = [
+    'beginner'     => 'Beginner (First time / Never used)',
+    'intermediate' => 'Intermediate (Some experience / Needs refresher)',
+    'advanced'     => 'Advanced (Very familiar / Just need checkout)',
+  ];
+
+  if (!FieldStorageConfig::loadByName('node', 'field_appointment_experience')) {
+    FieldStorageConfig::create([
+      'field_name'  => 'field_appointment_experience',
+      'entity_type' => 'node',
+      'type'        => 'list_string',
+      'settings'    => ['allowed_values' => $allowed],
+      'cardinality' => 1,
+    ])->save();
+  }
+
+  if (!FieldConfig::loadByName('node', 'appointment', 'field_appointment_experience')) {
+    FieldConfig::create([
+      'field_name'  => 'field_appointment_experience',
+      'entity_type' => 'node',
+      'bundle'      => 'appointment',
+      'label'       => 'Primary Member Experience Level',
+      'required'    => FALSE,
+    ])->save();
+  }
+
+  return 'Added field_appointment_experience to appointment content type.';
+}
+
+/**
+ * Register appointment_faces, appointment_capacity_summary, and appointment_join
+ * as pseudo-fields in the DS layout so Display Suite renders them.
+ */
+function appointment_facilitator_update_9023(): string {
+  $config = \Drupal::configFactory()->getEditable('core.entity_view_display.node.appointment.default');
+
+  // Each pseudo-field key => weight in the region.
+  $pseudo_fields = [
+    'appointment_faces'            => -65,
+    'appointment_capacity_summary' => -60,
+    'appointment_join'             => -50,
+  ];
+
+  foreach ($pseudo_fields as $field_name => $weight) {
+    // Only add if not already present.
+    if (!$config->get("content.{$field_name}")) {
+      $config->set("content.{$field_name}", [
+        'weight'               => $weight,
+        'region'               => 'ds_content',
+        'settings'             => [],
+        'third_party_settings' => [],
+      ]);
+    }
+  }
+
+  // Also register them in the DS regions array.
+  $ds_region = $config->get('third_party_settings.ds.regions.ds_content') ?? [];
+  foreach (array_keys($pseudo_fields) as $field_name) {
+    if (!in_array($field_name, $ds_region, TRUE)) {
+      $ds_region[] = $field_name;
+    }
+  }
+  $config->set('third_party_settings.ds.regions.ds_content', $ds_region);
+  $config->save();
+
+  return 'Registered appointment pseudo-fields in Display Suite ds_content region.';
+}

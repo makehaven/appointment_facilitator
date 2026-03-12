@@ -1,0 +1,84 @@
+.appointment-feedback-report-summary,
+.appointment-feedback-report-filter {
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.appointment-feedback-report-summary li {
+  margin-bottom: 0.5rem;
+}
+
+.appointment-feedback-report-stats {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 1.5rem;
+}
+
+.appointment-feedback-report-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.appointment-feedback-report-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+}
+
+.appointment-feedback-report-table thead th {
+  background: #f2f6fb;
+  border-bottom: 2px solid #dbe3ef;
+  color: #5f6b7a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.7rem 0.6rem;
+  text-transform: uppercase;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.appointment-feedback-report-table tbody td {
+  border-bottom: 1px solid #edf2f8;
+  font-size: 0.9rem;
+  padding: 0.75rem 0.6rem;
+  vertical-align: top;
+}
+
+.appointment-feedback-report-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.appointment-feedback-report__narrative {
+  min-width: 24rem;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.appointment-feedback-report__badges {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.appointment-feedback-report__badges li {
+  margin: 0 0 0.2rem;
+}
+
+.appointment-feedback-report-filter .form-item,
+.appointment-feedback-report-filter .form-actions {
+  margin-bottom: 1rem;
+}
+
+@media (max-width: 900px) {
+  .appointment-feedback-report__narrative {
+    min-width: 18rem;
+  }
+}

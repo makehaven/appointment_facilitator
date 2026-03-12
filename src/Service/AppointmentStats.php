@@ -16,6 +16,8 @@ use Psr\Log\LoggerInterface;
  */
 class AppointmentStats {
 
+  protected const ARRIVAL_TRACKING_START = '2026-01-01 00:00:00';
+
   protected LoggerInterface $logger;
 
   public function __construct(
@@ -45,9 +47,11 @@ class AppointmentStats {
       'feedback_rate' => 0,
       'cancelled_total' => 0,
       'total_appointment_days' => 0,
+      'total_tracked_appointment_days' => 0,
       'total_arrival_days' => 0,
       'arrival_rate' => NULL,
       'arrival_available' => FALSE,
+      'arrival_tracking_start' => self::ARRIVAL_TRACKING_START,
       'arrival_status_totals' => [],
       'arrival_status_available' => FALSE,
       'facilitators' => [],
@@ -74,6 +78,7 @@ class AppointmentStats {
     $now_ts = \Drupal::time()->getRequestTime();
     $term_cache = [];
     $arrival_status_available = $this->fieldExists('field_facilitator_arrival_status');
+    $arrival_tracking_start_ts = (new \DateTimeImmutable(self::ARRIVAL_TRACKING_START, new \DateTimeZone(date_default_timezone_get())))->getTimestamp();
 
     $date_field = $this->resolveDateField();
     $using_range_field = $date_field === 'field_appointment_timerange';
@@ -159,6 +164,8 @@ class AppointmentStats {
           'latest' => NULL,
           'cancelled' => 0,
           'day_map' => [],
+          'tracked_day_map' => [],
+          'tracked_appointment_day_count' => 0,
           'arrival_days' => NULL,
           'arrival_rate' => NULL,
           'arrival_status_counts' => [],
@@ -242,6 +249,9 @@ class AppointmentStats {
         $day_key = $appointment_date->format('Y-m-d');
         if ($day_key) {
           $summary['facilitators'][$host_id]['day_map'][$day_key] = TRUE;
+          if ($appointment_date->getTimestamp() >= $arrival_tracking_start_ts) {
+            $summary['facilitators'][$host_id]['tracked_day_map'][$day_key] = TRUE;
+          }
         }
         $current_latest = $summary['facilitators'][$host_id]['latest'];
         if (!$current_latest || $appointment_date > $current_latest) {
@@ -264,17 +274,20 @@ class AppointmentStats {
 
     foreach ($summary['facilitators'] as &$facilitator) {
       $facilitator['appointment_day_count'] = isset($facilitator['day_map']) ? count($facilitator['day_map']) : 0;
+      $facilitator['tracked_appointment_day_count'] = isset($facilitator['tracked_day_map']) ? count($facilitator['tracked_day_map']) : 0;
       $summary['total_appointment_days'] += $facilitator['appointment_day_count'];
+      $summary['total_tracked_appointment_days'] += $facilitator['tracked_appointment_day_count'];
       unset($facilitator['day_map']);
+      unset($facilitator['tracked_day_map']);
       if ($facilitator['appointments'] > 0) {
         $facilitator['feedback_rate'] = round(($facilitator['feedback'] / $facilitator['appointments']) * 100, 1);
       }
 
-      if ($arrival_available && $facilitator['appointment_day_count'] > 0) {
+      if ($arrival_available && $facilitator['tracked_appointment_day_count'] > 0) {
         $uid = $facilitator['uid'];
         $arrival_days = isset($arrival_presence[$uid]) ? count($arrival_presence[$uid]) : 0;
         $facilitator['arrival_days'] = $arrival_days;
-        $facilitator['arrival_rate'] = round(($arrival_days / $facilitator['appointment_day_count']) * 100, 1);
+        $facilitator['arrival_rate'] = round(($arrival_days / $facilitator['tracked_appointment_day_count']) * 100, 1);
         $summary['total_arrival_days'] += $arrival_days;
       }
 
@@ -311,7 +324,7 @@ class AppointmentStats {
         $rate_accumulator['appointments_per_month'][] = $facilitator['appointments_per_month'];
       }
       $rate_accumulator['feedback_rate'][] = $facilitator['feedback_rate'];
-      if ($arrival_available && $facilitator['appointment_day_count'] > 0) {
+      if ($arrival_available && $facilitator['tracked_appointment_day_count'] > 0) {
         $rate_accumulator['arrival_rate'][] = $facilitator['arrival_rate'];
       }
     }
@@ -320,8 +333,8 @@ class AppointmentStats {
     if ($summary['total_appointments'] > 0) {
       $summary['feedback_rate'] = round(($summary['total_feedback'] / $summary['total_appointments']) * 100, 1);
     }
-    if ($arrival_available && $summary['total_appointment_days'] > 0) {
-      $summary['arrival_rate'] = round(($summary['total_arrival_days'] / $summary['total_appointment_days']) * 100, 1);
+    if ($arrival_available && $summary['total_tracked_appointment_days'] > 0) {
+      $summary['arrival_rate'] = round(($summary['total_arrival_days'] / $summary['total_tracked_appointment_days']) * 100, 1);
     }
 
     foreach ($rate_accumulator as $key => $values) {

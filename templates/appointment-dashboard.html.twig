@@ -30,17 +30,33 @@
     </button>
 
     <div class="appt-filter-bar__links">
-      <a href="/appointments/past" class="appt-secondary-link">Everyone</a>
+      {% if context == 'all' %}
+        <a href="/appointments" class="appt-secondary-link">← My Appointments</a>
+      {% else %}
+        <a href="/appointments/all" class="appt-secondary-link">Everyone</a>
+      {% endif %}
       <a href="/appointments/feedback" class="appt-secondary-link">Feedback</a>
     </div>
   </div>
 
   <div class="appt-section" id="appt-upcoming" role="tabpanel">
+    {% if today %}
+      <div class="appt-today-group">
+        <h3 class="appt-group-heading appt-group-heading--today">Today</h3>
+        {% for card in today %}
+          {{ card }}
+        {% endfor %}
+      </div>
+    {% endif %}
     {% if upcoming %}
+      {% if today %}
+        <h3 class="appt-group-heading">Coming Up</h3>
+      {% endif %}
       {% for card in upcoming %}
         {{ card }}
       {% endfor %}
-    {% else %}
+    {% endif %}
+    {% if not today and not upcoming %}
       <p class="appt-empty">No upcoming appointments. <a href="/facilitator/schedules">Schedule one →</a></p>
     {% endif %}
   </div>

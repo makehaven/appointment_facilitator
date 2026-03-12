@@ -3,17 +3,20 @@
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\Display\EntityViewDisplayInterface;
 use Drupal\Core\Field\FieldDefinitionInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Link;
 use Drupal\Component\Utility\Unicode;
 use Drupal\Core\Url;
 use Drupal\node\Entity\Node;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\taxonomy\TermInterface;
+use Drupal\views\Plugin\views\query\QueryPluginBase;
 use Drupal\views\ViewExecutable;
 
 /**
@@ -65,8 +68,14 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
   $config = \Drupal::config('appointment_facilitator.settings');
   $system_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
 
-  // Total allowed = Initial person + additional joiners.
-  return min($base_capacity, 1 + $system_cap);
+  // When the system-wide joiner cap is enabled, it sets the total allowed
+  // (1 primary + N joiners) regardless of per-badge or per-coordinator limits,
+  // which were set before the join feature existed.
+  if ($system_cap > 0) {
+    return 1 + $system_cap;
+  }
+
+  return $base_capacity;
 }
 
 /**
@@ -92,6 +101,7 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
 
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
     _appointment_facilitator_enforce_badge_page_flow($build, $entity);
+    _appointment_facilitator_add_related_tools($build, $entity);
     return;
   }
 
@@ -102,6 +112,178 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   if ($entity instanceof NodeInterface) {
     _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
   }
+}
+
+/**
+ * Adds links back to tools associated with a badge term.
+ */
+function _appointment_facilitator_add_related_tools(array &$build, TermInterface $term): void {
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'item')
+    ->condition('status', 1)
+    ->sort('title', 'ASC');
+
+  $badge_group = $query->orConditionGroup()
+    ->condition('field_member_badges.target_id', (int) $term->id())
+    ->condition('field_additional_badges.target_id', (int) $term->id());
+  $query->condition($badge_group);
+
+  $nids = $query->execute();
+  if (!$nids) {
+    return;
+  }
+
+  /** @var \Drupal\node\NodeInterface[] $tools */
+  $tools = Node::loadMultiple($nids);
+  if (!$tools) {
+    return;
+  }
+
+  $cards = [];
+  foreach ($tools as $tool) {
+    if (!$tool instanceof NodeInterface || !$tool->access('view')) {
+      continue;
+    }
+
+    $summary = '';
+    if ($tool->hasField('body') && !$tool->get('body')->isEmpty()) {
+      $body = $tool->get('body')->first();
+      $summary = $body->summary ?: Unicode::truncate(trim(strip_tags((string) $body->value)), 180, TRUE, TRUE);
+    }
+
+    $image = [];
+    if ($tool->hasField('field_item_image') && !$tool->get('field_item_image')->isEmpty()) {
+      $image = $tool->get('field_item_image')->view([
+        'label' => 'hidden',
+        'type' => 'image',
+        'settings' => [
+          'image_style' => 'small_square',
+          'image_link' => 'content',
+          'image_loading' => ['attribute' => 'lazy'],
+        ],
+      ]);
+    }
+
+    $link = Link::fromTextAndUrl($tool->label(), $tool->toUrl())->toRenderable();
+    $link['#attributes']['class'][] = 'badge-related-tools__title-link';
+
+    $card = [
+      '#type' => 'container',
+      '#attributes' => [
+        'class' => ['badge-related-tools__card'],
+      ],
+      'image' => [
+        '#type' => 'container',
+        '#attributes' => [
+          'class' => ['badge-related-tools__image'],
+        ],
+        'content' => $image,
+      ],
+      'content' => [
+        '#type' => 'container',
+        '#attributes' => [
+          'class' => ['badge-related-tools__content'],
+        ],
+        'title' => [
+          '#type' => 'inline_template',
+          '#template' => '<h3 class="badge-related-tools__title h5">{{ link }}</h3>',
+          '#context' => [
+            'link' => $link,
+          ],
+        ],
+      ],
+    ];
+
+    if ($summary !== '') {
+      $card['content']['summary'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $summary,
+        '#attributes' => [
+          'class' => ['badge-related-tools__summary'],
+        ],
+      ];
+    }
+
+    $cards[] = $card;
+  }
+
+  if (!$cards) {
+    return;
+  }
+
+  $build['appointment_facilitator_related_tools'] = [
+    '#type' => 'container',
+    '#weight' => 1,
+    '#attached' => [
+      'library' => ['appointment_facilitator/badge_related_tools'],
+    ],
+    '#attributes' => [
+      'class' => ['badge-related-tools'],
+    ],
+    'title' => [
+      '#type' => 'html_tag',
+      '#tag' => 'h2',
+      '#value' => t('Associated tools'),
+      '#attributes' => [
+        'class' => ['h4'],
+      ],
+    ],
+    'intro' => [
+      '#markup' => '<p>' . t('Use this badge with these tool pages:') . '</p>',
+    ],
+    'cards' => [
+      '#type' => 'container',
+      '#attributes' => [
+        'class' => ['badge-related-tools__cards'],
+      ],
+      'items' => $cards,
+    ],
+  ];
+
+  $cacheability = new CacheableMetadata();
+  $cacheability->addCacheableDependency($term);
+  $cacheability->addCacheTags(['node_list:item']);
+  foreach ($tools as $tool) {
+    $cacheability->addCacheableDependency($tool);
+  }
+  $cacheability->applyTo($build['appointment_facilitator_related_tools']);
+}
+
+/**
+ * Implements hook_field_extra_fields().
+ *
+ * Declares pseudo-fields so Display Suite can place them in layout regions.
+ * The actual render arrays are populated in hook_node_view().
+ */
+function appointment_facilitator_field_extra_fields(): array {
+  return [
+    'node' => [
+      'appointment' => [
+        'display' => [
+          'appointment_faces' => [
+            'label'       => t('Session participants'),
+            'description' => t('Profile photos of the facilitator and attendees.'),
+            'weight'      => -65,
+            'visible'     => TRUE,
+          ],
+          'appointment_capacity_summary' => [
+            'label'       => t('Capacity summary'),
+            'description' => t('Available spots for this appointment.'),
+            'weight'      => -60,
+            'visible'     => TRUE,
+          ],
+          'appointment_join' => [
+            'label'       => t('Join this appointment'),
+            'description' => t('Join / leave form for extra participants.'),
+            'weight'      => -50,
+            'visible'     => TRUE,
+          ],
+        ],
+      ],
+    ],
+  ];
 }
 
 /**
@@ -122,6 +304,71 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
   if ($entity->bundle() === 'appointment' && $view_mode === 'full') {
     $account = \Drupal::currentUser();
     $effective_capacity = appointment_facilitator_effective_capacity($entity);
+
+    // --- Who's in this session (profile photos) ---
+    $faces = [];
+
+    // Helper: load main profile photo for a uid.
+    $load_face = static function (int $uid, string $label) use (&$faces): void {
+      if ($uid <= 0) {
+        return;
+      }
+      $profiles = \Drupal::entityTypeManager()->getStorage('profile')
+        ->loadByProperties(['uid' => $uid, 'type' => 'main', 'status' => 1]);
+      $profile = reset($profiles);
+      if (!$profile) {
+        return;
+      }
+      $user = \Drupal::entityTypeManager()->getStorage('user')->load($uid);
+      $display_name = $user ? $user->getDisplayName() : '';
+      $img_html = '';
+      if ($profile->hasField('field_member_photo') && !$profile->get('field_member_photo')->isEmpty()) {
+        $fid  = (int) $profile->get('field_member_photo')->target_id;
+        $file = \Drupal::entityTypeManager()->getStorage('file')->load($fid);
+        if ($file) {
+          $uri = $file->getFileUri();
+          $url = \Drupal::service('file_url_generator')->generateString($uri);
+          $img_html = '<img src="' . htmlspecialchars($url, ENT_QUOTES) . '" alt="' . htmlspecialchars($display_name, ENT_QUOTES) . '" class="appt-face__img">';
+        }
+      }
+      if (!$img_html) {
+        $initials = implode('', array_map(fn($w) => mb_strtoupper(mb_substr($w, 0, 1)), explode(' ', trim($display_name))));
+        $img_html = '<div class="appt-face__initials">' . htmlspecialchars(mb_substr($initials, 0, 2), ENT_QUOTES) . '</div>';
+      }
+      $faces[] = '<div class="appt-face">' . $img_html . '<div class="appt-face__label">' . htmlspecialchars($label, ENT_QUOTES) . '</div><div class="appt-face__name">' . htmlspecialchars($display_name, ENT_QUOTES) . '</div></div>';
+    };
+
+    // Host.
+    if ($entity->hasField('field_appointment_host') && !$entity->get('field_appointment_host')->isEmpty()) {
+      $host_uid = (int) $entity->get('field_appointment_host')->target_id;
+      $load_face($host_uid, t('Volunteer'));
+    }
+
+    // Primary member (node author, if different from host).
+    $author_uid = (int) $entity->getOwnerId();
+    $host_uid_check = $entity->hasField('field_appointment_host') && !$entity->get('field_appointment_host')->isEmpty()
+      ? (int) $entity->get('field_appointment_host')->target_id : 0;
+    if ($author_uid && $author_uid !== $host_uid_check) {
+      $load_face($author_uid, t('Member'));
+    }
+
+    // Additional joiners.
+    if ($entity->hasField('field_appointment_attendees') && !$entity->get('field_appointment_attendees')->isEmpty()) {
+      foreach ($entity->get('field_appointment_attendees')->getValue() as $item) {
+        $joiner_uid = (int) ($item['target_id'] ?? 0);
+        if ($joiner_uid && $joiner_uid !== $author_uid && $joiner_uid !== $host_uid_check) {
+          $load_face($joiner_uid, t('Joining'));
+        }
+      }
+    }
+
+    if ($faces) {
+      $build['appointment_faces'] = [
+        '#markup' => '<div class="appt-faces">' . implode('', $faces) . '</div>',
+        '#weight' => -65,
+        '#attached' => ['library' => ['appointment_facilitator/appointments']],
+      ];
+    }
 
     // Add a capacity summary.
     $build['appointment_capacity_summary'] = [
@@ -247,7 +494,22 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
 
   $account = \Drupal::currentUser();
   $status = (string) $entity->get('field_badge_status')->value;
-  if ($status !== 'pending' || !_appointment_facilitator_can_approve_badge_request($entity, $account)) {
+  if ($status !== 'pending') {
+    return;
+  }
+
+  if ($view_mode === 'teaser' && $account->isAuthenticated() && !_appointment_facilitator_is_badge_request_issuer($entity, $account)) {
+    $build['appointment_facilitator_issuer_warning'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--warning', 'badge-request-issuer-warning']],
+      '#weight' => 89,
+      'message' => [
+        '#markup' => '<p>' . _appointment_facilitator_badge_issuer_edit_warning($entity) . '</p>',
+      ],
+    ];
+  }
+
+  if (!_appointment_facilitator_can_approve_badge_request($entity, $account)) {
     return;
   }
 
@@ -523,6 +785,153 @@ function _appointment_facilitator_can_approve_badge_request(NodeInterface $node,
   return $account->hasPermission('administer nodes')
     || $account->hasPermission('approve badge requests')
     || $account->hasPermission('edit any badge_request content');
+}
+
+/**
+ * Returns TRUE when the account is listed as an issuer for the badge request.
+ */
+function _appointment_facilitator_is_badge_request_issuer(NodeInterface $node, AccountInterface $account): bool {
+  if ($node->bundle() !== 'badge_request' || !$node->hasField('field_badge_requested') || $node->get('field_badge_requested')->isEmpty()) {
+    return FALSE;
+  }
+
+  $badge = $node->get('field_badge_requested')->entity;
+  if (!$badge instanceof TermInterface) {
+    return FALSE;
+  }
+
+  foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $field_name) {
+    if (!$badge->hasField($field_name) || $badge->get($field_name)->isEmpty()) {
+      continue;
+    }
+    foreach ($badge->get($field_name)->getValue() as $item) {
+      if ((int) ($item['target_id'] ?? 0) === (int) $account->id()) {
+        return TRUE;
+      }
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Returns badge term IDs the account is allowed to issue.
+ *
+ * This checks both the normal issuer field and the request-time issuer field.
+ */
+function _appointment_facilitator_get_badge_issuer_term_ids(AccountInterface $account): array {
+  if (!$account->isAuthenticated()) {
+    return [];
+  }
+
+  $field_manager = \Drupal::service('entity_field.manager');
+  $fields = $field_manager->getFieldDefinitions('taxonomy_term', 'badges');
+  $query = \Drupal::entityQuery('taxonomy_term')
+    ->accessCheck(FALSE)
+    ->condition('vid', 'badges');
+
+  $group = $query->orConditionGroup();
+  $has_issuer_field = FALSE;
+  foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $field_name) {
+    if (!isset($fields[$field_name])) {
+      continue;
+    }
+    $group->condition($field_name . '.target_id', (int) $account->id());
+    $has_issuer_field = TRUE;
+  }
+
+  if (!$has_issuer_field) {
+    return [];
+  }
+
+  $tids = $query
+    ->condition($group)
+    ->execute();
+
+  $tids = array_map('intval', $tids);
+  sort($tids);
+  return $tids;
+}
+
+/**
+ * Returns the badge label used in issuer warnings.
+ */
+function _appointment_facilitator_badge_warning_label(NodeInterface $node): string {
+  $badge_label = t('this badge');
+  if ($node->hasField('field_badge_requested') && !$node->get('field_badge_requested')->isEmpty()) {
+    $badge = $node->get('field_badge_requested')->entity;
+    if ($badge instanceof TermInterface) {
+      $badge_label = $badge->label();
+    }
+  }
+
+  return (string) $badge_label;
+}
+
+/**
+ * Returns the pre-change warning shown to non-issuer badge editors.
+ */
+function _appointment_facilitator_badge_issuer_edit_warning(NodeInterface $node): string {
+  $badge_label = _appointment_facilitator_badge_warning_label($node);
+
+  return (string) t('You are not currently listed as a badge issuer for @badge, so you should not change this request. Ask a listed issuer to review it. This will be locked down in a future update.', [
+    '@badge' => $badge_label,
+  ]);
+}
+
+/**
+ * Returns the non-blocking warning shown after a non-issuer activates a badge.
+ */
+function _appointment_facilitator_badge_issuer_warning(NodeInterface $node): string {
+  $badge_label = _appointment_facilitator_badge_warning_label($node);
+
+  return (string) t('You approved @badge but are not currently listed as an issuer for it. You should be added as a badge issuer before approving members. This will be locked down in a future update.', [
+    '@badge' => $badge_label,
+  ]);
+}
+
+/**
+ * Returns the badge request being edited through editablefields, if relevant.
+ */
+function _appointment_facilitator_get_editablefields_badge_request(FormStateInterface $form_state): ?NodeInterface {
+  $form_object = $form_state->getFormObject();
+  if (!is_object($form_object) || !method_exists($form_object, 'getEntity') || !method_exists($form_object, 'getFieldName')) {
+    return NULL;
+  }
+
+  if ($form_object->getFieldName() !== 'field_badge_status') {
+    return NULL;
+  }
+
+  $entity = $form_object->getEntity();
+  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'badge_request' || !$entity->hasField('field_badge_status')) {
+    return NULL;
+  }
+
+  $status = (string) ($entity->get('field_badge_status')->value ?? '');
+  return $status === 'pending' ? $entity : NULL;
+}
+
+/**
+ * Adds a save-time warning for inline editable badge approvals.
+ */
+function appointment_facilitator_editablefields_badge_request_submit(array &$form, FormStateInterface $form_state): void {
+  $node = _appointment_facilitator_get_editablefields_badge_request($form_state);
+  if (!$node instanceof NodeInterface) {
+    return;
+  }
+
+  $new_status = (string) $form_state->getValue(['field_badge_status', 0, 'value']);
+  if ($new_status !== 'active') {
+    return;
+  }
+
+  $account = \Drupal::currentUser();
+  if (!$account->isAuthenticated() || _appointment_facilitator_is_badge_request_issuer($node, $account)) {
+    return;
+  }
+
+  \Drupal::messenger()->addWarning(_appointment_facilitator_badge_issuer_warning($node));
 }
 
 /**
@@ -814,6 +1223,94 @@ function appointment_facilitator_form_alter(array &$form, FormStateInterface $fo
 }
 
 /**
+ * Implements hook_form_BASE_FORM_ID_alter() for editablefields forms.
+ */
+function appointment_facilitator_form_editablefields_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  $node = _appointment_facilitator_get_editablefields_badge_request($form_state);
+  if (!$node instanceof NodeInterface) {
+    return;
+  }
+
+  $account = \Drupal::currentUser();
+  if (!$account->isAuthenticated() || _appointment_facilitator_is_badge_request_issuer($node, $account)) {
+    return;
+  }
+
+  $warning = _appointment_facilitator_badge_issuer_edit_warning($node);
+  $form['appointment_facilitator_issuer_warning'] = [
+    '#type' => 'container',
+    '#weight' => -20,
+    '#attributes' => [
+      'class' => [
+        'messages',
+        'messages--warning',
+        'badge-request-issuer-warning',
+      ],
+    ],
+    'content' => [
+      '#markup' => $warning,
+    ],
+  ];
+
+  if (isset($form['field_badge_status']['widget'][0]['value'])) {
+    $existing_description = (string) ($form['field_badge_status']['widget'][0]['value']['#description'] ?? '');
+    $form['field_badge_status']['widget'][0]['value']['#description'] = trim($existing_description . ' ' . $warning);
+  }
+
+  $form['#submit'][] = 'appointment_facilitator_editablefields_badge_request_submit';
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter() for views exposed filters.
+ */
+function appointment_facilitator_form_views_exposed_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  $view = $form_state->get('view');
+  if (!$view instanceof ViewExecutable || $view->id() !== 'badge_approval' || $view->current_display !== 'badge_approval') {
+    return;
+  }
+
+  if (!isset($form['field_badge_requested_target_id'])) {
+    return;
+  }
+
+  $request = \Drupal::requestStack()->getCurrentRequest();
+  $selected_badge = $request->query->get('field_badge_requested_target_id');
+  $show_all = (bool) $request->query->get('show_all');
+  $issuer_tids = _appointment_facilitator_get_badge_issuer_term_ids(\Drupal::currentUser());
+
+  if (isset($form['field_badge_requested_target_id']['#options']) && $issuer_tids) {
+    $options = $form['field_badge_requested_target_id']['#options'];
+    $prioritized = [];
+    $remaining = [];
+
+    foreach ($options as $key => $label) {
+      if ($key === 'All' || $key === '' || $key === 0 || $key === '0') {
+        $prioritized[$key] = $label;
+        continue;
+      }
+
+      if (in_array((int) $key, $issuer_tids, TRUE)) {
+        $prioritized[$key] = $label . ' ' . t('(you can issue)');
+      }
+      else {
+        $remaining[$key] = $label;
+      }
+    }
+
+    $form['field_badge_requested_target_id']['#options'] = $prioritized + $remaining;
+  }
+
+  if (!$selected_badge && !$show_all && $issuer_tids) {
+    $show_all_url = Url::fromRoute('<current>', [], [
+      'query' => $request->query->all() + ['show_all' => 1],
+    ])->toString();
+    $form['field_badge_requested_target_id']['#description'] = (string) t('Defaulting to pending badges you can issue. <a href=":url">Show all pending badges</a>.', [
+      ':url' => $show_all_url,
+    ]);
+  }
+}
+
+/**
  * Recursively updates Smart Date Recur "Manage Instances" links in an element.
  */
 function _appointment_facilitator_force_non_ajax_manage_instances(array &$element): void {
@@ -886,7 +1383,11 @@ function appointment_facilitator_entity_field_access(string $operation, FieldDef
  */
 function appointment_facilitator_form_node_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
   $entity = $form_state->getFormObject()?->getEntity();
-  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'appointment') {
+  if (!$entity instanceof NodeInterface) {
+    return;
+  }
+
+  if ($entity->bundle() !== 'appointment') {
     return;
   }
 
@@ -958,6 +1459,47 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     }
 
     _appointment_facilitator_prefill_slot_defaults($form, $entity);
+
+    // "Allow others to join" checkbox — only when joining is enabled site-wide.
+    $joiner_cap = (int) (\Drupal::config('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
+    if ($joiner_cap > 0 && $entity->hasField('field_appointment_open_to_join')) {
+      $current_open = $entity->isNew()
+        ? TRUE
+        : (bool) $entity->get('field_appointment_open_to_join')->value;
+
+      $form['field_appointment_open_to_join_widget'] = [
+        '#type'          => 'checkbox',
+        '#title'         => t('Allow others to join this session'),
+        '#description'   => t('When checked, other members with compatible badges can join this appointment. Uncheck to keep this session 1-on-1.'),
+        '#default_value' => $current_open,
+        '#weight'        => 4,
+      ];
+      $form['#submit'][] = '_appointment_facilitator_save_open_to_join_field';
+    }
+
+    // Experience level — shown on all appointments. Defaults to beginner.
+    // Helps facilitators plan session timing and match compatible joiners.
+    if ($entity->hasField('field_appointment_experience')) {
+      $current_exp = !$entity->get('field_appointment_experience')->isEmpty()
+        ? $entity->get('field_appointment_experience')->value : 'beginner';
+
+      $form['field_appointment_experience_widget'] = [
+        '#type'          => 'select',
+        '#title'         => t('Your experience level'),
+        '#description'   => t('Helps the facilitator understand your session\'s timing and pace, and for matching any add-on joiners. Most first-timers are Beginner.'),
+        '#options'       => [
+          'beginner'     => t('Beginner (First time / Never used)'),
+          'intermediate' => t('Intermediate (Some experience / Needs refresher)'),
+          'advanced'     => t('Advanced (Very familiar / Just need checkout)'),
+        ],
+        '#default_value' => $current_exp,
+        '#required'      => FALSE,
+        '#weight'        => 5,
+      ];
+
+      // Copy the value to the real field on submit.
+      $form['#submit'][] = '_appointment_facilitator_save_experience_field';
+    }
   }
 
   // Pass pending badge data and the admin bypass flag to JS. This runs for
@@ -1037,6 +1579,36 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   if (isset($form['field_appointment_attendees'])) {
     $form['field_appointment_attendees']['#access'] = FALSE;
   }
+}
+
+/**
+ * Implements hook_entity_presave().
+ */
+function appointment_facilitator_entity_presave(EntityInterface $entity): void {
+  if (!$entity instanceof NodeInterface || $entity->bundle() !== 'badge_request' || !$entity->hasField('field_badge_status')) {
+    return;
+  }
+
+  $new_status = (string) ($entity->get('field_badge_status')->value ?? '');
+  if ($new_status !== 'active') {
+    return;
+  }
+
+  $old_status = '';
+  $original = $entity->original ?? NULL;
+  if ($original instanceof NodeInterface && $original->hasField('field_badge_status') && !$original->get('field_badge_status')->isEmpty()) {
+    $old_status = (string) $original->get('field_badge_status')->value;
+  }
+  if ($old_status === 'active') {
+    return;
+  }
+
+  $account = \Drupal::currentUser();
+  if (!$account->isAuthenticated() || _appointment_facilitator_is_badge_request_issuer($entity, $account)) {
+    return;
+  }
+
+  \Drupal::messenger()->addWarning(_appointment_facilitator_badge_issuer_warning($entity));
 }
 
 /**
@@ -1380,6 +1952,28 @@ function _appointment_facilitator_count_selected_slots($slot_value): int {
   }
 
   return $count;
+}
+
+/**
+ * Submit handler: saves the open-to-join checkbox to field_appointment_open_to_join.
+ */
+function _appointment_facilitator_save_open_to_join_field(array &$form, FormStateInterface $form_state): void {
+  $value = (bool) $form_state->getValue('field_appointment_open_to_join_widget');
+  $node  = $form_state->getFormObject()->getEntity();
+  if ($node instanceof NodeInterface && $node->hasField('field_appointment_open_to_join')) {
+    $node->set('field_appointment_open_to_join', $value ? 1 : 0);
+  }
+}
+
+/**
+ * Submit handler: copies the experience widget value to field_appointment_experience.
+ */
+function _appointment_facilitator_save_experience_field(array &$form, FormStateInterface $form_state): void {
+  $exp = (string) $form_state->getValue('field_appointment_experience_widget');
+  $node = $form_state->getFormObject()->getEntity();
+  if ($node instanceof NodeInterface && $node->hasField('field_appointment_experience')) {
+    $node->set('field_appointment_experience', $exp ?: 'beginner');
+  }
 }
 
 /**
@@ -2535,25 +3129,39 @@ function appointment_facilitator_preprocess_views_view_fields(array &$variables)
     return;
   }
 
-  $show_always = (bool) \Drupal::config('appointment_facilitator.settings')->get('always_show_join');
-  $effective_capacity = appointment_facilitator_effective_capacity($node);
-  if (!$show_always && $effective_capacity <= 1) {
+  $config = \Drupal::config('appointment_facilitator.settings');
+  $show_always = (bool) $config->get('show_always_join_cta');
+  $joiner_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
+  if (!$show_always && $joiner_cap <= 0) {
     return;
   }
 
   $uid = (int) $current_user->id();
+  $author_uid = (int) $node->getOwnerId();
+  $host_uid = (int) ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
+    ? $node->get('field_appointment_host')->target_id
+    : 0);
+  $open_to_join = !$node->hasField('field_appointment_open_to_join')
+    || $node->get('field_appointment_open_to_join')->isEmpty()
+    || (bool) $node->get('field_appointment_open_to_join')->value;
+  if (!$open_to_join) {
+    return;
+  }
+
   $attendee_ids = array_map(
     static fn(array $item): int => (int) ($item['target_id'] ?? 0),
     $node->get('field_appointment_attendees')->getValue()
   );
   $attendee_ids = array_values(array_filter($attendee_ids));
+  $joiner_ids = array_values(array_filter(
+    $attendee_ids,
+    static fn(int $attendee_id): bool => $attendee_id !== $author_uid && $attendee_id !== $host_uid
+  ));
 
-  $host_uid = (int) ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
-    ? $node->get('field_appointment_host')->target_id
-    : 0);
-
-  $is_full = count($attendee_ids) >= $effective_capacity;
-  $already_in_session = in_array($uid, $attendee_ids, TRUE) || ($host_uid > 0 && $host_uid === $uid);
+  $is_full = count($joiner_ids) >= $joiner_cap;
+  $already_in_session = $uid === $author_uid
+    || ($host_uid > 0 && $host_uid === $uid)
+    || in_array($uid, $attendee_ids, TRUE);
 
   if ($is_full || $already_in_session) {
     return;
@@ -2579,6 +3187,49 @@ function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
   if ($view->id() === 'appointments') {
     $view->element['#attached']['library'][] = 'appointment_facilitator/appointment_table';
   }
+
+  if ($view->id() !== 'badge_approval' || $view->current_display !== 'badge_approval' || empty($view->appointment_facilitator_default_issuer_filter)) {
+    return;
+  }
+
+  $request = \Drupal::requestStack()->getCurrentRequest();
+  $show_all_url = Url::fromRoute('<current>', [], [
+    'query' => $request->query->all() + ['show_all' => 1],
+  ])->toString();
+
+  $view->attachment_before['appointment_facilitator_default_filter_notice'] = [
+    '#type' => 'container',
+    '#attributes' => [
+      'class' => ['messages', 'messages--status'],
+    ],
+    'content' => [
+      '#markup' => '<p>' . t('Showing pending badges you can issue by default.') . ' <a href="' . $show_all_url . '">' . t('Show all pending badges') . '</a>.</p>',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_views_query_alter().
+ */
+function appointment_facilitator_views_query_alter(ViewExecutable $view, QueryPluginBase $query): void {
+  if ($view->id() !== 'badge_approval' || $view->current_display !== 'badge_approval') {
+    return;
+  }
+
+  $request = \Drupal::requestStack()->getCurrentRequest();
+  $selected_badge = $request->query->get('field_badge_requested_target_id');
+  $show_all = (bool) $request->query->get('show_all');
+  if ($show_all || $selected_badge !== NULL && $selected_badge !== '' && $selected_badge !== 'All') {
+    return;
+  }
+
+  $issuer_tids = _appointment_facilitator_get_badge_issuer_term_ids(\Drupal::currentUser());
+  if (!$issuer_tids) {
+    return;
+  }
+
+  $query->addWhere(0, 'node__field_badge_requested.field_badge_requested_target_id', $issuer_tids, 'IN');
+  $view->appointment_facilitator_default_issuer_filter = TRUE;
 }
 
 /**
@@ -2588,8 +3239,10 @@ function appointment_facilitator_theme(): array {
   return [
     'appointment_dashboard' => [
       'variables' => [
+        'today'    => [],
         'upcoming' => [],
         'past'     => [],
+        'context'  => 'mine',
       ],
     ],
     'appointment_card' => [
@@ -2600,7 +3253,12 @@ function appointment_facilitator_theme(): array {
         'time'         => '',
         'url'          => '',
         'host'         => '',
+        'host_area'    => '',
         'member'       => '',
+        'members'      => [],
+        'member_uid'   => 0,
+        'pending_url'  => '',
+        'join_url'     => '',
         'purpose'      => '',
         'badges'       => [],
         'note'         => '',

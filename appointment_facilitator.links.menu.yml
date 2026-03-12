@@ -19,6 +19,13 @@ appointment_facilitator.stats:
   route_name: appointment_facilitator.stats
   weight: 100
 
+appointment_facilitator.feedback_report:
+  title: 'Appointment feedback narratives'
+  description: 'Drill into written feedback from facilitator appointments'
+  parent: system.admin_reports
+  route_name: appointment_facilitator.feedback_report
+  weight: 101
+
 appointment_facilitator.self_stats:
   title: 'My facilitator stats'
   description: 'View your appointment stats'

@@ -1,3 +1,11 @@
+appointment_facilitator.appointments_all:
+  path: '/appointments/all'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\AppointmentDashboardController::allAppointments'
+    _title: 'All Appointments'
+  requirements:
+    _permission: 'view appointment facilitator reports'
+
 appointment_facilitator.appointments_dashboard:
   path: '/appointments'
   defaults:
@@ -45,6 +53,14 @@ appointment_facilitator.stats:
   defaults:
     _controller: '\Drupal\appointment_facilitator\Controller\StatsController::overview'
     _title: 'Facilitator appointment stats'
+  requirements:
+    _permission: 'view appointment facilitator reports'
+
+appointment_facilitator.feedback_report:
+  path: '/admin/reports/appointment-feedback'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\AppointmentFeedbackReportController::overview'
+    _title: 'Appointment feedback narratives'
   requirements:
     _permission: 'view appointment facilitator reports'
 

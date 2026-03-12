@@ -78,11 +78,26 @@
   background: #eef6ff;
 }
 
+.appointment-facilitator-dashboard .afd-stat-section {
+  margin-bottom: 1rem;
+}
+
+.appointment-facilitator-dashboard .afd-section-title {
+  margin: 0 0 0.2rem;
+  font-size: 1rem;
+  color: var(--afd-primary);
+}
+
+.appointment-facilitator-dashboard .afd-section-note {
+  margin: 0 0 0.7rem;
+  color: var(--afd-muted);
+  font-size: 0.92rem;
+}
+
 .appointment-facilitator-dashboard .afd-stat-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.8rem;
-  margin-bottom: 1rem;
 }
 
 .appointment-facilitator-dashboard .afd-stat {
@@ -104,6 +119,17 @@
   line-height: 1.15;
   margin-top: 0.2rem;
   font-weight: 700;
+}
+
+.appointment-facilitator-dashboard .afd-stat-secondary {
+  background: #eef4fb;
+  color: var(--afd-text);
+  border: 1px solid var(--afd-line);
+}
+
+.appointment-facilitator-dashboard .afd-stat-secondary .afd-stat-label {
+  opacity: 1;
+  color: var(--afd-muted);
 }
 
 .appointment-facilitator-dashboard .afd-grid {
@@ -129,6 +155,10 @@
   border-collapse: collapse;
 }
 
+.appointment-facilitator-dashboard .afd-table-wrap {
+  overflow-x: auto;
+}
+
 .appointment-facilitator-dashboard .afd-table th {
   background: #f1f6fb;
   color: var(--afd-muted);
@@ -143,6 +173,17 @@
   padding: 0.65rem 0.6rem;
   border-bottom: 1px solid #edf2f8;
   vertical-align: top;
+}
+
+.appointment-facilitator-dashboard .afd-date-link {
+  color: var(--afd-primary);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.appointment-facilitator-dashboard .afd-date-link:hover,
+.appointment-facilitator-dashboard .afd-date-link:focus {
+  text-decoration: underline;
 }
 
 .appointment-facilitator-dashboard .afd-inline-list {
@@ -167,37 +208,89 @@
   margin-top: 0.7rem;
 }
 
-/* Fix operations dropdown overflow */
-.appointment-facilitator-dashboard .dropbutton-wrapper {
-  min-width: 100px;
+.appointment-facilitator-dashboard .afd-action-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
-.appointment-facilitator-dashboard .dropbutton-widget {
-  position: relative;
-}
-
-.appointment-facilitator-dashboard .dropbutton .dropbutton-action a,
-.appointment-facilitator-dashboard .dropbutton .dropbutton-action button {
-  padding: 0.4rem 0.6rem;
-  font-size: 0.85rem;
+.appointment-facilitator-dashboard .afd-chip-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--afd-line);
+  border-radius: 999px;
+  padding: 0.42rem 0.7rem;
+  background: #f7fbff;
+  color: var(--afd-primary);
+  font-size: 0.84rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-.appointment-facilitator-dashboard .dropbutton-multiple .dropbutton-widget {
-  padding-right: 2rem;
+.appointment-facilitator-dashboard .afd-chip-link:hover,
+.appointment-facilitator-dashboard .afd-chip-link:focus {
+  border-color: var(--afd-primary);
+  background: #eef6ff;
 }
 
-.appointment-facilitator-dashboard .dropbutton-toggle button {
-  padding: 0.4rem 0.5rem;
+.appointment-facilitator-dashboard .afd-chip-link-secondary {
+  background: #eef6ff;
 }
 
-/* Ensure dropdown menu doesn't overflow and is accessible */
-.appointment-facilitator-dashboard .dropbutton .secondary-action {
-  left: auto;
-  right: 0;
-  min-width: 120px;
-  max-width: 200px;
-  z-index: 100;
+.appointment-facilitator-dashboard .afd-chip-link-warning {
+  background: #b64600;
+  border-color: #f3c167;
+  color: #fff;
+}
+
+.appointment-facilitator-dashboard .afd-chip-link-warning:hover,
+.appointment-facilitator-dashboard .afd-chip-link-warning:focus {
+  background: #993800;
+  border-color: #f3c167;
+  color: #fff;
+}
+
+.appointment-facilitator-dashboard .afd-feedback-list,
+.appointment-facilitator-dashboard .afd-offline-list {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.appointment-facilitator-dashboard .afd-feedback-list li,
+.appointment-facilitator-dashboard .afd-offline-list li {
+  margin-bottom: 0.7rem;
+}
+
+.appointment-facilitator-dashboard .afd-feedback-quote {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-left: 4px solid var(--afd-accent);
+  background: #f8fbff;
+  border-radius: 10px;
+  color: var(--afd-text);
+}
+
+.appointment-facilitator-dashboard .afd-offline-tool__meta {
+  margin-top: 0.18rem;
+  color: var(--afd-muted);
+  font-size: 0.88rem;
+}
+
+.appointment-facilitator-dashboard .afd-note-card {
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--afd-line);
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.appointment-facilitator-dashboard .afd-note-card p {
+  margin: 0.35rem 0 0;
+  color: var(--afd-muted);
+  font-size: 0.92rem;
 }
 
 @media (max-width: 1024px) {
@@ -212,7 +305,20 @@
 }
 
 @media (max-width: 640px) {
+  .appointment-facilitator-dashboard {
+    padding: 0.85rem;
+  }
+
   .appointment-facilitator-dashboard .afd-stat-row {
     grid-template-columns: 1fr;
+  }
+
+  .appointment-facilitator-dashboard .afd-table th,
+  .appointment-facilitator-dashboard .afd-table td {
+    padding: 0.55rem 0.45rem;
+  }
+
+  .appointment-facilitator-dashboard .afd-chip-link {
+    white-space: normal;
   }
 }
