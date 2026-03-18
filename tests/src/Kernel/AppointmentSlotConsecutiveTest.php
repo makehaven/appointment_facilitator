@@ -95,7 +95,7 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
 
     $form = ['#form_id' => 'node_appointment_form'];
     $form_state = new FormState();
-    $form_state->setFormObject(new AppointmentFormObjectStub($appointment));
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
 
     if (!Vocabulary::load('badges')) {
         Vocabulary::create(['vid' => 'badges', 'name' => 'Badges'])->save();
@@ -124,7 +124,7 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
     
     // Case 2: Consecutive slots.
     $form_state = new FormState();
-    $form_state->setFormObject(new AppointmentFormObjectStub($appointment));
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
     $form_state->setValues([
       'field_appointment_purpose' => [['value' => 'checkout']],
       'field_appointment_badges' => [['target_id' => $badge->id()]],
@@ -134,10 +134,24 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
     appointment_facilitator_validate_slot_coverage($form, $form_state);
     $this->assertEmpty($form_state->getErrors(), 'Consecutive slots are valid.');
 
+    // Case 2b: Flat widget values still require at least one badge.
+    $form_state = new FormState();
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
+    $form_state->setValues([
+      'field_appointment_purpose' => 'checkout',
+      'field_appointment_badges' => [],
+      'field_appointment_slot' => ['1', '1-5'],
+    ]);
+
+    appointment_facilitator_validate_slot_coverage($form, $form_state);
+    $errors = $form_state->getErrors();
+    $this->assertArrayHasKey('field_appointment_badges', $errors, 'Checkout appointments require at least one badge even with flat widget values.');
+    $this->assertSame('Select at least one badge for a badge checkout appointment.', (string) $errors['field_appointment_badges']);
+
     // Case 3: Edit form.
     $form['#form_id'] = 'node_appointment_edit_form';
     $form_state = new FormState();
-    $form_state->setFormObject(new AppointmentFormObjectStub($appointment));
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
     $form_state->setValues([
       'field_appointment_purpose' => [['value' => 'checkout']],
       'field_appointment_badges' => [['target_id' => $badge->id()]],
@@ -157,7 +171,7 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
     $this->container->get('current_user')->setAccount($admin);
 
     $form_state = new FormState();
-    $form_state->setFormObject(new AppointmentFormObjectStub($appointment));
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
     $form_state->setValues([
       'field_appointment_purpose' => [['value' => 'checkout']],
       'field_appointment_badges' => [['target_id' => $badge->id()]],
@@ -171,7 +185,7 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
     // Case 5: Different purpose (Informational).
     // Now blocked for ALL purposes.
     $form_state = new FormState();
-    $form_state->setFormObject(new AppointmentFormObjectStub($appointment));
+    $form_state->setFormObject(new AppointmentSlotConsecutiveFormObjectStub($appointment));
     $form_state->setValues([
       'field_appointment_purpose' => [['value' => 'informational']],
       'field_appointment_badges' => [['target_id' => $badge->id()]],
@@ -254,7 +268,7 @@ class AppointmentSlotConsecutiveTest extends KernelTestBase {
 /**
  * Minimal form object stub for hook_form_node_form_alter() tests.
  */
-class AppointmentFormObjectStub implements FormInterface {
+class AppointmentSlotConsecutiveFormObjectStub implements FormInterface {
 
   /**
    * Creates a new stub.

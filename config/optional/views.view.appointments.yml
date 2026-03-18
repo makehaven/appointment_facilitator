@@ -1334,15 +1334,149 @@ display:
           plugin_id: text
           empty: false
           content:
-            value: "<script>\r\n\r\n/**\r\n * Appointment Table Enhancer Script\r\n *\r\n * This script enhances Drupal views appointment tables by:\r\n *  - Inserting a new \"Time Range\" column computed from existing columns.\r\n *  - For upcoming appointments:\r\n *      • Uses Appointment Date (cell[0]), Shift Range (cell[1]), and Slot (cell[2])\r\n *        to compute start/end times (each slot = 30 minutes).\r\n *      • Removes the original Appointment Date, Shift Range, and Slot columns.\r\n *  - For past appointments:\r\n *      • Uses the date/time from cell[0] and Slot (cell[1]) to compute the time range.\r\n *      • Removes the original date/time and Slot cells.\r\n *  - Groups rows by the computed time range combined with the appointment summary,\r\n *    deduplicates badge links, and sorts rows by appointment start time.\r\n *\r\n * The script determines the display type (upcoming vs. past) based on header cell count.\r\n */\r\n\r\n\r\ndocument.addEventListener(\"DOMContentLoaded\", function () {\r\n  var tables = document.querySelectorAll(\".view-content table.table\");\r\n\r\n  tables.forEach(function (table) {\r\n    // --- Update Header ---\r\n    var headerRow = table.querySelector(\"thead tr\");\r\n    if (headerRow) {\r\n      // Determine header structure based on number of columns.\r\n      var headerCount = headerRow.children.length;\r\n      // Upcoming view typically has 6 header cells; past view has 5.\r\n      var headerRemovalCount = (headerCount === 6) ? 3 : ((headerCount === 5) ? 2 : 3);\r\n      var newTh = document.createElement(\"th\");\r\n      newTh.textContent = \"Time Range\";\r\n      headerRow.insertBefore(newTh, headerRow.firstElementChild);\r\n      // Remove the cells that will be replaced.\r\n      for (var i = 0; i < headerRemovalCount; i++) {\r\n        if (headerRow.children[1]) {\r\n          headerRow.removeChild(headerRow.children[1]);\r\n        }\r\n      }\r\n    }\r\n\r\n    // --- Process Each Row ---\r\n    var rows = table.querySelectorAll(\"tbody tr\");\r\n    rows.forEach(function (row) {\r\n      var cells = row.children;\r\n      // Determine structure:\r\n      // For upcoming view, the second cell (index 1) contains a <time> element.\r\n      var isUpcoming = cells[1] && cells[1].querySelector(\"time\") ? true : false;\r\n      // Removal count: upcoming view uses 3 cells; past view uses 2.\r\n      var removalCount = isUpcoming ? 3 : 2;\r\n      var shiftTimeElem, slotCell;\r\n      if (isUpcoming) {\r\n        // Upcoming view: appointment date in cell[0], shift range in cell[1], slot in cell[2].\r\n        shiftTimeElem = cells[1].querySelector(\"time\");\r\n        slotCell = cells[2];\r\n      } else {\r\n        // Past view: appointment date (with time) in cell[0], slot in cell[1].\r\n        shiftTimeElem = cells[0].querySelector(\"time\");\r\n        slotCell = cells[1];\r\n      }\r\n      if (!shiftTimeElem) return;\r\n      var shiftStartDatetimeStr = shiftTimeElem.getAttribute(\"datetime\");\r\n      var shiftStart = new Date(shiftStartDatetimeStr);\r\n      if (isNaN(shiftStart)) return;\r\n\r\n      // Extract slot numbers from the slot cell.\r\n      var slotText = slotCell.textContent;\r\n      var regex = /(\\d+)(?:st|nd|rd|th)?/g;\r\n      var slots = [];\r\n      var match;\r\n      while ((match = regex.exec(slotText)) !== null) {\r\n        slots.push(parseInt(match[1], 10));\r\n      }\r\n      if (slots.length === 0) return;\r\n      var minSlot = Math.min(...slots);\r\n      var maxSlot = Math.max(...slots);\r\n\r\n      // Each slot is 30 minutes.\r\n      var appointmentStart = new Date(shiftStart.getTime() + (minSlot - 1) * 30 * 60000);\r\n      var appointmentEnd   = new Date(shiftStart.getTime() + maxSlot * 30 * 60000);\r\n      row.dataset.appointmentStart = appointmentStart.getTime();\r\n\r\n      // Format the times (Eastern Time).
-      var options = { 
-        hour: 'numeric', 
-        minute: '2-digit', 
-        hour12: true, 
-        timeZone: (window.drupalSettings?.appointment_facilitator?.siteTimezone || 'America/New_York') 
-      };
-      var startFormatted = appointmentStart.toLocaleTimeString([], options);
-      var endFormatted   = appointmentEnd.toLocaleTimeString([], options);\r\n\r\n      // Create new cell with the computed Time Range.\r\n      var newTd = document.createElement(\"td\");\r\n      newTd.classList.add(\"time-range-cell\");\r\n      newTd.innerHTML = startFormatted + \"<br>to<br>\" + endFormatted;\r\n      row.insertBefore(newTd, row.firstElementChild);\r\n\r\n      // Remove the original cells that provided the date/slot data.\r\n      for (var i = 0; i < removalCount; i++) {\r\n        if (row.children[1]) row.removeChild(row.children[1]);\r\n      }\r\n    });\r\n\r\n    // --- Grouping & Badge Deduplication (unchanged) ---\r\n    var groupedRows = {};\r\n    var tbody = table.querySelector(\"tbody\");\r\n    Array.from(tbody.querySelectorAll(\"tr\")).forEach(function (row) {\r\n      var timeRange = row.querySelector(\".time-range-cell\") ? row.querySelector(\".time-range-cell\").innerText.trim() : \"\";\r\n      var summaryCell = row.querySelector(\".views-field-nothing\");\r\n      var summaryText = summaryCell ? summaryCell.innerHTML.trim() : \"\";\r\n      var uniqueKey = timeRange + \"|\" + summaryText;\r\n\r\n      var badgeCell = row.querySelector(\".views-field-field-appointment-badges\");\r\n      var badgeHTML = badgeCell ? badgeCell.innerHTML.trim() : \"\";\r\n\r\n      if (groupedRows[uniqueKey]) {\r\n        if (badgeHTML) {\r\n          groupedRows[uniqueKey].badgeHTML += \" \" + badgeHTML;\r\n        }\r\n        row.remove();\r\n      } else {\r\n        groupedRows[uniqueKey] = { row: row, badgeHTML: badgeHTML };\r\n      }\r\n    });\r\n\r\n    Object.keys(groupedRows).forEach(function (key) {\r\n      var row = groupedRows[key].row;\r\n      var badgeCell = row.querySelector(\".views-field-field-appointment-badges\");\r\n      if (badgeCell) {\r\n        var tempDiv = document.createElement(\"div\");\r\n        tempDiv.innerHTML = groupedRows[key].badgeHTML;\r\n        var links = tempDiv.querySelectorAll(\"a\");\r\n        var uniqueBadges = {};\r\n        var newBadgeHTML = \"\";\r\n        links.forEach(function (link) {\r\n          var href = link.getAttribute(\"href\");\r\n          var text = link.textContent.trim();\r\n          var uniqueBadgeKey = href + \"|\" + text;\r\n          if (!uniqueBadges[uniqueBadgeKey]) {\r\n            uniqueBadges[uniqueBadgeKey] = true;\r\n            link.classList.add(\"btn\", \"btn-outline-primary\", \"btn-sm\", \"me-1\");\r\n            newBadgeHTML += link.outerHTML + \" \";\r\n          }\r\n        });\r\n        badgeCell.innerHTML = newBadgeHTML.trim();\r\n      }\r\n    });\r\n\r\n    // --- Sort rows by appointment start time ---\r\n    var sortedRows = Array.from(tbody.querySelectorAll(\"tr\")).sort(function(a, b) {\r\n      return a.dataset.appointmentStart - b.dataset.appointmentStart;\r\n    });\r\n    sortedRows.forEach(function (row) {\r\n      tbody.appendChild(row);\r\n    });\r\n  });\r\n});\r\n</script>\r\n"
+            value: |
+              <script>
+              document.addEventListener("DOMContentLoaded", function () {
+                var tables = document.querySelectorAll(".view-content table.table");
+
+                tables.forEach(function (table) {
+                  var headerRow = table.querySelector("thead tr");
+                  if (headerRow) {
+                    var headerCount = headerRow.children.length;
+                    var headerRemovalCount = (headerCount === 6) ? 3 : ((headerCount === 5) ? 2 : 3);
+                    var newTh = document.createElement("th");
+                    newTh.textContent = "Time Range";
+                    headerRow.insertBefore(newTh, headerRow.firstElementChild);
+
+                    for (var i = 0; i < headerRemovalCount; i++) {
+                      if (headerRow.children[1]) {
+                        headerRow.removeChild(headerRow.children[1]);
+                      }
+                    }
+                  }
+
+                  var rows = table.querySelectorAll("tbody tr");
+                  rows.forEach(function (row) {
+                    var cells = row.children;
+                    var isUpcoming = cells[1] && cells[1].querySelector("time") ? true : false;
+                    var removalCount = isUpcoming ? 3 : 2;
+                    var shiftTimeElem;
+                    var slotCell;
+
+                    if (isUpcoming) {
+                      shiftTimeElem = cells[1].querySelector("time");
+                      slotCell = cells[2];
+                    }
+                    else {
+                      shiftTimeElem = cells[0].querySelector("time");
+                      slotCell = cells[1];
+                    }
+
+                    if (!shiftTimeElem) {
+                      return;
+                    }
+
+                    var shiftStartDatetimeStr = shiftTimeElem.getAttribute("datetime");
+                    var shiftStart = new Date(shiftStartDatetimeStr);
+                    if (isNaN(shiftStart)) {
+                      return;
+                    }
+
+                    var slotText = slotCell.textContent;
+                    var regex = /(\d+)(?:st|nd|rd|th)?/g;
+                    var slots = [];
+                    var match;
+                    while ((match = regex.exec(slotText)) !== null) {
+                      slots.push(parseInt(match[1], 10));
+                    }
+                    if (slots.length === 0) {
+                      return;
+                    }
+
+                    var minSlot = Math.min.apply(null, slots);
+                    var maxSlot = Math.max.apply(null, slots);
+                    var appointmentStart = new Date(shiftStart.getTime() + (minSlot - 1) * 30 * 60000);
+                    var appointmentEnd = new Date(shiftStart.getTime() + maxSlot * 30 * 60000);
+                    row.dataset.appointmentStart = appointmentStart.getTime();
+
+                    var options = {
+                      hour: "numeric",
+                      minute: "2-digit",
+                      hour12: true,
+                      timeZone: (window.drupalSettings && window.drupalSettings.appointment_facilitator && window.drupalSettings.appointment_facilitator.siteTimezone) || "America/New_York"
+                    };
+                    var startFormatted = appointmentStart.toLocaleTimeString([], options);
+                    var endFormatted = appointmentEnd.toLocaleTimeString([], options);
+
+                    var newTd = document.createElement("td");
+                    newTd.classList.add("time-range-cell");
+                    newTd.innerHTML = startFormatted + "<br>to<br>" + endFormatted;
+                    row.insertBefore(newTd, row.firstElementChild);
+
+                    for (var j = 0; j < removalCount; j++) {
+                      if (row.children[1]) {
+                        row.removeChild(row.children[1]);
+                      }
+                    }
+                  });
+
+                  var groupedRows = {};
+                  var tbody = table.querySelector("tbody");
+                  Array.from(tbody.querySelectorAll("tr")).forEach(function (row) {
+                    var timeRangeCell = row.querySelector(".time-range-cell");
+                    var timeRange = timeRangeCell ? timeRangeCell.innerText.trim() : "";
+                    var summaryCell = row.querySelector(".views-field-nothing");
+                    var summaryText = summaryCell ? summaryCell.innerHTML.trim() : "";
+                    var uniqueKey = timeRange + "|" + summaryText;
+
+                    var badgeCell = row.querySelector(".views-field-field-appointment-badges");
+                    var badgeHTML = badgeCell ? badgeCell.innerHTML.trim() : "";
+
+                    if (groupedRows[uniqueKey]) {
+                      if (badgeHTML) {
+                        groupedRows[uniqueKey].badgeHTML += " " + badgeHTML;
+                      }
+                      row.remove();
+                    }
+                    else {
+                      groupedRows[uniqueKey] = { row: row, badgeHTML: badgeHTML };
+                    }
+                  });
+
+                  Object.keys(groupedRows).forEach(function (key) {
+                    var groupedRow = groupedRows[key].row;
+                    var badgeCell = groupedRow.querySelector(".views-field-field-appointment-badges");
+                    if (badgeCell) {
+                      var tempDiv = document.createElement("div");
+                      tempDiv.innerHTML = groupedRows[key].badgeHTML;
+                      var links = tempDiv.querySelectorAll("a");
+                      var uniqueBadges = {};
+                      var newBadgeHTML = "";
+
+                      links.forEach(function (link) {
+                        var href = link.getAttribute("href");
+                        var text = link.textContent.trim();
+                        var uniqueBadgeKey = href + "|" + text;
+                        if (!uniqueBadges[uniqueBadgeKey]) {
+                          uniqueBadges[uniqueBadgeKey] = true;
+                          link.classList.add("btn", "btn-outline-primary", "btn-sm", "me-1");
+                          newBadgeHTML += link.outerHTML + " ";
+                        }
+                      });
+
+                      badgeCell.innerHTML = newBadgeHTML.trim();
+                    }
+                  });
+
+                  var sortedRows = Array.from(tbody.querySelectorAll("tr")).sort(function (a, b) {
+                    return a.dataset.appointmentStart - b.dataset.appointmentStart;
+                  });
+                  sortedRows.forEach(function (row) {
+                    tbody.appendChild(row);
+                  });
+                });
+              });
+              </script>
             format: html_code
           tokenize: false
       display_extenders: {  }

@@ -100,8 +100,28 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   }
 
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
-    _appointment_facilitator_enforce_badge_page_flow($build, $entity);
-    _appointment_facilitator_add_related_tools($build, $entity);
+    if ($view_mode === 'full') {
+      _appointment_facilitator_enforce_badge_page_flow($build, $entity);
+      _appointment_facilitator_add_related_tools($build, $entity);
+
+      if ($display && $component = $display->getComponent('print_checklist')) {
+        // Add Print Badge Checklist button.
+        $build['print_checklist'] = [
+          '#type' => 'container',
+          '#weight' => $component['weight'],
+          '#attributes' => ['class' => ['print-checklist-wrapper', 'mb-3']],
+          'link' => [
+            '#type' => 'link',
+            '#title' => t('Print Badge Checklist'),
+            '#url' => Url::fromRoute('appointment_facilitator.badge_print_checklist', ['taxonomy_term' => $entity->id()]),
+            '#attributes' => [
+              'class' => ['btn', 'btn-outline-primary', 'btn-sm', 'd-print-none'],
+              'target' => '_blank',
+            ],
+          ],
+        ];
+      }
+    }
     return;
   }
 
@@ -283,6 +303,18 @@ function appointment_facilitator_field_extra_fields(): array {
         ],
       ],
     ],
+    'taxonomy_term' => [
+      'badges' => [
+        'display' => [
+          'print_checklist' => [
+            'label'       => t('Print Badge Checklist button'),
+            'description' => t('A button to open a print-friendly version of the checklist.'),
+            'weight'      => 50,
+            'visible'     => TRUE,
+          ],
+        ],
+      ],
+    ],
   ];
 }
 
@@ -296,6 +328,84 @@ function appointment_facilitator_node_view(array &$build, NodeInterface $entity,
 /**
  * Adds appointment/reservation related UI to node view builds.
  */
+/**
+ * Loads profile face data for an appointment session.
+ *
+ * @param \Drupal\node\NodeInterface $node
+ *   The appointment node.
+ *
+ * @return array
+ *   Array of face data (name, label, img_html, initials).
+ */
+function _appointment_facilitator_get_faces(NodeInterface $node): array {
+  $faces = [];
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $file_url_generator = \Drupal::service('file_url_generator');
+
+  $load_face = static function (int $uid, string $label) use (&$faces, $entity_type_manager, $file_url_generator): void {
+    if ($uid <= 0) {
+      return;
+    }
+    $profiles = $entity_type_manager->getStorage('profile')
+      ->loadByProperties(['uid' => $uid, 'type' => 'main', 'status' => 1]);
+    $profile = reset($profiles);
+    if (!$profile) {
+      return;
+    }
+    $user = $entity_type_manager->getStorage('user')->load($uid);
+    $display_name = $user ? $user->getDisplayName() : '';
+    $img_html = '';
+    if ($profile->hasField('field_member_photo') && !$profile->get('field_member_photo')->isEmpty()) {
+      $fid  = (int) $profile->get('field_member_photo')->target_id;
+      $file = $entity_type_manager->getStorage('file')->load($fid);
+      if ($file) {
+        $uri = $file->getFileUri();
+        $url = $file_url_generator->generateString($uri);
+        $img_html = '<img src="' . htmlspecialchars($url, ENT_QUOTES) . '" alt="' . htmlspecialchars($display_name, ENT_QUOTES) . '" class="appt-face__img">';
+      }
+    }
+    $initials = '';
+    if (!$img_html) {
+      $initials_raw = implode('', array_map(fn($w) => mb_strtoupper(mb_substr($w, 0, 1)), explode(' ', trim($display_name))));
+      $initials = mb_substr($initials_raw, 0, 2);
+    }
+
+    $faces[] = [
+      'uid' => $uid,
+      'name' => $display_name,
+      'label' => $label,
+      'img_html' => $img_html,
+      'initials' => $initials,
+    ];
+  };
+
+  // Host.
+  if ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()) {
+    $host_uid = (int) $node->get('field_appointment_host')->target_id;
+    $load_face($host_uid, (string) t('Volunteer'));
+  }
+
+  // Primary member (node author, if different from host).
+  $author_uid = (int) $node->getOwnerId();
+  $host_uid_check = $node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
+    ? (int) $node->get('field_appointment_host')->target_id : 0;
+  if ($author_uid && $author_uid !== $host_uid_check) {
+    $load_face($author_uid, (string) t('Member'));
+  }
+
+  // Additional joiners.
+  if ($node->hasField('field_appointment_attendees') && !$node->get('field_appointment_attendees')->isEmpty()) {
+    foreach ($node->get('field_appointment_attendees')->getValue() as $item) {
+      $joiner_uid = (int) ($item['target_id'] ?? 0);
+      if ($joiner_uid && $joiner_uid !== $author_uid && $joiner_uid !== $host_uid_check) {
+        $load_face($joiner_uid, (string) t('Joining'));
+      }
+    }
+  }
+
+  return $faces;
+}
+
 function _appointment_facilitator_build_node_view(array &$build, NodeInterface $entity, ?string $view_mode): void {
   if ($view_mode === NULL) {
     return;
@@ -306,68 +416,62 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
     $effective_capacity = appointment_facilitator_effective_capacity($entity);
 
     // --- Who's in this session (profile photos) ---
-    $faces = [];
-
-    // Helper: load main profile photo for a uid.
-    $load_face = static function (int $uid, string $label) use (&$faces): void {
-      if ($uid <= 0) {
-        return;
+    $faces_data = _appointment_facilitator_get_faces($entity);
+    $faces_markup = [];
+    foreach ($faces_data as $face) {
+      $img = $face['img_html'];
+      if (!$img) {
+        $img = '<div class="appt-face__initials">' . htmlspecialchars($face['initials'], ENT_QUOTES) . '</div>';
       }
-      $profiles = \Drupal::entityTypeManager()->getStorage('profile')
-        ->loadByProperties(['uid' => $uid, 'type' => 'main', 'status' => 1]);
-      $profile = reset($profiles);
-      if (!$profile) {
-        return;
-      }
-      $user = \Drupal::entityTypeManager()->getStorage('user')->load($uid);
-      $display_name = $user ? $user->getDisplayName() : '';
-      $img_html = '';
-      if ($profile->hasField('field_member_photo') && !$profile->get('field_member_photo')->isEmpty()) {
-        $fid  = (int) $profile->get('field_member_photo')->target_id;
-        $file = \Drupal::entityTypeManager()->getStorage('file')->load($fid);
-        if ($file) {
-          $uri = $file->getFileUri();
-          $url = \Drupal::service('file_url_generator')->generateString($uri);
-          $img_html = '<img src="' . htmlspecialchars($url, ENT_QUOTES) . '" alt="' . htmlspecialchars($display_name, ENT_QUOTES) . '" class="appt-face__img">';
-        }
-      }
-      if (!$img_html) {
-        $initials = implode('', array_map(fn($w) => mb_strtoupper(mb_substr($w, 0, 1)), explode(' ', trim($display_name))));
-        $img_html = '<div class="appt-face__initials">' . htmlspecialchars(mb_substr($initials, 0, 2), ENT_QUOTES) . '</div>';
-      }
-      $faces[] = '<div class="appt-face">' . $img_html . '<div class="appt-face__label">' . htmlspecialchars($label, ENT_QUOTES) . '</div><div class="appt-face__name">' . htmlspecialchars($display_name, ENT_QUOTES) . '</div></div>';
-    };
-
-    // Host.
-    if ($entity->hasField('field_appointment_host') && !$entity->get('field_appointment_host')->isEmpty()) {
-      $host_uid = (int) $entity->get('field_appointment_host')->target_id;
-      $load_face($host_uid, t('Volunteer'));
+      $faces_markup[] = '<div class="appt-face">' . $img . '<div class="appt-face__label">' . htmlspecialchars($face['label'], ENT_QUOTES) . '</div><div class="appt-face__name">' . htmlspecialchars($face['name'], ENT_QUOTES) . '</div></div>';
     }
 
-    // Primary member (node author, if different from host).
-    $author_uid = (int) $entity->getOwnerId();
-    $host_uid_check = $entity->hasField('field_appointment_host') && !$entity->get('field_appointment_host')->isEmpty()
-      ? (int) $entity->get('field_appointment_host')->target_id : 0;
-    if ($author_uid && $author_uid !== $host_uid_check) {
-      $load_face($author_uid, t('Member'));
-    }
-
-    // Additional joiners.
-    if ($entity->hasField('field_appointment_attendees') && !$entity->get('field_appointment_attendees')->isEmpty()) {
-      foreach ($entity->get('field_appointment_attendees')->getValue() as $item) {
-        $joiner_uid = (int) ($item['target_id'] ?? 0);
-        if ($joiner_uid && $joiner_uid !== $author_uid && $joiner_uid !== $host_uid_check) {
-          $load_face($joiner_uid, t('Joining'));
-        }
-      }
-    }
-
-    if ($faces) {
+    if ($faces_markup) {
       $build['appointment_faces'] = [
-        '#markup' => '<div class="appt-faces">' . implode('', $faces) . '</div>',
+        '#markup' => '<div class="appt-faces">' . implode('', $faces_markup) . '</div>',
         '#weight' => -65,
         '#attached' => ['library' => ['appointment_facilitator/appointments']],
       ];
+    }
+
+    // Add feedback button for attendees once the appointment has started.
+    $is_attendee = ($author_uid === (int) $account->id());
+    if (!$is_attendee && $entity->hasField('field_appointment_attendees')) {
+      foreach ($entity->get('field_appointment_attendees')->getValue() as $item) {
+        if ((int) ($item['target_id'] ?? 0) === (int) $account->id()) {
+          $is_attendee = TRUE;
+          break;
+        }
+      }
+    }
+
+    $is_admin = $account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields');
+    $status_value = $entity->hasField('field_appointment_status') ? (string) $entity->get('field_appointment_status')->value : '';
+
+    if (($is_attendee || $is_admin) && $status_value !== 'canceled') {
+      $start_ts = 0;
+      if ($entity->hasField('field_appointment_timerange') && !$entity->get('field_appointment_timerange')->isEmpty()) {
+        $start_ts = (int) $entity->get('field_appointment_timerange')->value;
+      }
+      elseif ($entity->hasField('field_appointment_date') && !$entity->get('field_appointment_date')->isEmpty()) {
+        $start_ts = strtotime((string) $entity->get('field_appointment_date')->value);
+      }
+
+      if ($start_ts > 0 && $start_ts <= \Drupal::time()->getRequestTime()) {
+        $build['appointment_feedback_action'] = [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['appointment-feedback-action', 'messages', 'messages--status']],
+          '#weight' => -68,
+          'link' => [
+            '#type' => 'link',
+            '#title' => t('Leave Feedback / Report Issue'),
+            '#url' => Url::fromRoute('appointment_facilitator.feedback_form', ['node' => $entity->id()]),
+            '#attributes' => [
+              'class' => ['button', 'button--primary'],
+            ],
+          ],
+        ];
+      }
     }
 
     // Add a capacity summary.
@@ -433,12 +537,16 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
       if ($entity->hasField('field_appointment_badges') && !$entity->get('field_appointment_badges')->isEmpty()) {
         foreach ($entity->get('field_appointment_badges')->referencedEntities() as $term) {
           $checklist_html = '';
-          if ($term->hasField('field_badge_internal_checklist') && !$term->get('field_badge_internal_checklist')->isEmpty()) {
-            $checklist_html = $term->get('field_badge_internal_checklist')->value;
-          }
-          elseif ($term->hasField('field_badge_checklist') && !$term->get('field_badge_checklist')->isEmpty()) {
-            $url = $term->get('field_badge_checklist')->first()->getUrl();
-            $checklist_html = '<p>' . t('External Checklist: <a href="@url" target="_blank">@url</a>', ['@url' => $url->toString()]) . '</p>';
+          if ($term->hasField('field_badge_checklist_items') && !$term->get('field_badge_checklist_items')->isEmpty()) {
+            $checklist_html = '<ul style="list-style:none; padding-left:0;">';
+            foreach ($term->get('field_badge_checklist_items') as $item) {
+              $item_text = $item->value;
+              if (trim(strtolower($item_text)) === trim(strtolower($term->label()))) {
+                continue;
+              }
+              $checklist_html .= '<li style="margin-bottom:5px;"><input type="checkbox" style="margin-right:10px; vertical-align:middle;"> ' . htmlspecialchars($item_text) . '</li>';
+            }
+            $checklist_html .= '</ul>';
           }
 
           if ($checklist_html) {
@@ -1627,7 +1735,7 @@ function _appointment_facilitator_validate_no_duplicates(array &$form, FormState
   $member_uid = (int) $account->id();
 
   if ($form_id === 'node_appointment_form') {
-    $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value']);
+    $purpose = _appointment_facilitator_extract_purpose_from_form_state($form_state);
     if ($purpose !== 'checkout') {
       return;
     }
@@ -1675,7 +1783,7 @@ function _appointment_facilitator_validate_reservation_conflicts(array &$form, F
   }
 
   // Only check for checkout appointments.
-  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value']);
+  $purpose = _appointment_facilitator_extract_purpose_from_form_state($form_state);
   if ($purpose !== 'checkout') {
     return;
   }
@@ -1779,13 +1887,14 @@ function appointment_facilitator_validate_pending_badges(array &$form, FormState
 
   // Only validate badges for checkout appointments; informational appointments
   // don't require badge selection and the badges field is hidden via #states.
-  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
+  $purpose = _appointment_facilitator_extract_purpose_from_form_state($form_state);
   if ($purpose !== 'checkout') {
     return;
   }
 
   $selected = _appointment_facilitator_extract_badge_ids_from_form_value($form_state->getValue('field_appointment_badges'));
   if (!$selected) {
+    $form_state->setErrorByName('field_appointment_badges', t('Select at least one badge for a badge checkout appointment.'));
     return;
   }
 
@@ -1821,7 +1930,7 @@ function appointment_facilitator_validate_slot_coverage(array &$form, FormStateI
     return;
   }
 
-  $purpose = $form_state->getValue(['field_appointment_purpose', 0, 'value'], '');
+  $purpose = _appointment_facilitator_extract_purpose_from_form_state($form_state);
 
   if (!_appointment_facilitator_are_slots_consecutive($form_state->getValue('field_appointment_slot'))) {
     $form_state->setErrorByName('field_appointment_slot', t('Please select consecutive time slots. Non-consecutive slots are not allowed for a single appointment.'));
@@ -1833,6 +1942,7 @@ function appointment_facilitator_validate_slot_coverage(array &$form, FormStateI
 
   $badge_ids = _appointment_facilitator_extract_badge_ids_from_form_value($form_state->getValue('field_appointment_badges'));
   if (!$badge_ids) {
+    $form_state->setErrorByName('field_appointment_badges', t('Select at least one badge for a badge checkout appointment.'));
     return;
   }
 
@@ -1859,6 +1969,38 @@ function appointment_facilitator_validate_slot_coverage(array &$form, FormStateI
       '@max' => $required_slots,
     ]));
   }
+}
+
+/**
+ * Extracts the appointment purpose from any supported form value shape.
+ */
+function _appointment_facilitator_extract_purpose_from_form_state(FormStateInterface $form_state): string {
+  $value = $form_state->getValue('field_appointment_purpose');
+
+  if (is_scalar($value)) {
+    return (string) $value;
+  }
+
+  if (is_array($value)) {
+    if (isset($value[0]['value']) && is_scalar($value[0]['value'])) {
+      return (string) $value[0]['value'];
+    }
+
+    if (isset($value['value']) && is_scalar($value['value'])) {
+      return (string) $value['value'];
+    }
+
+    foreach ($value as $item) {
+      if (is_array($item) && isset($item['value']) && is_scalar($item['value'])) {
+        return (string) $item['value'];
+      }
+      if (is_scalar($item)) {
+        return (string) $item;
+      }
+    }
+  }
+
+  return '';
 }
 
 /**
@@ -3243,6 +3385,7 @@ function appointment_facilitator_theme(): array {
         'upcoming' => [],
         'past'     => [],
         'context'  => 'mine',
+        'can_see_all' => FALSE,
       ],
     ],
     'appointment_card' => [
@@ -3257,6 +3400,7 @@ function appointment_facilitator_theme(): array {
         'member'       => '',
         'members'      => [],
         'member_uid'   => 0,
+        'faces'        => [],
         'pending_url'  => '',
         'join_url'     => '',
         'purpose'      => '',

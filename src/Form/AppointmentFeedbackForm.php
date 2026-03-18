@@ -92,7 +92,7 @@ class AppointmentFeedbackForm extends FormBase {
       '#type' => 'textarea',
       '#title' => $this->t('Please provide your feedback for the appointment.'),
       '#required' => TRUE,
-      '#description' => $this->t('Your feedback helps us improve our program.'),
+      '#description' => $this->t('Your feedback helps us improve our program. Please note that the narrative feedback you provide will be shared with the facilitator to help them improve. To protect your privacy, this data is shared without your name and with a delay, making it less likely that you can be identified.'),
       '#default_value' => $node->get('field_appointment_feedback')->value ?? '',
     ];
 

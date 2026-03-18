@@ -77,6 +77,20 @@
     {% if note %}
       <div class="appt-card__note">{{ note }}</div>
     {% endif %}
+
+    {% if faces %}
+      <div class="appt-card__faces">
+        {% for face in faces %}
+          <div class="appt-card__face" title="{{ face.name }} ({{ face.label }})">
+            {% if face.img_html %}
+              {{ face.img_html|raw }}
+            {% else %}
+              <div class="appt-face__initials">{{ face.initials }}</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
 
   {% if pending_url or join_url or (is_past and feedback_url) %}

@@ -169,7 +169,7 @@ class AppointmentFeedbackReportController extends ControllerBase {
       $end = NULL;
     }
 
-    $host_id = is_numeric($host) && (int) $host > 0 ? (int) $host : NULL;
+    $host_id = $this->parseHostFilterValue($host);
     $allowed_purpose = $this->getAllowedValues('field_appointment_purpose');
     $allowed_result = $this->getAllowedValues('field_appointment_result');
     $purpose = isset($allowed_purpose[$purpose]) ? $purpose : '';
@@ -194,6 +194,21 @@ class AppointmentFeedbackReportController extends ControllerBase {
         'items_per_page' => $items_per_page,
       ],
     ];
+  }
+
+  /**
+   * Parses facilitator filter values from query strings.
+   */
+  protected function parseHostFilterValue(mixed $value): ?int {
+    if (is_numeric($value) && (int) $value > 0) {
+      return (int) $value;
+    }
+
+    if (is_string($value) && preg_match('/\((\d+)\)\s*$/', $value, $matches)) {
+      return (int) $matches[1];
+    }
+
+    return NULL;
   }
 
   /**

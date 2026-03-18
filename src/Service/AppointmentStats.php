@@ -398,11 +398,12 @@ class AppointmentStats {
     $day_map = [];
     foreach ($facilitators as $facilitator) {
       $uid = $facilitator['uid'] ?? NULL;
-      if (!$uid || empty($facilitator['day_map'])) {
+      $tracked_days = $facilitator['tracked_day_map'] ?? [];
+      if (!$uid || empty($tracked_days)) {
         continue;
       }
       $uids[] = (int) $uid;
-      $day_map[$uid] = $facilitator['day_map'];
+      $day_map[$uid] = $tracked_days;
     }
 
     $uids = array_values(array_unique(array_filter($uids)));

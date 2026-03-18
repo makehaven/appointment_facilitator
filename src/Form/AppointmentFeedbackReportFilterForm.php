@@ -5,6 +5,7 @@ namespace Drupal\appointment_facilitator\Form;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Component\Utility\Unicode;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -125,12 +126,9 @@ class AppointmentFeedbackReportFilterForm extends FormBase {
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     $params = [];
 
-    $host = $form_state->getValue('host');
-    if (is_array($host) && !empty($host[0]['target_id'])) {
-      $params['host'] = (int) $host[0]['target_id'];
-    }
-    elseif (is_numeric($host) && (int) $host > 0) {
-      $params['host'] = (int) $host;
+    $host_id = $this->extractHostId($form_state->getValue('host'));
+    if ($host_id !== NULL) {
+      $params['host'] = $host_id;
     }
 
     $start = trim((string) $form_state->getValue('start'));
@@ -160,6 +158,25 @@ class AppointmentFeedbackReportFilterForm extends FormBase {
     }
 
     $form_state->setRedirect('appointment_facilitator.feedback_report', [], ['query' => $params]);
+  }
+
+  /**
+   * Extracts a user ID from entity autocomplete submissions.
+   */
+  protected function extractHostId(mixed $host): ?int {
+    if (is_array($host) && !empty($host[0]['target_id']) && is_numeric($host[0]['target_id'])) {
+      return (int) $host[0]['target_id'];
+    }
+
+    if (is_numeric($host) && (int) $host > 0) {
+      return (int) $host;
+    }
+
+    if (is_string($host) && preg_match('/\((\d+)\)\s*$/', Unicode::truncate($host, 255, FALSE, TRUE), $matches)) {
+      return (int) $matches[1];
+    }
+
+    return NULL;
   }
 
 }

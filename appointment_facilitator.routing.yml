@@ -4,7 +4,7 @@ appointment_facilitator.appointments_all:
     _controller: '\Drupal\appointment_facilitator\Controller\AppointmentDashboardController::allAppointments'
     _title: 'All Appointments'
   requirements:
-    _permission: 'view appointment facilitator reports'
+    _user_is_logged_in: 'TRUE'
 
 appointment_facilitator.appointments_dashboard:
   path: '/appointments'
@@ -130,3 +130,12 @@ appointment_facilitator.running_late:
   requirements:
     _permission: 'view own facilitator stats'
     node: '\d+'
+
+appointment_facilitator.badge_print_checklist:
+  path: '/badge/{taxonomy_term}/print'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\BadgePrintController::print'
+    _title: 'Print Checklist'
+  requirements:
+    _entity_access: 'taxonomy_term.view'
+    taxonomy_term: '\d+'

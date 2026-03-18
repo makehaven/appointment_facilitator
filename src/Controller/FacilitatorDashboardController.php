@@ -11,6 +11,7 @@ use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Form\FormBuilderInterface;
 use Drupal\node\NodeInterface;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -31,6 +32,7 @@ class FacilitatorDashboardController extends ControllerBase {
     protected readonly EntityTypeManagerInterface $entityTypeManagerService,
     protected readonly EntityFieldManagerInterface $entityFieldManagerService,
     protected readonly DateFormatterInterface $dateFormatterService,
+    protected readonly FormBuilderInterface $formBuilderService,
     protected readonly AppointmentStats $statsHelper,
     protected readonly BadgePrerequisiteGate $badgeGate,
     protected readonly AppointmentSlackService $slackService,
@@ -45,6 +47,7 @@ class FacilitatorDashboardController extends ControllerBase {
       $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
       $container->get('date.formatter'),
+      $container->get('form_builder'),
       $container->get('appointment_facilitator.stats'),
       $container->get('appointment_facilitator.badge_gate'),
       $container->get('appointment_facilitator.slack'),
@@ -185,8 +188,21 @@ class FacilitatorDashboardController extends ControllerBase {
           '#attributes' => ['class' => ['afd-stat-row']],
           'term_appointments' => $this->buildStatCard($this->t('Appointments'), (string) $facilitator['appointments']),
           'term_attendees' => $this->buildStatCard($this->t('Attendees'), (string) $facilitator['attendees']),
-          'term_eval' => $this->buildStatCard($this->t('Feedback'), $this->formatPercent($facilitator['feedback_rate'])),
-          'term_arrival' => $this->buildStatCard($this->t('Arrival'), $this->formatPercent($facilitator['arrival_rate'])),
+          'term_eval' => $this->buildStatCard(
+            $this->t('Feedback'),
+            $this->formatPercent($facilitator['feedback_rate']),
+            FALSE,
+            $this->t('@count of @total appointments received written feedback.', [
+              '@count' => $facilitator['feedback'],
+              '@total' => $facilitator['appointments'],
+            ])
+          ),
+          'term_arrival' => $this->buildStatCard(
+            $this->t('Arrival'),
+            $this->formatPercent($facilitator['arrival_rate']),
+            FALSE,
+            $this->buildArrivalDescription($facilitator)
+          ),
         ],
       ],
       'lifetime_stat_row' => [
@@ -209,8 +225,21 @@ class FacilitatorDashboardController extends ControllerBase {
           '#attributes' => ['class' => ['afd-stat-row', 'afd-stat-row-secondary']],
           'lifetime_appointments' => $this->buildStatCard($this->t('Appointments'), (string) $lifetime['appointments'], TRUE),
           'lifetime_attendees' => $this->buildStatCard($this->t('Attendees'), (string) $lifetime['attendees'], TRUE),
-          'lifetime_eval' => $this->buildStatCard($this->t('Feedback'), $this->formatPercent($lifetime['feedback_rate']), TRUE),
-          'lifetime_arrival' => $this->buildStatCard($this->t('Arrival'), $this->formatPercent($lifetime['arrival_rate']), TRUE),
+          'lifetime_eval' => $this->buildStatCard(
+            $this->t('Feedback'),
+            $this->formatPercent($lifetime['feedback_rate']),
+            TRUE,
+            $this->t('@count of @total appointments received written feedback.', [
+              '@count' => $lifetime['feedback'],
+              '@total' => $lifetime['appointments'],
+            ])
+          ),
+          'lifetime_arrival' => $this->buildStatCard(
+            $this->t('Arrival'),
+            $this->formatPercent($lifetime['arrival_rate']),
+            TRUE,
+            $this->buildArrivalDescription($lifetime)
+          ),
         ],
       ],
       'content_grid' => [
@@ -256,6 +285,22 @@ class FacilitatorDashboardController extends ControllerBase {
           'earn_more' => [
             '#markup' => '<div class="afd-note-card"><strong>' . $this->t('Earn more') . '</strong><p>' . $this->t('Earn the badge, arrange with another issuer to watch you badge someone else, then badge under their supervision. If that goes well, they can add you as an issuer.') . '</p></div>',
           ],
+        ],
+        'issuer_delegation' => [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-card', 'afd-col-wide']],
+          'title' => [
+            '#type' => 'html_tag',
+            '#tag' => 'h3',
+            '#value' => $this->t('Delegate badge issuer access'),
+          ],
+          'note' => [
+            '#type' => 'html_tag',
+            '#tag' => 'p',
+            '#value' => $this->t('Grant issuer access for one badge at a time. The person must already hold that badge, and this only affects badges you personally issue.'),
+            '#attributes' => ['class' => ['afd-muted']],
+          ],
+          'form' => $this->formBuilderService->getForm('Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm'),
         ],
         'offline_tools' => [
           '#type' => 'container',
@@ -415,11 +460,12 @@ class FacilitatorDashboardController extends ControllerBase {
           ],
         ];
         $actions['running_late'] = [
-          'title' => $this->t('Running late'),
+          'title' => $this->t('Running late via Slack'),
           'url' => Url::fromRoute('appointment_facilitator.running_late', ['node' => $appointment->id()]),
           'attributes' => [
             'class' => ['use-ajax', 'afd-chip-link-warning'],
-            'title' => $this->t('Notify attendee via Slack that you are running late.'),
+            'title' => $this->t('Sends the attendee a Slack message only. This does not send email.'),
+            'aria-label' => $this->t('Send a running late Slack message to the attendee. This does not send email.'),
           ],
         ];
       }
@@ -558,8 +604,8 @@ class FacilitatorDashboardController extends ControllerBase {
   /**
    * Renders a stat tile.
    */
-  protected function buildStatCard(string $label, string $value, bool $secondary = FALSE): array {
-    return [
+  protected function buildStatCard(string $label, string $value, bool $secondary = FALSE, ?string $description = NULL): array {
+    $build = [
       '#type' => 'container',
       '#attributes' => ['class' => array_filter(['afd-stat', $secondary ? 'afd-stat-secondary' : NULL])],
       'label' => [
@@ -575,6 +621,38 @@ class FacilitatorDashboardController extends ControllerBase {
         '#attributes' => ['class' => ['afd-stat-value']],
       ],
     ];
+
+    if ($description !== NULL && $description !== '') {
+      $build['description'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'div',
+        '#value' => $description,
+        '#attributes' => ['class' => ['afd-stat-description']],
+      ];
+    }
+
+    return $build;
+  }
+
+  /**
+   * Builds explanatory copy for arrival-rate cards.
+   */
+  protected function buildArrivalDescription(array $stats): string {
+    $tracking_start = $this->dateFormatterService->format(strtotime(AppointmentStats::ARRIVAL_TRACKING_START), 'custom', 'M j, Y');
+    $tracked_days = (int) ($stats['tracked_appointment_day_count'] ?? 0);
+    $arrival_days = (int) ($stats['arrival_days'] ?? 0);
+
+    if ($tracked_days <= 0) {
+      return (string) $this->t('Tracked from @date onward, once arrival logging is available for your appointment days.', [
+        '@date' => $tracking_start,
+      ]);
+    }
+
+    return (string) $this->t('@arrived of @tracked appointment days since @date had a matching access log.', [
+      '@arrived' => $arrival_days,
+      '@tracked' => $tracked_days,
+      '@date' => $tracking_start,
+    ]);
   }
 
   /**

@@ -222,7 +222,7 @@
 }
 
 .appt-secondary-link:hover {
-  color: #0d6efd;
+  color: #052c65;
   text-decoration: underline;
 }
 
@@ -233,7 +233,7 @@
   margin-bottom: 0.75rem;
   border-radius: 0.5rem;
   border: 1px solid #dee2e6;
-  background: #fff;
+  background: transparent;
   cursor: pointer;
   transition: box-shadow 0.15s ease, transform 0.1s ease;
   user-select: none;
@@ -428,6 +428,50 @@
 
 .appt-card__feedback-link:hover {
   text-decoration: underline;
+}
+
+/* ── Faces Pile on Cards ────────────────────────────────────────────────── */
+.appt-card__faces {
+  display: flex;
+  margin-top: 0.75rem;
+  padding-left: 0.25rem;
+  flex-basis: 100%;
+}
+
+.appt-card__face {
+  width: 32px;
+  height: 32px;
+  margin-left: -8px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  overflow: hidden;
+  background: #e9ecef;
+  flex-shrink: 0;
+  position: relative;
+  transition: transform 0.1s ease, z-index 0.1s ease;
+}
+
+.appt-card__face:first-child {
+  margin-left: 0;
+}
+
+.appt-card__face:hover {
+  transform: scale(1.15);
+  z-index: 10;
+}
+
+.appt-card__face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.appt-card__face .appt-face__initials {
+  width: 100%;
+  height: 100%;
+  font-size: 0.75rem;
+  border: none;
+  background: transparent;
 }
 
 /* ── Empty state ────────────────────────────────────────────────────────── */

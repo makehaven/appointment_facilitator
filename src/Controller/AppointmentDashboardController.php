@@ -46,16 +46,6 @@ class AppointmentDashboardController extends ControllerBase {
     $upcoming = $this->loadMyAppointments($uid, $now, TRUE);
     $past     = $this->loadMyAppointments($uid, $now, FALSE);
 
-    // Admins/managers with no personal appointments see everyone's upcoming
-    // so they can verify the page works and review the schedule.
-    $is_admin = $account->hasPermission('view appointment facilitator reports')
-      || in_array('administrator', $account->getRoles(), TRUE)
-      || in_array('manager', $account->getRoles(), TRUE);
-
-    if ($is_admin && !$upcoming) {
-      $upcoming = $this->loadAllUpcoming($now);
-    }
-
     [$today, $later] = $this->splitToday($upcoming, $now);
 
     return [
@@ -64,6 +54,7 @@ class AppointmentDashboardController extends ControllerBase {
       '#upcoming' => $later,
       '#past'     => $past,
       '#context'  => 'mine',
+      '#can_see_all' => $account->isAuthenticated(),
       '#attached' => ['library' => ['appointment_facilitator/appointments']],
       '#cache'    => [
         'contexts' => ['user', 'user.permissions', 'user.roles'],
@@ -89,6 +80,7 @@ class AppointmentDashboardController extends ControllerBase {
       '#upcoming' => $later,
       '#past'     => $past,
       '#context'  => 'all',
+      '#can_see_all' => TRUE,
       '#attached' => ['library' => ['appointment_facilitator/appointments']],
       '#cache'    => [
         'contexts' => ['user.permissions'],
@@ -391,6 +383,8 @@ class AppointmentDashboardController extends ControllerBase {
       }
     }
 
+    $faces = _appointment_facilitator_get_faces($node);
+
     return [
       '#theme'        => 'appointment_card',
       '#role'         => $role,
@@ -403,6 +397,7 @@ class AppointmentDashboardController extends ControllerBase {
       '#member'       => $member_name,
       '#members'      => $members,
       '#member_uid'   => $member_uid,
+      '#faces'        => $faces,
       '#pending_url'  => ($show_pending && $member_uid)
         ? '/badges/pending/user/' . $member_uid
         : '',

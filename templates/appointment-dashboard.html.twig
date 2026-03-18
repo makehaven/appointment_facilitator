@@ -32,7 +32,7 @@
     <div class="appt-filter-bar__links">
       {% if context == 'all' %}
         <a href="/appointments" class="appt-secondary-link">← My Appointments</a>
-      {% else %}
+      {% elseif can_see_all %}
         <a href="/appointments/all" class="appt-secondary-link">Everyone</a>
       {% endif %}
       <a href="/appointments/feedback" class="appt-secondary-link">Feedback</a>

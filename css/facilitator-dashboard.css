@@ -121,6 +121,13 @@
   font-weight: 700;
 }
 
+.appointment-facilitator-dashboard .afd-stat-description {
+  margin-top: 0.45rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  opacity: 0.9;
+}
+
 .appointment-facilitator-dashboard .afd-stat-secondary {
   background: #eef4fb;
   color: var(--afd-text);
@@ -241,16 +248,16 @@
 }
 
 .appointment-facilitator-dashboard .afd-chip-link-warning {
-  background: #b64600;
-  border-color: #f3c167;
-  color: #fff;
+  background: #ffc107;
+  border-color: #ffc107;
+  color: #000;
 }
 
 .appointment-facilitator-dashboard .afd-chip-link-warning:hover,
 .appointment-facilitator-dashboard .afd-chip-link-warning:focus {
-  background: #993800;
-  border-color: #f3c167;
-  color: #fff;
+  background: #ffca2c;
+  border-color: #ffc720;
+  color: #000;
 }
 
 .appointment-facilitator-dashboard .afd-feedback-list,
