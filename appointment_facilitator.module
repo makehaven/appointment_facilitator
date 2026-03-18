@@ -1588,8 +1588,11 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     // Experience level — shown on all appointments. Defaults to beginner.
     // Helps facilitators plan session timing and match compatible joiners.
     if ($entity->hasField('field_appointment_experience')) {
+      $exp_param = (string) $request->query->get('experience', '');
+      $valid_exp = ['beginner', 'intermediate', 'advanced'];
       $current_exp = !$entity->get('field_appointment_experience')->isEmpty()
-        ? $entity->get('field_appointment_experience')->value : 'beginner';
+        ? $entity->get('field_appointment_experience')->value
+        : (in_array($exp_param, $valid_exp, TRUE) ? $exp_param : 'beginner');
 
       $form['field_appointment_experience_widget'] = [
         '#type'          => 'select',
