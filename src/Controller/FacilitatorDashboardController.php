@@ -193,8 +193,8 @@ class FacilitatorDashboardController extends ControllerBase {
             $this->formatPercent($facilitator['feedback_rate']),
             FALSE,
             $this->t('@count of @total appointments received written feedback.', [
-              '@count' => $facilitator['feedback'],
-              '@total' => $facilitator['appointments'],
+              '@count' => (int) $facilitator['feedback'],
+              '@total' => (int) $facilitator['appointments'],
             ])
           ),
           'term_arrival' => $this->buildStatCard(
@@ -230,8 +230,8 @@ class FacilitatorDashboardController extends ControllerBase {
             $this->formatPercent($lifetime['feedback_rate']),
             TRUE,
             $this->t('@count of @total appointments received written feedback.', [
-              '@count' => $lifetime['feedback'],
-              '@total' => $lifetime['appointments'],
+              '@count' => (int) $lifetime['feedback'],
+              '@total' => (int) $lifetime['appointments'],
             ])
           ),
           'lifetime_arrival' => $this->buildStatCard(
