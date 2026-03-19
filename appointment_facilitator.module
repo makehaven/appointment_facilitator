@@ -413,6 +413,7 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
 
   if ($entity->bundle() === 'appointment' && $view_mode === 'full') {
     $account = \Drupal::currentUser();
+    $author_uid = (int) $entity->getOwnerId();
     $effective_capacity = appointment_facilitator_effective_capacity($entity);
 
     // --- Who's in this session (profile photos) ---
