@@ -348,16 +348,20 @@ class JoinAppointmentForm extends FormBase {
     ];
 
     $form['experience_level'] = [
-      '#type' => 'select',
+      '#type' => 'radios',
       '#title' => $this->t('Your Experience Level with these tools/badges'),
       '#options' => [
-        'beginner'     => $this->t('Beginner (Never used / First time)'),
-        'intermediate' => $this->t('Intermediate (Some experience / Needs refresher)'),
-        'advanced'     => $this->t('Advanced (Very familiar / Just need checkout)'),
+        'beginner'     => $this->t('Beginner'),
+        'intermediate' => $this->t('Intermediate'),
+        'advanced'     => $this->t('Advanced'),
       ],
       '#default_value' => 'beginner',
       '#required'      => TRUE,
-      '#description'   => $this->t('This helps the facilitator and other potential joiners understand the group pace.'),
+      '#description'   => $this->t('Choose the pace that best matches your experience. Default is Beginner.'),
+      '#attributes' => [
+        'class' => ['join-experience-level'],
+      ],
+      '#prefix' => '<div class="join-experience-level__intro">Beginner to more experienced</div>',
     ];
 
     $form['join_note'] = [

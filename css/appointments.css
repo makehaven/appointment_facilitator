@@ -38,6 +38,62 @@
   color: #212529;
 }
 
+.join-experience-level__intro {
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.join-experience-level {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.join-experience-level .form-item {
+  margin: 0;
+}
+
+.join-experience-level input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.join-experience-level label.option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 84px;
+  padding: 0.85rem 0.9rem;
+  border: 2px solid #ced4da;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%);
+  color: #495057;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.join-experience-level input[type="radio"]:checked + label.option {
+  border-color: #861216;
+  background: linear-gradient(180deg, #a2191f 0%, #861216 100%);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(134, 18, 22, 0.22);
+  transform: translateY(-1px);
+}
+
+.join-experience-level input[type="radio"]:focus-visible + label.option {
+  outline: 3px solid rgba(134, 18, 22, 0.25);
+  outline-offset: 3px;
+}
+
 .join-experience-gate__body {
   font-size: 0.88rem;
   color: #495057;
@@ -483,6 +539,10 @@
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 @media (max-width: 575.98px) {
+  .join-experience-level {
+    grid-template-columns: 1fr;
+  }
+
   .appt-card__body {
     gap: 0.4rem 0.75rem;
   }
