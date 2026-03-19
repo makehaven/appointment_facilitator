@@ -341,8 +341,9 @@ function _appointment_facilitator_get_faces(NodeInterface $node): array {
   $faces = [];
   $entity_type_manager = \Drupal::entityTypeManager();
   $file_url_generator = \Drupal::service('file_url_generator');
+  $alias_manager = \Drupal::service('path_alias.manager');
 
-  $load_face = static function (int $uid, string $label) use (&$faces, $entity_type_manager, $file_url_generator): void {
+  $load_face = static function (int $uid, string $label) use (&$faces, $entity_type_manager, $file_url_generator, $alias_manager): void {
     if ($uid <= 0) {
       return;
     }
@@ -369,11 +370,13 @@ function _appointment_facilitator_get_faces(NodeInterface $node): array {
       $initials_raw = implode('', array_map(fn($w) => mb_strtoupper(mb_substr($w, 0, 1)), explode(' ', trim($display_name))));
       $initials = mb_substr($initials_raw, 0, 2);
     }
+    $profile_url = $alias_manager->getAliasByPath('/user/' . $uid . '/main');
 
     $faces[] = [
       'uid' => $uid,
       'name' => $display_name,
       'label' => $label,
+      'profile_url' => $profile_url,
       'img_html' => $img_html,
       'initials' => $initials,
     ];

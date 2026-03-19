@@ -81,13 +81,18 @@
     {% if faces %}
       <div class="appt-card__faces">
         {% for face in faces %}
-          <div class="appt-card__face" title="{{ face.name }} ({{ face.label }})">
+          <a
+            href="{{ face.profile_url }}"
+            class="appt-card__face"
+            title="{{ face.name }} ({{ face.label }})"
+            onclick="event.stopPropagation()"
+          >
             {% if face.img_html %}
               {{ face.img_html|raw }}
             {% else %}
               <div class="appt-face__initials">{{ face.initials }}</div>
             {% endif %}
-          </div>
+          </a>
         {% endfor %}
       </div>
     {% endif %}
