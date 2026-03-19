@@ -96,27 +96,27 @@
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
-  min-width: 80px;
+  min-width: 108px;
 }
 
 .appt-face__img {
-  width: 72px;
-  height: 72px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   object-fit: cover;
   border: 2px solid #dee2e6;
 }
 
 .appt-face__initials {
-  width: 72px;
-  height: 72px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   background: #e9ecef;
   border: 2px solid #dee2e6;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.4rem;
+  font-size: 1.8rem;
   font-weight: 700;
   color: #495057;
 }
@@ -130,7 +130,7 @@
 }
 
 .appt-face__name {
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: #212529;
   text-align: center;
