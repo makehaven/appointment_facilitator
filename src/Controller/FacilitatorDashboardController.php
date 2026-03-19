@@ -638,7 +638,11 @@ class FacilitatorDashboardController extends ControllerBase {
    * Builds explanatory copy for arrival-rate cards.
    */
   protected function buildArrivalDescription(array $stats): string {
-    $tracking_start = $this->dateFormatterService->format(strtotime(AppointmentStats::ARRIVAL_TRACKING_START), 'custom', 'M j, Y');
+    $tracking_start_value = (string) ($stats['arrival_tracking_start'] ?? '');
+    $tracking_start_timestamp = strtotime($tracking_start_value) ?: NULL;
+    $tracking_start = $tracking_start_timestamp
+      ? $this->dateFormatterService->format($tracking_start_timestamp, 'custom', 'M j, Y')
+      : (string) $this->t('the start of arrival tracking');
     $tracked_days = (int) ($stats['tracked_appointment_day_count'] ?? 0);
     $arrival_days = (int) ($stats['arrival_days'] ?? 0);
 
@@ -1276,6 +1280,9 @@ class FacilitatorDashboardController extends ControllerBase {
       'appointments' => 0,
       'attendees' => 0,
       'feedback_rate' => 0,
+      'arrival_tracking_start' => '2026-01-01 00:00:00',
+      'tracked_appointment_day_count' => 0,
+      'arrival_days' => NULL,
       'arrival_rate' => NULL,
     ];
   }

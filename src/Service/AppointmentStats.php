@@ -166,6 +166,7 @@ class AppointmentStats {
           'day_map' => [],
           'tracked_day_map' => [],
           'tracked_appointment_day_count' => 0,
+          'arrival_tracking_start' => self::ARRIVAL_TRACKING_START,
           'arrival_days' => NULL,
           'arrival_rate' => NULL,
           'arrival_status_counts' => [],
