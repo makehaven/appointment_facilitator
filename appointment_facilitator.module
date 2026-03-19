@@ -1572,7 +1572,7 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 
     _appointment_facilitator_prefill_slot_defaults($form, $entity);
 
-    // "Allow others to join" checkbox — only when joining is enabled site-wide.
+    // "Keep this session one-on-one" checkbox — only when joining is enabled site-wide.
     $joiner_cap = (int) (\Drupal::config('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
     if ($joiner_cap > 0 && $entity->hasField('field_appointment_open_to_join')) {
       $current_open = $entity->isNew()
@@ -1581,9 +1581,9 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 
       $form['field_appointment_open_to_join_widget'] = [
         '#type'          => 'checkbox',
-        '#title'         => t('Allow others to join this session'),
-        '#description'   => t('When checked, other members with compatible badges can join this appointment. Uncheck to keep this session 1-on-1.'),
-        '#default_value' => $current_open,
+        '#title'         => t('Keep this session one-on-one'),
+        '#description'   => t('Leave unchecked to allow compatible members to join when appropriate. Check this to keep the session private to the original attendee and facilitator.'),
+        '#default_value' => !$current_open,
         '#weight'        => 4,
       ];
       $form['#submit'][] = '_appointment_facilitator_save_open_to_join_field';
@@ -2104,13 +2104,13 @@ function _appointment_facilitator_count_selected_slots($slot_value): int {
 }
 
 /**
- * Submit handler: saves the open-to-join checkbox to field_appointment_open_to_join.
+ * Submit handler: saves the one-on-one checkbox to field_appointment_open_to_join.
  */
 function _appointment_facilitator_save_open_to_join_field(array &$form, FormStateInterface $form_state): void {
-  $value = (bool) $form_state->getValue('field_appointment_open_to_join_widget');
+  $one_on_one = (bool) $form_state->getValue('field_appointment_open_to_join_widget');
   $node  = $form_state->getFormObject()->getEntity();
   if ($node instanceof NodeInterface && $node->hasField('field_appointment_open_to_join')) {
-    $node->set('field_appointment_open_to_join', $value ? 1 : 0);
+    $node->set('field_appointment_open_to_join', $one_on_one ? 0 : 1);
   }
 }
 
