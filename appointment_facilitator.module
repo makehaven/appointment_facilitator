@@ -1697,6 +1697,92 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 }
 
 /**
+ * Implements hook_entity_insert().
+ */
+function appointment_facilitator_entity_insert(EntityInterface $entity): void {
+  _appointment_facilitator_sync_parent_field_from_override_entity($entity);
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function appointment_facilitator_entity_update(EntityInterface $entity): void {
+  _appointment_facilitator_sync_parent_field_from_override_entity($entity);
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function appointment_facilitator_entity_delete(EntityInterface $entity): void {
+  _appointment_facilitator_sync_parent_field_from_override_entity($entity);
+}
+
+/**
+ * Rebuilds parent Smart Date field values after an override changes.
+ */
+function _appointment_facilitator_sync_parent_field_from_override_entity(EntityInterface $entity): void {
+  if ($entity->getEntityTypeId() !== 'smart_date_override' || !$entity->hasField('rrule')) {
+    return;
+  }
+
+  $rrule_id = (int) $entity->get('rrule')->value;
+  if ($rrule_id <= 0) {
+    return;
+  }
+
+  $rrule = \Drupal::entityTypeManager()->getStorage('smart_date_rule')->load($rrule_id);
+  if (!$rrule instanceof \Drupal\smart_date_recur\Entity\SmartDateRule) {
+    return;
+  }
+
+  _appointment_facilitator_sync_parent_field_from_rule($rrule);
+}
+
+/**
+ * Applies Smart Date recurring instances, with overrides, back to the parent.
+ */
+function _appointment_facilitator_sync_parent_field_from_rule(\Drupal\smart_date_recur\Entity\SmartDateRule $rrule): bool {
+  $entity = $rrule->getParentEntity();
+  if (!$entity) {
+    return FALSE;
+  }
+
+  $rid = (int) $rrule->id();
+  $field_name = $rrule->field_name->getString();
+  if ($field_name === '' || !$entity->hasField($field_name)) {
+    return FALSE;
+  }
+
+  $values = $entity->get($field_name)->getValue();
+  $first_instance = FALSE;
+
+  foreach ($values as $delta => $value) {
+    if (isset($value['rrule']) && (int) $value['rrule'] === $rid) {
+      if ($first_instance === FALSE) {
+        $first_instance = $value;
+      }
+      unset($values[$delta]);
+    }
+  }
+
+  if ($first_instance === FALSE) {
+    return FALSE;
+  }
+
+  foreach ($rrule->getRuleInstances() as $rrule_index => $instance) {
+    $first_instance['value'] = $instance['value'];
+    $first_instance['end_value'] = $instance['end_value'];
+    $first_instance['duration'] = ((int) $instance['end_value'] - (int) $instance['value']) / 60;
+    $first_instance['rrule_index'] = $rrule_index;
+    $values[] = $first_instance;
+  }
+
+  $entity->set($field_name, $values);
+  $entity->save();
+  return TRUE;
+}
+
+/**
  * Implements hook_entity_presave().
  */
 function appointment_facilitator_entity_presave(EntityInterface $entity): void {

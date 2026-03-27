@@ -815,3 +815,40 @@ function appointment_facilitator_update_9023(): string {
 
   return 'Registered appointment pseudo-fields in Display Suite ds_content region.';
 }
+
+/**
+ * Re-sync recurring facilitator schedule rows from Smart Date overrides.
+ */
+function appointment_facilitator_update_9024(): string {
+  \Drupal::service('module_handler')->loadInclude('appointment_facilitator', 'module');
+
+  $rule_ids = \Drupal::database()
+    ->select('smart_date_override', 's')
+    ->fields('s', ['rrule'])
+    ->distinct()
+    ->execute()
+    ->fetchCol();
+
+  if (!$rule_ids) {
+    return 'No Smart Date overrides found for facilitator schedule resync.';
+  }
+
+  $rules = \Drupal::entityTypeManager()->getStorage('smart_date_rule')->loadMultiple($rule_ids);
+  $updated = 0;
+
+  foreach ($rules as $rule) {
+    if (!$rule instanceof \Drupal\smart_date_recur\Entity\SmartDateRule) {
+      continue;
+    }
+
+    if ($rule->field_name->getString() !== 'field_coordinator_hours') {
+      continue;
+    }
+
+    if (_appointment_facilitator_sync_parent_field_from_rule($rule)) {
+      $updated++;
+    }
+  }
+
+  return "Re-synced recurring facilitator schedule rows for {$updated} Smart Date rule(s).";
+}
