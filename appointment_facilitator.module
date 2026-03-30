@@ -1,6 +1,7 @@
 <?php
 
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
+use Drupal\Component\Utility\Html;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
@@ -103,6 +104,7 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
     if ($view_mode === 'full') {
       _appointment_facilitator_enforce_badge_page_flow($build, $entity);
       _appointment_facilitator_add_related_tools($build, $entity);
+      _appointment_facilitator_format_badge_checklist($build, $entity);
 
       if ($display && $component = $display->getComponent('print_checklist')) {
         // Add Print Badge Checklist button.
@@ -132,6 +134,95 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   if ($entity instanceof NodeInterface) {
     _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
   }
+}
+
+/**
+ * Replaces the default multi-value string output with a readable checklist.
+ */
+function _appointment_facilitator_format_badge_checklist(array &$build, TermInterface $term): void {
+  if (
+    !isset($build['field_badge_checklist_items'])
+    || !$term->hasField('field_badge_checklist_items')
+    || $term->get('field_badge_checklist_items')->isEmpty()
+  ) {
+    return;
+  }
+
+  $items = [];
+  foreach ($term->get('field_badge_checklist_items') as $item) {
+    $text = _appointment_facilitator_clean_checklist_item((string) $item->value, $term->label());
+    if ($text === '') {
+      continue;
+    }
+
+    $items[] = [
+      '#markup' => '<span class="badge-checklist-item__box" aria-hidden="true"></span><span class="badge-checklist-item__text">' . Html::escape($text) . '</span>',
+    ];
+  }
+
+  if ($items === []) {
+    $build['field_badge_checklist_items'] = ['#access' => FALSE];
+    return;
+  }
+
+  $build['field_badge_checklist_items'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['badge-checklist-items']],
+    'items' => [
+      '#theme' => 'item_list',
+      '#list_type' => 'ul',
+      '#items' => $items,
+      '#attributes' => ['class' => ['badge-checklist-list']],
+      '#wrapper_attributes' => ['class' => ['badge-checklist-list-wrapper']],
+    ],
+    'style' => [
+      '#type' => 'inline_template',
+      '#template' => '
+        <style>
+          .badge-checklist-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+          }
+          .badge-checklist-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            margin: 0 0 0.7rem;
+            padding: 0.65rem 0.85rem;
+            border: 1px solid #d9dee5;
+            border-radius: 0.65rem;
+            background: #fff;
+          }
+          .badge-checklist-item__box {
+            display: inline-block;
+            width: 1.1rem;
+            height: 1.1rem;
+            min-width: 1.1rem;
+            margin-top: 0.15rem;
+            border: 2px solid #5f6f52;
+            border-radius: 0.25rem;
+            background: #f7faf7;
+          }
+          .badge-checklist-item__text {
+            display: inline-block;
+            line-height: 1.45;
+          }
+        </style>',
+    ],
+  ];
+}
+
+/**
+ * Removes duplicate title rows and stray export artifacts from checklist text.
+ */
+function _appointment_facilitator_clean_checklist_item(string $text, string $badge_title): string {
+  $text = preg_replace('/^\x{FEFF}/u', '', trim($text)) ?? trim($text);
+  if ($text === '') {
+    return '';
+  }
+
+  return trim(strcasecmp($text, trim($badge_title)) === 0 ? '' : $text);
 }
 
 /**
