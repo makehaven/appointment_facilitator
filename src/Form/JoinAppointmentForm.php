@@ -101,6 +101,14 @@ class JoinAppointmentForm extends FormBase {
     $host_uid    = $node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
       ? (int) $node->get('field_appointment_host')->target_id : 0;
 
+    // The primary member who booked this appointment should never see the join
+    // form — showing it to them (with a pace warning) is confusing since they
+    // already own the session.
+    $uid = (int) $account->id();
+    if ($uid === $author_uid) {
+      return [];
+    }
+
     $attendee_values = $node->get('field_appointment_attendees')->getValue();
     $current_ids = [];
     foreach ($attendee_values as $value) {
@@ -118,8 +126,6 @@ class JoinAppointmentForm extends FormBase {
     $form['#attributes']['class'][] = 'appointment-join-form';
 
     // --- Session details panel ---
-    $uid = (int) $account->id();
-
     // Date/time.
     $ts = 0;
     if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
