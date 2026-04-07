@@ -1791,6 +1791,7 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
  * Implements hook_entity_insert().
  */
 function appointment_facilitator_entity_insert(EntityInterface $entity): void {
+  _appointment_facilitator_sync_parent_field_from_rule_entity($entity);
   _appointment_facilitator_sync_parent_field_from_override_entity($entity);
 }
 
@@ -1798,6 +1799,7 @@ function appointment_facilitator_entity_insert(EntityInterface $entity): void {
  * Implements hook_entity_update().
  */
 function appointment_facilitator_entity_update(EntityInterface $entity): void {
+  _appointment_facilitator_sync_parent_field_from_rule_entity($entity);
   _appointment_facilitator_sync_parent_field_from_override_entity($entity);
 }
 
@@ -1806,6 +1808,21 @@ function appointment_facilitator_entity_update(EntityInterface $entity): void {
  */
 function appointment_facilitator_entity_delete(EntityInterface $entity): void {
   _appointment_facilitator_sync_parent_field_from_override_entity($entity);
+}
+
+/**
+ * Rebuilds parent Smart Date field values after a rule changes.
+ */
+function _appointment_facilitator_sync_parent_field_from_rule_entity(EntityInterface $entity): void {
+  if ($entity->getEntityTypeId() !== 'smart_date_rule' || !$entity instanceof \Drupal\smart_date_recur\Entity\SmartDateRule) {
+    return;
+  }
+
+  if ($entity->field_name->getString() !== 'field_coordinator_hours') {
+    return;
+  }
+
+  _appointment_facilitator_sync_parent_field_from_rule($entity);
 }
 
 /**
@@ -1823,6 +1840,10 @@ function _appointment_facilitator_sync_parent_field_from_override_entity(EntityI
 
   $rrule = \Drupal::entityTypeManager()->getStorage('smart_date_rule')->load($rrule_id);
   if (!$rrule instanceof \Drupal\smart_date_recur\Entity\SmartDateRule) {
+    return;
+  }
+
+  if ($rrule->field_name->getString() !== 'field_coordinator_hours') {
     return;
   }
 
@@ -1877,6 +1898,8 @@ function _appointment_facilitator_sync_parent_field_from_rule(\Drupal\smart_date
  * Implements hook_entity_presave().
  */
 function appointment_facilitator_entity_presave(EntityInterface $entity): void {
+  _appointment_facilitator_sync_profile_schedule_before_save($entity);
+
   if (!$entity instanceof NodeInterface || $entity->bundle() !== 'badge_request' || !$entity->hasField('field_badge_status')) {
     return;
   }
@@ -1901,6 +1924,70 @@ function appointment_facilitator_entity_presave(EntityInterface $entity): void {
   }
 
   \Drupal::messenger()->addWarning(_appointment_facilitator_badge_issuer_warning($entity));
+}
+
+/**
+ * Normalizes coordinator-hours rows from Smart Date rules before save.
+ */
+function _appointment_facilitator_sync_profile_schedule_before_save(EntityInterface $entity): void {
+  if ($entity->getEntityTypeId() !== 'profile'
+    || !$entity->hasField('field_coordinator_hours')
+    || $entity->get('field_coordinator_hours')->isEmpty()) {
+    return;
+  }
+
+  $values = $entity->get('field_coordinator_hours')->getValue();
+  $processed = [];
+  $templates = [];
+  $original_rows = [];
+
+  foreach ($values as $value) {
+    $rid = isset($value['rrule']) ? (int) $value['rrule'] : 0;
+    if ($rid <= 0) {
+      $processed[] = $value;
+      continue;
+    }
+
+    $original_rows[$rid][] = $value;
+    if (!isset($templates[$rid])) {
+      $templates[$rid] = $value;
+    }
+  }
+
+  if ($templates === []) {
+    return;
+  }
+
+  $rules = \Drupal::entityTypeManager()
+    ->getStorage('smart_date_rule')
+    ->loadMultiple(array_keys($templates));
+
+  foreach ($templates as $rid => $template) {
+    $rule = $rules[$rid] ?? NULL;
+    if (!$rule instanceof \Drupal\smart_date_recur\Entity\SmartDateRule
+      || $rule->field_name->getString() !== 'field_coordinator_hours'
+      || (int) $rule->getParentEntity(TRUE) !== (int) $entity->id()) {
+      foreach ($original_rows[$rid] as $row) {
+        $processed[] = $row;
+      }
+      continue;
+    }
+
+    foreach ($rule->getRuleInstances() as $rrule_index => $instance) {
+      $row = $template;
+      $row['value'] = $instance['value'];
+      $row['end_value'] = $instance['end_value'];
+      $row['duration'] = ((int) $instance['end_value'] - (int) $instance['value']) / 60;
+      $row['rrule_index'] = $rrule_index;
+      $processed[] = $row;
+    }
+  }
+
+  usort($processed, static function (array $a, array $b): int {
+    return ((int) ($a['value'] ?? 0)) <=> ((int) ($b['value'] ?? 0));
+  });
+
+  $entity->set('field_coordinator_hours', array_values($processed));
 }
 
 /**

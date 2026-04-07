@@ -852,3 +852,34 @@ function appointment_facilitator_update_9024(): string {
 
   return "Re-synced recurring facilitator schedule rows for {$updated} Smart Date rule(s).";
 }
+
+/**
+ * Re-sync facilitator schedule rows for all coordinator-hour Smart Date rules.
+ */
+function appointment_facilitator_update_9025(): string {
+  \Drupal::service('module_handler')->loadInclude('appointment_facilitator', 'module');
+
+  $rule_ids = \Drupal::entityQuery('smart_date_rule')
+    ->accessCheck(FALSE)
+    ->condition('field_name', 'field_coordinator_hours')
+    ->execute();
+
+  if (!$rule_ids) {
+    return 'No facilitator Smart Date rules found for schedule resync.';
+  }
+
+  $rules = \Drupal::entityTypeManager()->getStorage('smart_date_rule')->loadMultiple($rule_ids);
+  $updated = 0;
+
+  foreach ($rules as $rule) {
+    if (!$rule instanceof \Drupal\smart_date_recur\Entity\SmartDateRule) {
+      continue;
+    }
+
+    if (_appointment_facilitator_sync_parent_field_from_rule($rule)) {
+      $updated++;
+    }
+  }
+
+  return "Re-synced recurring facilitator schedule rows for {$updated} facilitator Smart Date rule(s).";
+}
