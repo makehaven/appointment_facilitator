@@ -1389,7 +1389,9 @@ function appointment_facilitator_cron(): void {
 
     $node->set('field_facilitator_arrival_status', $status);
     if ($scan && $node->hasField('field_facilitator_arrival_time')) {
-      $node->set('field_facilitator_arrival_time', $scan->format('Y-m-d\TH:i:s'));
+      // field_facilitator_arrival_time is a Drupal datetime field (UTC storage),
+      // so convert from local timezone before formatting.
+      $node->set('field_facilitator_arrival_time', $scan->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s'));
     }
     $node->save();
   }
@@ -3176,9 +3178,13 @@ function _appointment_facilitator_extract_reservation_time_range(NodeInterface $
     return NULL;
   }
 
+  // Drupal's daterange field stores values as UTC strings, so convert before
+  // formatting. Without this, local-timezone datetimes get stored as if they
+  // were UTC, causing reservations to appear several hours early.
+  $utc = new \DateTimeZone('UTC');
   return [
-    'value' => $start->format('Y-m-d\TH:i:s'),
-    'end_value' => $end->format('Y-m-d\TH:i:s'),
+    'value' => $start->setTimezone($utc)->format('Y-m-d\TH:i:s'),
+    'end_value' => $end->setTimezone($utc)->format('Y-m-d\TH:i:s'),
   ];
 }
 
