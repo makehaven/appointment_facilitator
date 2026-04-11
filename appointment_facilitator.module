@@ -3690,3 +3690,79 @@ function appointment_facilitator_theme(): array {
     ],
   ];
 }
+
+/**
+ * Implements hook_user_view_alter().
+ *
+ * Displays the badges a facilitator is approved to issue on their public
+ * profile page. Badge issuer status is stored on the badge taxonomy term
+ * (field_badge_issuer / field_badge_issuer_on_request) rather than on the
+ * user entity, so we inject it here rather than relying on a field display.
+ *
+ * Only fires when:
+ *  - The profile being viewed belongs to a user with the facilitator role.
+ *  - The view mode is 'full' (not a teaser or other compact mode).
+ */
+function appointment_facilitator_user_view_alter(array &$build, \Drupal\Core\Entity\EntityInterface $entity, \Drupal\Core\Entity\Display\EntityViewDisplayInterface $display) {
+  if ($build['#view_mode'] !== 'full') {
+    return;
+  }
+  if (!$entity->hasRole('facilitator')) {
+    return;
+  }
+
+  $uid = (int) $entity->id();
+  $term_storage = \Drupal::entityTypeManager()->getStorage('taxonomy_term');
+
+  $direct_tids = array_values($term_storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('vid', 'badges')
+    ->condition('field_badge_issuer.target_id', $uid)
+    ->sort('name', 'ASC')
+    ->execute());
+
+  $on_request_tids = array_values(array_diff(
+    array_values($term_storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('vid', 'badges')
+      ->condition('field_badge_issuer_on_request.target_id', $uid)
+      ->sort('name', 'ASC')
+      ->execute()),
+    $direct_tids
+  ));
+
+  $all_tids = array_unique(array_merge($direct_tids, $on_request_tids));
+  if (!$all_tids) {
+    return;
+  }
+
+  $terms = $term_storage->loadMultiple($all_tids);
+  $items = [];
+  foreach ($terms as $term) {
+    if ($term->hasField('field_badge_inactive') && !$term->get('field_badge_inactive')->isEmpty() && (bool) $term->get('field_badge_inactive')->value) {
+      continue;
+    }
+    $is_on_request = in_array((int) $term->id(), array_map('intval', $on_request_tids), TRUE);
+    $label = $term->label() . ($is_on_request ? ' ' . t('(on request)') : '');
+    $items[] = \Drupal\Core\Link::fromTextAndUrl($label, $term->toUrl())->toRenderable();
+  }
+
+  if (!$items) {
+    return;
+  }
+
+  $build['facilitator_badges'] = [
+    '#type' => 'container',
+    '#weight' => 10,
+    '#attributes' => ['class' => ['facilitator-badge-issuers']],
+    'heading' => [
+      '#type' => 'html_tag',
+      '#tag' => 'h3',
+      '#value' => t('Badges this facilitator can issue'),
+    ],
+    'list' => [
+      '#theme' => 'item_list',
+      '#items' => $items,
+    ],
+  ];
+}

@@ -575,29 +575,48 @@ class FacilitatorDashboardController extends ControllerBase {
    */
   protected function loadQualifiedBadges(int $uid, int $limit): array {
     $storage = $this->entityTypeManagerService->getStorage('taxonomy_term');
-    $query = $storage->getQuery()
+
+    // Collect direct issuers and on-request issuers separately so we can
+    // label on-request badges distinctly in the UI.
+    $direct_tids = array_values($storage->getQuery()
       ->accessCheck(FALSE)
       ->condition('vid', 'badges')
       ->condition('field_badge_issuer.target_id', $uid)
       ->sort('name', 'ASC')
-      ->range(0, $limit);
+      ->range(0, $limit)
+      ->execute());
 
-    $tids = $query->execute();
-    if (!$tids) {
+    $on_request_tids = array_values(array_diff(
+      array_values($storage->getQuery()
+        ->accessCheck(FALSE)
+        ->condition('vid', 'badges')
+        ->condition('field_badge_issuer_on_request.target_id', $uid)
+        ->sort('name', 'ASC')
+        ->range(0, $limit)
+        ->execute()),
+      $direct_tids
+    ));
+
+    $all_tids = array_unique(array_merge($direct_tids, $on_request_tids));
+    if (!$all_tids) {
       return [];
     }
 
-    $terms = $storage->loadMultiple($tids);
+    $terms = $storage->loadMultiple($all_tids);
     $items = [];
     foreach ($terms as $term) {
       if ($term->hasField('field_badge_inactive') && !$term->get('field_badge_inactive')->isEmpty() && (bool) $term->get('field_badge_inactive')->value) {
         continue;
       }
+      $is_on_request = in_array((int) $term->id(), array_map('intval', $on_request_tids), TRUE);
+      $label = $term->label() . ($is_on_request ? ' ' . $this->t('(on request)') : '');
       $items[] = [
-        'label' => $term->label(),
+        'label' => $label,
         'url' => $term->toUrl(),
       ];
     }
+
+    usort($items, fn($a, $b) => strnatcasecmp((string) $a['label'], (string) $b['label']));
     return $items;
   }
 
