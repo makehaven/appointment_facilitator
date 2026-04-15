@@ -337,10 +337,12 @@ class AppointmentDashboardController extends ControllerBase {
       'all'       => 'Scheduled',
     ];
 
-    // Pending badges link: facilitators only (view own facilitator stats
-    // permission), and only when the appointment has badge terms.
-    $show_pending = $this->currentUser()->hasPermission('view own facilitator stats')
-      && in_array($role, ['hosting', 'all'], TRUE)
+    // Pending badges link: anyone who can approve badge requests, on any
+    // appointment (past or upcoming) that has badge terms — facilitators
+    // commonly approve right after the in-person checkout, when the
+    // appointment is already in the past.
+    $show_pending = $this->currentUser()->hasPermission('approve badge requests')
+      && in_array($role, ['hosting', 'hosted', 'all'], TRUE)
       && !empty($badges);
 
     // Join link: show when the appointment has available joiner slots and the

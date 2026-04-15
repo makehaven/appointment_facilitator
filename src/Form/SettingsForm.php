@@ -19,8 +19,8 @@ class SettingsForm extends ConfigFormBase {
 
     $form['system_wide_joiner_cap'] = [
       '#type' => 'number',
-      '#title' => $this->t('System-wide Joiner Cap'),
-      '#description' => $this->t('The maximum number of additional members allowed to join an appointment (beyond the person who scheduled it). Set to 0 to disable joining for all sessions, even if the badge or facilitator allows more. Default: <code>0</code>.'),
+      '#title' => $this->t('System-wide Joiner Cap (extra attendees beyond the primary)'),
+      '#description' => $this->t('Maximum number of <em>additional</em> members allowed to join an appointment beyond the person who scheduled it. The effective capacity for any given appointment is the <strong>lowest</strong> of: this system-wide cap (+1 for the primary), the per-badge capacity (<code>field_badge_capacity</code>), and the facilitator profile capacity (<code>field_coordinator_capacity</code>). Set to 0 to disable joining everywhere. Default: <code>0</code>.'),
       '#default_value' => (int) ($conf->get('system_wide_joiner_cap') ?? 0),
       '#min' => 0,
       '#required' => TRUE,

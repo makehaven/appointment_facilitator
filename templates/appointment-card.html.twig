@@ -101,8 +101,8 @@
   {% if pending_url or join_url or (is_past and feedback_url) %}
     <div class="appt-card__footer">
       {% if pending_url %}
-        <a href="{{ pending_url }}" class="appt-card__pending-link" onclick="event.stopPropagation()">
-          Pending Badges →
+        <a href="{{ pending_url }}" class="appt-card__pending-link appt-card__pending-link--cta" onclick="event.stopPropagation()">
+          ✓ Approve Pending Badges
         </a>
       {% endif %}
       {% if join_url %}

@@ -79,11 +79,12 @@ class JoinAppointmentForm extends FormBase {
     }
 
     $config = $this->configFactory->get('appointment_facilitator.settings');
-    $joiner_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
     $show_always = (bool) $config->get('show_always_join_cta');
+    $effective_capacity = appointment_facilitator_effective_capacity($node);
+    $max_joiners = max(0, $effective_capacity - 1);
 
-    // Show join button only when extra spots are enabled (or show_always is on).
-    if (!$show_always && $joiner_cap <= 0) {
+    // Show join button only when extra spots exist (or show_always is on).
+    if (!$show_always && $max_joiners <= 0) {
       return [];
     }
 
@@ -121,7 +122,7 @@ class JoinAppointmentForm extends FormBase {
     // Extra joiners = attendees who are not the primary member and not the host.
     $joiner_ids   = array_values(array_filter($current_ids, fn($id) => $id !== $author_uid && $id !== $host_uid));
     $joiner_count = count($joiner_ids);
-    $remaining    = max(0, $joiner_cap - $joiner_count);
+    $remaining    = max(0, $max_joiners - $joiner_count);
 
     $form['#attributes']['class'][] = 'appointment-join-form';
 
@@ -439,7 +440,8 @@ class JoinAppointmentForm extends FormBase {
       }
     }
 
-    $joiner_cap  = (int) ($this->configFactory->get('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
+    $effective_capacity = appointment_facilitator_effective_capacity($node);
+    $max_joiners = max(0, $effective_capacity - 1);
     $author_uid  = (int) $node->getOwnerId();
     $host_uid    = $node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
       ? (int) $node->get('field_appointment_host')->target_id : 0;
@@ -447,7 +449,7 @@ class JoinAppointmentForm extends FormBase {
       array_column($attendee_values, 'target_id'),
       fn($id) => (int) $id !== $author_uid && (int) $id !== $host_uid && (int) $id > 0,
     );
-    if (count($joiner_ids) >= $joiner_cap) {
+    if (count($joiner_ids) >= $max_joiners) {
       $this->messenger()->addWarning($this->t('This appointment is full.'));
       $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
       return;

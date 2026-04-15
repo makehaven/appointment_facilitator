@@ -463,6 +463,21 @@
   color: #0a3622;
 }
 
+.appt-card__pending-link--cta {
+  display: inline-block;
+  padding: 0.4rem 0.75rem;
+  background: #198754;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.appt-card__pending-link--cta:hover {
+  background: #0f5132;
+  color: #fff;
+  text-decoration: none;
+}
+
 .appt-card__join-link {
   font-size: 0.82rem;
   color: #198754;
@@ -495,9 +510,9 @@
 }
 
 .appt-card__face {
-  width: 32px;
-  height: 32px;
-  margin-left: -8px;
+  width: 52px;
+  height: 52px;
+  margin-left: -10px;
   border-radius: 50%;
   border: 2px solid #fff;
   overflow: hidden;
@@ -525,7 +540,7 @@
 .appt-card__face .appt-face__initials {
   width: 100%;
   height: 100%;
-  font-size: 0.75rem;
+  font-size: 1.1rem;
   border: none;
   background: transparent;
 }

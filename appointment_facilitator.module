@@ -63,20 +63,12 @@ function appointment_facilitator_effective_capacity(NodeInterface $node): int {
     }
   }
 
+  // System-wide cap contributes 1 primary + N joiners as a total ceiling.
+  $system_cap = (int) (\Drupal::config('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
+  $caps[] = 1 + $system_cap;
+
   $caps = array_filter(array_map('intval', $caps), fn($v) => $v > 0);
-  $base_capacity = $caps ? min($caps) : 1;
-
-  $config = \Drupal::config('appointment_facilitator.settings');
-  $system_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
-
-  // When the system-wide joiner cap is enabled, it sets the total allowed
-  // (1 primary + N joiners) regardless of per-badge or per-coordinator limits,
-  // which were set before the join feature existed.
-  if ($system_cap > 0) {
-    return 1 + $system_cap;
-  }
-
-  return $base_capacity;
+  return $caps ? min($caps) : 1;
 }
 
 /**
@@ -432,9 +424,8 @@ function _appointment_facilitator_get_faces(NodeInterface $node): array {
   $faces = [];
   $entity_type_manager = \Drupal::entityTypeManager();
   $file_url_generator = \Drupal::service('file_url_generator');
-  $alias_manager = \Drupal::service('path_alias.manager');
 
-  $load_face = static function (int $uid, string $label) use (&$faces, $entity_type_manager, $file_url_generator, $alias_manager): void {
+  $load_face = static function (int $uid, string $label) use (&$faces, $entity_type_manager, $file_url_generator): void {
     if ($uid <= 0) {
       return;
     }
@@ -461,7 +452,7 @@ function _appointment_facilitator_get_faces(NodeInterface $node): array {
       $initials_raw = implode('', array_map(fn($w) => mb_strtoupper(mb_substr($w, 0, 1)), explode(' ', trim($display_name))));
       $initials = mb_substr($initials_raw, 0, 2);
     }
-    $profile_url = $alias_manager->getAliasByPath('/user/' . $uid . '/main');
+    $profile_url = '/user/' . $uid;
 
     $faces[] = [
       'uid' => $uid,
@@ -1922,6 +1913,23 @@ function appointment_facilitator_entity_presave(EntityInterface $entity): void {
 
   $account = \Drupal::currentUser();
   if (!$account->isAuthenticated() || _appointment_facilitator_is_badge_request_issuer($entity, $account)) {
+    return;
+  }
+
+  // Skip the issuer warning when the current user is the member the badge is
+  // being awarded to (e.g. auto-assignment after passing a quiz). Regular
+  // members aren't approving anyone — they shouldn't see an approver warning.
+  if ($entity->hasField('field_member_to_badge') && !$entity->get('field_member_to_badge')->isEmpty()) {
+    $member_uid = (int) ($entity->get('field_member_to_badge')->target_id ?? 0);
+    if ($member_uid === (int) $account->id()) {
+      return;
+    }
+  }
+
+  // Also skip for users who have no ability to edit badge requests at all,
+  // which rules out regular members reaching this code path via other flows.
+  if (!$account->hasPermission('edit any badge_request content')
+    && !$account->hasPermission('administer nodes')) {
     return;
   }
 
@@ -3550,8 +3558,8 @@ function appointment_facilitator_preprocess_views_view_fields(array &$variables)
 
   $config = \Drupal::config('appointment_facilitator.settings');
   $show_always = (bool) $config->get('show_always_join_cta');
-  $joiner_cap = (int) ($config->get('system_wide_joiner_cap') ?? 0);
-  if (!$show_always && $joiner_cap <= 0) {
+  $effective_capacity = appointment_facilitator_effective_capacity($node);
+  if (!$show_always && $effective_capacity <= 1) {
     return;
   }
 
@@ -3577,7 +3585,7 @@ function appointment_facilitator_preprocess_views_view_fields(array &$variables)
     static fn(int $attendee_id): bool => $attendee_id !== $author_uid && $attendee_id !== $host_uid
   ));
 
-  $is_full = count($joiner_ids) >= $joiner_cap;
+  $is_full = count($joiner_ids) >= max(0, $effective_capacity - 1);
   $already_in_session = $uid === $author_uid
     || ($host_uid > 0 && $host_uid === $uid)
     || in_array($uid, $attendee_ids, TRUE);
