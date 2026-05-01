@@ -68,3 +68,9 @@ appointments:
     js/appointment-filter.js: {}
   dependencies:
     - core/drupal
+
+facilitator_profile:
+  version: 1.x
+  css:
+    theme:
+      css/facilitator-profile.css: {}

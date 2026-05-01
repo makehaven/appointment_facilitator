@@ -22,13 +22,12 @@ class BadgeRequestApprovalController extends ControllerBase {
       return AccessResult::forbidden();
     }
 
-    $allowed = $account->hasPermission('administer nodes')
-      || $account->hasPermission('approve badge requests')
-      || $account->hasPermission('edit any badge_request content');
+    $allowed = _appointment_facilitator_can_approve_badge_request($node, $account);
 
-    return $allowed
-      ? AccessResult::allowed()->cachePerPermissions()
-      : AccessResult::forbidden()->cachePerPermissions();
+    return ($allowed ? AccessResult::allowed() : AccessResult::forbidden())
+      ->cachePerPermissions()
+      ->cachePerUser()
+      ->addCacheableDependency($node);
   }
 
   /**

@@ -971,15 +971,27 @@ function _appointment_facilitator_unset_render_keys_recursive(array &$element, a
 
 /**
  * Checks whether an account can approve a badge request instance.
+ *
+ * Admins and managers (`administer nodes` or `edit any badge_request content`)
+ * can approve any badge as a global override. Everyone else needs
+ * `approve badge requests` AND must be listed as an issuer on the badge term
+ * (field_badge_issuer or field_badge_issuer_on_request).
  */
 function _appointment_facilitator_can_approve_badge_request(NodeInterface $node, AccountInterface $account): bool {
   if ($node->bundle() !== 'badge_request' || !$node->hasField('field_badge_status')) {
     return FALSE;
   }
 
-  return $account->hasPermission('administer nodes')
-    || $account->hasPermission('approve badge requests')
-    || $account->hasPermission('edit any badge_request content');
+  if ($account->hasPermission('administer nodes')
+    || $account->hasPermission('edit any badge_request content')) {
+    return TRUE;
+  }
+
+  if (!$account->hasPermission('approve badge requests')) {
+    return FALSE;
+  }
+
+  return _appointment_facilitator_is_badge_request_issuer($node, $account);
 }
 
 /**
@@ -1065,22 +1077,28 @@ function _appointment_facilitator_badge_warning_label(NodeInterface $node): stri
 
 /**
  * Returns the pre-change warning shown to non-issuer badge editors.
+ *
+ * Non-issuers are blocked at field-access for editing field_badge_status.
+ * This warning is shown to admin/manager overrides who can still edit.
  */
 function _appointment_facilitator_badge_issuer_edit_warning(NodeInterface $node): string {
   $badge_label = _appointment_facilitator_badge_warning_label($node);
 
-  return (string) t('You are not currently listed as a badge issuer for @badge, so you should not change this request. Ask a listed issuer to review it. This will be locked down in a future update.', [
+  return (string) t('You are not currently listed as a badge issuer for @badge. As a manager you can still update this request, but the listed issuer should normally do it.', [
     '@badge' => $badge_label,
   ]);
 }
 
 /**
  * Returns the non-blocking warning shown after a non-issuer activates a badge.
+ *
+ * Only fires for admin/manager overrides; non-issuer non-managers are blocked
+ * at field-access before reaching this point.
  */
 function _appointment_facilitator_badge_issuer_warning(NodeInterface $node): string {
   $badge_label = _appointment_facilitator_badge_warning_label($node);
 
-  return (string) t('You approved @badge but are not currently listed as an issuer for it. You should be added as a badge issuer before approving members. This will be locked down in a future update.', [
+  return (string) t('You approved @badge but are not currently listed as an issuer for it. Consider adding the right person to the badge issuer list before approving more.', [
     '@badge' => $badge_label,
   ]);
 }
@@ -1559,20 +1577,47 @@ function appointment_facilitator_entity_field_access(string $operation, FieldDef
     return AccessResult::neutral();
   }
 
-  if ($field_definition->getTargetEntityTypeId() !== 'node' || $field_definition->getTargetBundle() !== 'appointment') {
+  if ($field_definition->getTargetEntityTypeId() !== 'node') {
     return AccessResult::neutral();
   }
 
+  $bundle = $field_definition->getTargetBundle();
   $field_name = $field_definition->getName();
-  if (!in_array($field_name, ['field_facilitator_arrival_status', 'field_facilitator_arrival_time'], TRUE)) {
-    return AccessResult::neutral();
+
+  if ($bundle === 'appointment'
+    && in_array($field_name, ['field_facilitator_arrival_status', 'field_facilitator_arrival_time'], TRUE)) {
+    if ($account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields')) {
+      return AccessResult::allowed()->cachePerPermissions();
+    }
+    return AccessResult::forbidden()->cachePerPermissions();
   }
 
-  if ($account->hasPermission('administer nodes') || $account->hasPermission('manage facilitator arrival fields')) {
-    return AccessResult::allowed()->cachePerPermissions();
+  // Lock down field_badge_status edits to admins/managers (override) or
+  // users listed as an issuer for the requested badge. Programmatic saves
+  // (quiz auto-assignment, etc.) bypass this hook and are unaffected.
+  if ($bundle === 'badge_request' && $field_name === 'field_badge_status') {
+    if (!$items) {
+      return AccessResult::neutral();
+    }
+    $entity = $items->getEntity();
+    if (!$entity instanceof NodeInterface || $entity->isNew()) {
+      return AccessResult::neutral();
+    }
+    if ($account->hasPermission('administer nodes')
+      || $account->hasPermission('edit any badge_request content')) {
+      return AccessResult::neutral()->cachePerPermissions();
+    }
+    if (_appointment_facilitator_is_badge_request_issuer($entity, $account)) {
+      return AccessResult::neutral()
+        ->cachePerUser()
+        ->addCacheableDependency($entity);
+    }
+    return AccessResult::forbidden('User is not a listed issuer for this badge.')
+      ->cachePerUser()
+      ->addCacheableDependency($entity);
   }
 
-  return AccessResult::forbidden()->cachePerPermissions();
+  return AccessResult::neutral();
 }
 
 /**

@@ -1,0 +1,73 @@
+.facilitator-badges-issuable {
+  margin: 1.25rem 0;
+}
+
+.facilitator-badges-issuable__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.facilitator-badges-issuable__list li {
+  list-style: none;
+}
+
+.facilitator-badge-pill {
+  display: inline-block;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  background: #eef0f3;
+  color: #1f2937;
+  text-decoration: none;
+  font-size: 0.9rem;
+  border: 1px solid #d8dde3;
+}
+
+.facilitator-badge-pill:hover,
+.facilitator-badge-pill:focus {
+  background: #861216;
+  color: #fff;
+  border-color: #861216;
+  text-decoration: none;
+}
+
+.facilitator-badge-pill__tag {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-left: -0.25rem;
+}
+
+.facilitator-contributions {
+  margin: 1.5rem 0;
+}
+
+.facilitator-contributions__tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.facilitator-stat-tile {
+  background: #f8f9fa;
+  border: 1px solid #e3e6ea;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  text-align: left;
+}
+
+.facilitator-stat-tile__value {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #861216;
+  line-height: 1.1;
+}
+
+.facilitator-stat-tile__label {
+  font-size: 0.85rem;
+  color: #4a5562;
+  margin-top: 0.25rem;
+}
