@@ -3740,6 +3740,18 @@ function _appointment_facilitator_extract_card_urls(string $content): array {
     $request_url = $m[1];
   }
 
+  // Drupal renders `&` in the rewrite-text href as `&amp;`. The caller passes
+  // these URLs back through htmlspecialchars(), so without decoding here the
+  // final attribute would carry `&amp;amp;` — the browser then sends literal
+  // `&amp;` to the server, which parses every param after the first as
+  // `amp;<name>` (silently dropping `date`, `start_time`, etc.).
+  if ($login_url !== NULL) {
+    $login_url = html_entity_decode($login_url, ENT_QUOTES | ENT_HTML5);
+  }
+  if ($request_url !== NULL) {
+    $request_url = html_entity_decode($request_url, ENT_QUOTES | ENT_HTML5);
+  }
+
   $cleaned = preg_replace('#<div class="appointment-login">.*?</div>\s*#is', '', $content);
   // The appointment-button block ends with `<br></div>` (the outer closer).
   // Anchor on that signature so the inner `</div>`s (field-content, btn) are
