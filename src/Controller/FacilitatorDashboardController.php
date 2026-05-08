@@ -894,16 +894,32 @@ class FacilitatorDashboardController extends ControllerBase {
 
   /**
    * Extracts the appointment timestamp from a node when possible.
+   *
+   * Smart Date stores `value` as an integer Unix timestamp (UTC). The legacy
+   * `field_appointment_date` is a date-only string; we anchor it at noon in
+   * the site timezone so sorting is stable across DST.
    */
   protected function extractAppointmentTimestamp($node): ?int {
     if ($node->hasField('field_appointment_timerange') && !$node->get('field_appointment_timerange')->isEmpty()) {
       $value = $node->get('field_appointment_timerange')->value;
-      return $value ? strtotime((string) $value) : NULL;
+      if ($value === NULL || $value === '') {
+        return NULL;
+      }
+      return is_numeric($value) ? (int) $value : (strtotime((string) $value) ?: NULL);
     }
 
     if ($node->hasField('field_appointment_date') && !$node->get('field_appointment_date')->isEmpty()) {
       $value = $node->get('field_appointment_date')->value;
-      return $value ? strtotime((string) $value . ' 12:00:00') : NULL;
+      if (!$value) {
+        return NULL;
+      }
+      try {
+        $tz = new \DateTimeZone($this->config('system.date')->get('timezone.default') ?: 'UTC');
+        return (new \DateTimeImmutable((string) $value . ' 12:00:00', $tz))->getTimestamp();
+      }
+      catch (\Exception $e) {
+        return NULL;
+      }
     }
 
     return NULL;
