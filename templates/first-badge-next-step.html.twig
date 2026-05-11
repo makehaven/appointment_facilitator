@@ -1,0 +1,53 @@
+{#
+/**
+ * @file
+ * "How to get your first badge" helper for members who haven't earned one yet.
+ *
+ * Variables:
+ * - headline: Main heading text.
+ * - intro: Short intro paragraph.
+ * - steps: Array of step strings.
+ * - primary_cta: { title, url, description }
+ * - secondary_cta: { title, url }
+ * - help_link: { title, url }
+ */
+#}
+<aside class="first-badge-helper" aria-label="{{ 'How to earn your first badge'|t }}">
+  <div class="first-badge-helper__header">
+    <span class="first-badge-helper__icon" aria-hidden="true">🏅</span>
+    <div>
+      <h2 class="first-badge-helper__headline">{{ headline }}</h2>
+      <p class="first-badge-helper__intro">{{ intro }}</p>
+    </div>
+  </div>
+
+  {% if steps %}
+    <ol class="first-badge-helper__steps">
+      {% for step in steps %}
+        <li>{{ step }}</li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+
+  <div class="first-badge-helper__actions">
+    {% if primary_cta.url %}
+      <a href="{{ primary_cta.url }}" class="first-badge-helper__cta first-badge-helper__cta--primary">
+        <span class="first-badge-helper__cta-title">{{ primary_cta.title }}</span>
+        {% if primary_cta.description %}
+          <span class="first-badge-helper__cta-desc">{{ primary_cta.description }}</span>
+        {% endif %}
+      </a>
+    {% endif %}
+    {% if secondary_cta.url %}
+      <a href="{{ secondary_cta.url }}" class="first-badge-helper__cta first-badge-helper__cta--secondary">
+        {{ secondary_cta.title }}
+      </a>
+    {% endif %}
+  </div>
+
+  {% if help_link.url %}
+    <p class="first-badge-helper__help">
+      {{ 'Stuck?'|t }} <a href="{{ help_link.url }}">{{ help_link.title }}</a>
+    </p>
+  {% endif %}
+</aside>

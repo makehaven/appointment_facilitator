@@ -14,6 +14,25 @@ services:
       - '@logger.factory'
       - '@?asset_status.availability'
 
+  appointment_facilitator.badge_user_status:
+    class: Drupal\appointment_facilitator\Service\BadgeUserStatusResolver
+    arguments:
+      - '@entity_type.manager'
+      - '@appointment_facilitator.badge_gate'
+
+  appointment_facilitator.badge_popularity:
+    class: Drupal\appointment_facilitator\Service\BadgePopularityStats
+    arguments:
+      - '@entity_type.manager'
+      - '@cache.default'
+      - '@database'
+
+  appointment_facilitator.badge_area_mapper:
+    class: Drupal\appointment_facilitator\Service\BadgeAreaMapper
+    arguments:
+      - '@entity_type.manager'
+      - '@cache.default'
+
   appointment_facilitator.slack:
     class: Drupal\appointment_facilitator\Service\AppointmentSlackService
     arguments:

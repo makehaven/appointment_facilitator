@@ -6,3 +6,12 @@ services:
       - '@entity_field.manager'
     tags:
       - { name: drush.command }
+
+  appointment_facilitator.tool_stars_import_commands:
+    class: Drupal\appointment_facilitator\Commands\ToolStarsImportCommands
+    arguments:
+      - '@entity_type.manager'
+      - '@flag'
+      - '@database'
+    tags:
+      - { name: drush.command }

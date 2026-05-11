@@ -21,7 +21,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *     has open capacity (most efficient: the facilitator is already scheduled).
  *  2. Attend an upcoming CiviCRM event tagged with this badge.
  *  3. Book a new one-on-one session with a listed facilitator.
- *  4. Request a private session (fallback link to /private-class-inquiry).
+ *  4. Request a paid private session (fallback link to /private-class-inquiry).
  */
 class BadgeNextStepsController extends ControllerBase {
 
@@ -47,10 +47,63 @@ class BadgeNextStepsController extends ControllerBase {
     $uid = (int) $this->currentUser()->id();
     $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($uid);
 
+    $build = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-next-steps']],
+      '#cache' => ['max-age' => 0],
+    ];
+
+    // Always show an intro so the page reads as guidance, not a dump of
+    // pending records. Wording adapts to whether there are pending badges.
+    $build['intro'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--status', 'badge-next-steps__intro']],
+      '#weight' => -100,
+      'heading' => [
+        '#markup' => '<p><strong>' . $this->t('Pick a badge and finish it.') . '</strong></p>',
+      ],
+      'body' => [
+        '#markup' => '<p>' . $this->t('Below are any badges you have <em>started</em> (waiting on a checkout) plus a short list of badges we recommend next based on your areas of interest. Visit the badge page to watch the video, read the requirements, and take the quiz.') . '</p>',
+      ],
+    ];
+
+    // Personal badge stats — total earned, rank among members, leaderboard
+    // peek. Anonymous users skip this whole section.
+    if ($uid > 0) {
+      $stats = $this->buildPersonalStatsSection($uid);
+      if ($stats) {
+        $build['personal_stats'] = $stats;
+      }
+    }
+
+    // Badges that unlock the tools the member starred. Higher signal than
+    // area-of-interest recs because the member explicitly picked the tool.
+    $exclude_tids = array_map('intval', $pending_tids);
+    $exclude_tids = array_merge($exclude_tids, $this->loadActiveBadgeTids($uid));
+    if ($uid > 0) {
+      $starred = $this->buildStarredToolsRecommendations($uid, $exclude_tids);
+      if ($starred) {
+        $build['starred_recommendations'] = $starred;
+      }
+    }
+
+    // Recommended next-up badges based on member areas of interest.
+    $recommendations = $this->buildRecommendationsSection($uid, $exclude_tids);
+    if ($recommendations) {
+      $build['recommendations'] = $recommendations;
+    }
+
+    // Pending badges section.
     if (empty($pending_tids)) {
-      return [
-        '#markup' => '<p>' . $this->t('You have no badges currently pending. Once a badge is marked as pending on your profile, your options to complete it will appear here.') . '</p>',
+      $build['no_pending'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['badge-next-steps__no-pending']],
+        '#weight' => 0,
+        'message' => [
+          '#markup' => '<p>' . $this->t('You have no badges in progress right now. Pick one above (or browse <a href="@all">all badges</a>) to get started.', ['@all' => '/badges']) . '</p>',
+        ],
       ];
+      return $build;
     }
 
     $terms = $this->entityTypeManager()
@@ -80,17 +133,438 @@ class BadgeNextStepsController extends ControllerBase {
       }
     }
 
-    $build = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['badge-next-steps']],
-      '#cache' => ['max-age' => 0],
+    $build['pending_heading'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'h2',
+      '#value' => $this->t('In progress — finish your checkout'),
+      '#attributes' => ['class' => ['badge-next-steps__heading']],
+      '#weight' => -10,
     ];
 
     foreach ($terms as $tid => $term) {
-      $build['badge_' . $tid] = $this->buildBadgeSection($term, $uid, $pending_since[$tid] ?? 0);
+      // Skip the paid-private-session fallback here — most members never use
+      // it, and the individual badge term page still exposes it as needed.
+      $build['badge_' . $tid] = $this->buildBadgeSection($term, $uid, $pending_since[$tid] ?? 0, FALSE, TRUE);
     }
 
     return $build;
+  }
+
+  /**
+   * Builds the "Your badges" stats panel — total active badges, rank against
+   * other members, and a small peek at the top earners. Excludes the
+   * "Door" access badge (tid 1519) from counts since every member has it.
+   */
+  protected function buildPersonalStatsSection(int $uid): ?array {
+    $db = \Drupal::database();
+    $door_tid = 1519;
+
+    // Count of distinct active equipment badges this user holds.
+    $my_count = (int) $db->select('node__field_member_to_badge', 'm')
+      ->fields('m')
+      ->condition('m.field_member_to_badge_target_id', $uid)
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+    // Actually scope to active equipment badges by joining:
+    $q = $db->select('node__field_member_to_badge', 'm');
+    $q->innerJoin('node__field_badge_status', 's', 's.entity_id = m.entity_id');
+    $q->innerJoin('node__field_badge_requested', 'b', 'b.entity_id = m.entity_id');
+    $q->innerJoin('node_field_data', 'n', 'n.nid = m.entity_id');
+    $q->condition('n.type', 'badge_request');
+    $q->condition('n.status', 1);
+    $q->condition('s.field_badge_status_value', 'active');
+    $q->condition('b.field_badge_requested_target_id', $door_tid, '<>');
+    $q->condition('m.field_member_to_badge_target_id', $uid);
+    $q->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'c');
+    $my_count = (int) $q->execute()->fetchField();
+
+    // Per-user badge counts across all active members → derive rank + total.
+    $sub = $db->select('node__field_member_to_badge', 'm');
+    $sub->innerJoin('node__field_badge_status', 's', 's.entity_id = m.entity_id');
+    $sub->innerJoin('node__field_badge_requested', 'b', 'b.entity_id = m.entity_id');
+    $sub->innerJoin('node_field_data', 'n', 'n.nid = m.entity_id');
+    $sub->innerJoin('user__roles', 'r', 'r.entity_id = m.field_member_to_badge_target_id');
+    $sub->innerJoin('users_field_data', 'u', 'u.uid = m.field_member_to_badge_target_id');
+    $sub->condition('n.type', 'badge_request');
+    $sub->condition('n.status', 1);
+    $sub->condition('s.field_badge_status_value', 'active');
+    $sub->condition('b.field_badge_requested_target_id', $door_tid, '<>');
+    $sub->condition('r.roles_target_id', 'member');
+    $sub->condition('u.status', 1);
+    $sub->addField('m', 'field_member_to_badge_target_id', 'uid');
+    $sub->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'badge_count');
+    $sub->groupBy('m.field_member_to_badge_target_id');
+    $rows = $sub->execute()->fetchAll();
+
+    $counts_by_uid = [];
+    foreach ($rows as $row) {
+      $counts_by_uid[(int) $row->uid] = (int) $row->badge_count;
+    }
+
+    // How many members have STRICTLY more badges than me → rank = that + 1.
+    $rank = 1;
+    foreach ($counts_by_uid as $count) {
+      if ($count > $my_count) {
+        $rank++;
+      }
+    }
+
+    // Total members ranked is "members who hold ≥1 equipment badge" — the
+    // honest denominator for the rank statement.
+    $total_ranked = count($counts_by_uid);
+
+    // Total active members (for context).
+    $q3 = $db->select('user__roles', 'r');
+    $q3->innerJoin('users_field_data', 'u', 'u.uid = r.entity_id');
+    $q3->condition('r.roles_target_id', 'member');
+    $q3->condition('u.status', 1);
+    $q3->addExpression('COUNT(DISTINCT u.uid)', 'c');
+    $total_members = (int) $q3->execute()->fetchField();
+
+    // Bail if the user has no badges and nobody else does either.
+    if ($my_count === 0 && $total_ranked === 0) {
+      return NULL;
+    }
+
+    $facts = [];
+    if ($my_count === 0) {
+      $facts[] = $this->t("You haven't earned an equipment badge yet — pick one below to start.");
+    }
+    elseif ($my_count === 1) {
+      $facts[] = $this->t('You hold <strong>1 equipment badge</strong>.');
+    }
+    else {
+      $facts[] = $this->t('You hold <strong>@n equipment badges</strong>.', ['@n' => $my_count]);
+    }
+
+    if ($my_count > 0 && $total_ranked > 0) {
+      $facts[] = $this->t(
+        'Rank <strong>#@rank</strong> of @total members with badges (out of @members active members).',
+        [
+          '@rank' => $rank,
+          '@total' => $total_ranked,
+          '@members' => $total_members,
+        ]
+      );
+    }
+
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-personal-stats']],
+      '#weight' => -90,
+      'heading' => [
+        '#type' => 'html_tag',
+        '#tag' => 'h3',
+        '#attributes' => ['class' => ['badge-personal-stats__heading']],
+        '#value' => $this->t('Your badge progress'),
+      ],
+      'facts' => [
+        '#theme' => 'item_list',
+        '#items' => array_map(fn ($f) => ['#markup' => (string) $f], $facts),
+        '#attributes' => ['class' => ['badge-personal-stats__list']],
+      ],
+      '#cache' => [
+        'contexts' => ['user'],
+        'tags' => ['node_list:badge_request', 'user_list'],
+        'max-age' => 3600,
+      ],
+    ];
+  }
+
+  /**
+   * Returns term IDs of badges the member currently holds (active status).
+   */
+  protected function loadActiveBadgeTids(int $uid): array {
+    if ($uid <= 0) {
+      return [];
+    }
+    $nids = $this->entityTypeManager()->getStorage('node')->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'badge_request')
+      ->condition('status', 1)
+      ->condition('field_member_to_badge.target_id', $uid)
+      ->condition('field_badge_status', 'active')
+      ->execute();
+    if (!$nids) {
+      return [];
+    }
+    $tids = [];
+    foreach ($this->entityTypeManager()->getStorage('node')->loadMultiple($nids) as $request) {
+      if ($request->hasField('field_badge_requested') && !$request->get('field_badge_requested')->isEmpty()) {
+        $tids[] = (int) $request->get('field_badge_requested')->target_id;
+      }
+    }
+    return array_values(array_unique($tids));
+  }
+
+  /**
+   * Builds a "recommended next" section based on member areas of interest.
+   *
+   * Picks badges in the user's interest areas, excludes ones the user
+   * already has or has in progress, and orders by prerequisite count
+   * (fewer prereqs = more foundational) then alphabetically. Capped at
+   * a small handful so the list reads as a suggestion, not a directory.
+   */
+  /**
+   * Recommends badges that unlock the tools the member has starred via the
+   * `tool_favorite` flag. Returns NULL when the member has no stars or
+   * when all the derived badges are already held / in progress.
+   *
+   * Ordering: most-recently-starred tools first → their badges in turn.
+   * Capped at 6 cards to match the area-of-interest section visually.
+   */
+  protected function buildStarredToolsRecommendations(int $uid, array $exclude_tids): ?array {
+    $db = \Drupal::database();
+
+    // Pull starred tool nids in reverse-chronological order so the freshest
+    // signal drives the top of the list.
+    $q = $db->select('flagging', 'f');
+    $q->condition('f.flag_id', 'tool_favorite');
+    $q->condition('f.uid', $uid);
+    $q->fields('f', ['entity_id']);
+    $q->orderBy('f.created', 'DESC');
+    $tool_nids = $q->execute()->fetchCol();
+    if (!$tool_nids) {
+      return NULL;
+    }
+
+    $node_storage = $this->entityTypeManager()->getStorage('node');
+    $tools = $node_storage->loadMultiple($tool_nids);
+    // Preserve query order; loadMultiple may rearrange.
+    $tools_ordered = [];
+    foreach ($tool_nids as $nid) {
+      if (isset($tools[$nid])) {
+        $tools_ordered[$nid] = $tools[$nid];
+      }
+    }
+
+    $exclude_lookup = array_flip(array_map('intval', $exclude_tids));
+    $candidate_tids = [];
+    foreach ($tools_ordered as $tool) {
+      if (!$tool instanceof NodeInterface || $tool->bundle() !== 'item') {
+        continue;
+      }
+      foreach (['field_member_badges', 'field_additional_badges'] as $badge_field) {
+        if (!$tool->hasField($badge_field) || $tool->get($badge_field)->isEmpty()) {
+          continue;
+        }
+        foreach ($tool->get($badge_field)->getValue() as $val) {
+          $tid = (int) ($val['target_id'] ?? 0);
+          if ($tid <= 0 || isset($exclude_lookup[$tid]) || isset($candidate_tids[$tid])) {
+            continue;
+          }
+          $candidate_tids[$tid] = $tid;
+        }
+      }
+    }
+    if (!$candidate_tids) {
+      return NULL;
+    }
+
+    $terms = $this->entityTypeManager()->getStorage('taxonomy_term')
+      ->loadMultiple($candidate_tids);
+
+    // Drop inactive/unlisted badges.
+    $terms = array_filter($terms, function (TermInterface $t): bool {
+      if ($t->hasField('field_badge_inactive') && !$t->get('field_badge_inactive')->isEmpty() && (bool) $t->get('field_badge_inactive')->value) {
+        return FALSE;
+      }
+      if ($t->hasField('field_badge_unlisted') && !$t->get('field_badge_unlisted')->isEmpty() && (bool) $t->get('field_badge_unlisted')->value) {
+        return FALSE;
+      }
+      return TRUE;
+    });
+
+    if (!$terms) {
+      return NULL;
+    }
+
+    // Preserve candidate order (most-recently-starred-tool first). Cap at 6.
+    $ordered = [];
+    foreach ($candidate_tids as $tid) {
+      if (isset($terms[$tid])) {
+        $ordered[$tid] = $terms[$tid];
+      }
+    }
+    $ordered = array_slice($ordered, 0, 6, TRUE);
+
+    $items = [];
+    foreach ($ordered as $term) {
+      $items[] = [
+        '#type' => 'link',
+        '#title' => $term->label(),
+        '#url' => $term->toUrl(),
+        '#attributes' => ['class' => ['badge-next-steps__rec-link']],
+      ];
+    }
+
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-next-steps__recommendations', 'badge-next-steps__recommendations--starred']],
+      '#weight' => -60,
+      'heading' => [
+        '#type' => 'html_tag',
+        '#tag' => 'h2',
+        '#value' => $this->t('Earn these to unlock the tools you starred'),
+        '#attributes' => ['class' => ['badge-next-steps__heading']],
+      ],
+      'subhead' => [
+        '#markup' => '<p>' . $this->t('You starred these tools — these badges unlock them. Click any badge to see how to earn it.') . '</p>',
+      ],
+      'list' => [
+        '#theme' => 'item_list',
+        '#items' => $items,
+        '#attributes' => ['class' => ['badge-next-steps__rec-list']],
+      ],
+      '#cache' => [
+        'contexts' => ['user'],
+        'tags' => ['node_list:badge_request', 'flagging_list', 'taxonomy_term_list'],
+        'max-age' => 3600,
+      ],
+    ];
+  }
+
+  protected function buildRecommendationsSection(int $uid, array $exclude_tids): ?array {
+    if ($uid <= 0) {
+      return NULL;
+    }
+
+    $interest_tids = $this->loadMemberInterestAreaTids($uid);
+    if (!$interest_tids) {
+      return NULL;
+    }
+
+    // Badge → area is derived via items, not directly on the taxonomy term.
+    // (item node → field_item_area_interest → area_of_interest term; the item
+    // also references its badges via field_member_badges / field_additional_badges.)
+    $node_storage = $this->entityTypeManager()->getStorage('node');
+    $item_nids = $node_storage->getQuery()
+      ->accessCheck(TRUE)
+      ->condition('type', 'item')
+      ->condition('status', 1)
+      ->condition('field_item_area_interest', $interest_tids, 'IN')
+      ->execute();
+    if (!$item_nids) {
+      return NULL;
+    }
+
+    $candidate_tids = [];
+    foreach ($node_storage->loadMultiple($item_nids) as $item) {
+      foreach (['field_member_badges', 'field_additional_badges'] as $badge_field) {
+        if (!$item->hasField($badge_field)) {
+          continue;
+        }
+        foreach ($item->get($badge_field)->getValue() as $val) {
+          $tid = (int) ($val['target_id'] ?? 0);
+          if ($tid > 0) {
+            $candidate_tids[$tid] = $tid;
+          }
+        }
+      }
+    }
+    if (!$candidate_tids) {
+      return NULL;
+    }
+
+    $exclude_lookup = array_flip(array_map('intval', $exclude_tids));
+    $terms = $this->entityTypeManager()->getStorage('taxonomy_term')
+      ->loadMultiple(array_diff_key($candidate_tids, $exclude_lookup));
+
+    if (!$terms) {
+      return NULL;
+    }
+
+    // Filter out inactive/unlisted badges.
+    $terms = array_filter($terms, function (TermInterface $t): bool {
+      if ($t->hasField('field_badge_inactive') && !$t->get('field_badge_inactive')->isEmpty()) {
+        if ((bool) $t->get('field_badge_inactive')->value) {
+          return FALSE;
+        }
+      }
+      if ($t->hasField('field_badge_unlisted') && !$t->get('field_badge_unlisted')->isEmpty()) {
+        if ((bool) $t->get('field_badge_unlisted')->value) {
+          return FALSE;
+        }
+      }
+      return TRUE;
+    });
+
+    if (!$terms) {
+      return NULL;
+    }
+
+    // Sort: prereq count ASC (foundational first), then alphabetically.
+    uasort($terms, function (TermInterface $a, TermInterface $b): int {
+      $ac = $a->hasField('field_badge_prerequisite') ? $a->get('field_badge_prerequisite')->count() : 0;
+      $bc = $b->hasField('field_badge_prerequisite') ? $b->get('field_badge_prerequisite')->count() : 0;
+      if ($ac !== $bc) {
+        return $ac <=> $bc;
+      }
+      return strcasecmp((string) $a->label(), (string) $b->label());
+    });
+
+    $terms = array_slice($terms, 0, 6, TRUE);
+
+    $items = [];
+    foreach ($terms as $term) {
+      $items[] = [
+        '#type' => 'link',
+        '#title' => $term->label(),
+        '#url' => $term->toUrl(),
+        '#attributes' => ['class' => ['badge-next-steps__rec-link']],
+      ];
+    }
+
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-next-steps__recommendations']],
+      '#weight' => -50,
+      'heading' => [
+        '#type' => 'html_tag',
+        '#tag' => 'h2',
+        '#value' => $this->t('Recommended next — based on your interests'),
+        '#attributes' => ['class' => ['badge-next-steps__heading']],
+      ],
+      'subhead' => [
+        '#markup' => '<p>' . $this->t('Foundational badges in your interest areas come first. Click any badge to see how to earn it.') . '</p>',
+      ],
+      'list' => [
+        '#theme' => 'item_list',
+        '#items' => $items,
+        '#attributes' => ['class' => ['badge-next-steps__rec-list']],
+      ],
+    ];
+  }
+
+  /**
+   * Reads the member's area-of-interest taxonomy term IDs from their main
+   * profile (field_member_areas_interest).
+   */
+  protected function loadMemberInterestAreaTids(int $uid): array {
+    if ($uid <= 0 || !$this->entityTypeManager()->hasDefinition('profile')) {
+      return [];
+    }
+    $profile_storage = $this->entityTypeManager()->getStorage('profile');
+    $profile_ids = $profile_storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('uid', $uid)
+      ->condition('type', 'main')
+      ->sort('changed', 'DESC')
+      ->range(0, 1)
+      ->execute();
+    if (!$profile_ids) {
+      return [];
+    }
+    $profile = $profile_storage->load(reset($profile_ids));
+    if (!$profile || !$profile->hasField('field_member_areas_interest') || $profile->get('field_member_areas_interest')->isEmpty()) {
+      return [];
+    }
+    $tids = [];
+    foreach ($profile->get('field_member_areas_interest')->getValue() as $item) {
+      $tids[] = (int) ($item['target_id'] ?? 0);
+    }
+    return array_values(array_unique(array_filter($tids)));
   }
 
   /**
@@ -138,10 +612,39 @@ class BadgeNextStepsController extends ControllerBase {
       }
     }
 
-    $section = $this->buildBadgeSection($term, $uid, $pending_since);
+    // The badge term page shows the schedule EVA + the facilitator cards
+    // below; the paid private-session option is rendered separately at the
+    // bottom by appointment_facilitator_entity_view() so it doesn't compete
+    // with the primary booking options at the top.
+    $section = $this->buildBadgeSection($term, $uid, $pending_since, FALSE);
     unset($section['heading']);
     $section['#attributes']['class'][] = 'badge-next-step-card--term-page';
     return $section;
+  }
+
+  /**
+   * Builds the standalone paid-private-session fallback link.
+   *
+   * Used by the badge term page to position the link far down the page,
+   * away from the primary booking actions.
+   */
+  public function buildPaidPrivateSessionFallback(TermInterface $term): array {
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-option', 'badge-option--private', 'badge-option--secondary']],
+      'description' => [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#attributes' => ['class' => ['badge-private-desc']],
+        '#value' => $this->t("Can't make any of the options above? A paid private session is also available."),
+      ],
+      'link' => [
+        '#type' => 'link',
+        '#title' => $this->t('Request a paid private session'),
+        '#url' => Url::fromUri('internal:/private-class-inquiry'),
+        '#attributes' => ['class' => ['badge-private-link']],
+      ],
+    ];
   }
 
   /**
@@ -170,8 +673,14 @@ class BadgeNextStepsController extends ControllerBase {
 
   /**
    * Builds the card for a single pending badge.
+   *
+   * @param bool $include_private_session
+   *   When TRUE, append the paid-private-session fallback option. Used on
+   *   individual badge term pages where it sits as a last-resort link.
+   *   Set FALSE on /badges/complete because most members never need it and
+   *   it pulls attention away from the actual next step.
    */
-  protected function buildBadgeSection(TermInterface $term, int $uid, int $pending_since = 0): array {
+  protected function buildBadgeSection(TermInterface $term, int $uid, int $pending_since = 0, bool $include_private_session = TRUE, bool $show_schedule_cta = FALSE): array {
     $tid = (int) $term->id();
     $badge_url = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $tid]);
 
@@ -229,9 +738,32 @@ class BadgeNextStepsController extends ControllerBase {
       return $section;
     }
 
+    // Primary CTA to the badge page — only shown when the caller asked for it
+    // (i.e. /badges/complete cards). Skipped on the badge term page itself
+    // where the heading already links to the badge.
+    if ($show_schedule_cta) {
+      $section['primary_cta'] = [
+        '#type' => 'link',
+        '#title' => $this->t('Schedule'),
+        '#url' => $badge_url,
+        '#attributes' => [
+          'class' => ['button', 'button--primary', 'badge-next-step-cta'],
+          'aria-label' => $this->t('Open @badge badge page to schedule a checkout', ['@badge' => $term->label()]),
+        ],
+        // Place between the pending notice (default weight) and the options
+        // container so it reads as the primary action.
+        '#weight' => 5,
+      ];
+      // The options container needs a higher weight to render below the CTA.
+      $section['options']['#weight'] = 10;
+    }
+
     // --- Already scheduled? Show when and skip all booking options ---
     $existing = $this->findExistingAppointmentForBadge($tid, $uid);
     if ($existing) {
+      // Member already has a session booked; no need to push them back to the
+      // badge page to schedule again.
+      unset($section['primary_cta']);
       $ts = (int) $existing->get('field_appointment_timerange')->value;
       $date_str = $this->dateFormatter->format($ts, 'custom', 'l, F j \a\t g:ia');
       $node_url = $existing->toUrl();
@@ -327,17 +859,29 @@ class BadgeNextStepsController extends ControllerBase {
       ];
     }
 
-    // --- Always: private session fallback ---
-    $section['options']['private'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['badge-option', 'badge-option--private']],
-      'link' => [
-        '#type' => 'link',
-        '#title' => $this->t('Request a private session'),
-        '#url' => Url::fromUri('internal:/private-class-inquiry'),
-        '#attributes' => ['class' => ['badge-private-link']],
-      ],
-    ];
+    // --- Paid private-session fallback (badge term page only) ---
+    // Most members never use this; we keep it visible on the badge term
+    // page as a true last-resort, sitting under the other options with a
+    // small label that doesn't compete with the primary CTAs.
+    if ($include_private_session) {
+      $section['options']['private'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['badge-option', 'badge-option--private', 'badge-option--secondary']],
+        '#weight' => 100,
+        'description' => [
+          '#type' => 'html_tag',
+          '#tag' => 'p',
+          '#attributes' => ['class' => ['badge-private-desc']],
+          '#value' => $this->t("Can't make any of these times? A paid private session is also available."),
+        ],
+        'link' => [
+          '#type' => 'link',
+          '#title' => $this->t('Request a paid private session'),
+          '#url' => Url::fromUri('internal:/private-class-inquiry'),
+          '#attributes' => ['class' => ['badge-private-link']],
+        ],
+      ];
+    }
 
     return $section;
   }

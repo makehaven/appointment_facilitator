@@ -1,0 +1,57 @@
+.badges-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  margin: 0 0 1.5rem;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 0.6rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.badges-filter-bar__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #303030;
+}
+.badges-filter-bar__field > span {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #616161;
+  font-size: 0.75rem;
+}
+.badges-filter-bar__field select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #c2c2c2;
+  border-radius: 0.4rem;
+  background: #fff;
+  font-size: 0.95rem;
+  min-width: 12rem;
+}
+
+.badges-filter-bar__reset {
+  padding: 0.5rem 0.85rem;
+  border: 1px solid #c2c2c2;
+  background: #f2f2f2;
+  border-radius: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4a4a4a;
+  cursor: pointer;
+}
+.badges-filter-bar__reset:hover {
+  background: #e7e7e7;
+}
+
+.badges-filter-bar__count {
+  margin: 0;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: #616161;
+  align-self: center;
+}

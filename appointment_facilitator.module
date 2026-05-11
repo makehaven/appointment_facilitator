@@ -94,13 +94,37 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   }
 
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
+    if ($display) {
+      _appointment_facilitator_attach_badge_status_pseudo_fields($build, $entity, $display);
+    }
+
     if ($view_mode === 'full') {
       _appointment_facilitator_enforce_badge_page_flow($build, $entity);
       _appointment_facilitator_add_related_tools($build, $entity);
       _appointment_facilitator_format_badge_checklist($build, $entity);
+      _appointment_facilitator_attach_badge_popularity_stats($build, $entity);
 
-      if ($display && $component = $display->getComponent('print_checklist')) {
-        // Add Print Badge Checklist button.
+      // Paid private session sits at the bottom of the page as a true
+      // last-resort fallback. Most members never click it; placing it
+      // beneath the actual schedule + checklist keeps the primary actions
+      // visually dominant.
+      try {
+        /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $next_steps */
+        $next_steps = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
+        $build['appointment_facilitator_paid_private_fallback'] = $next_steps->buildPaidPrivateSessionFallback($entity);
+        $build['appointment_facilitator_paid_private_fallback']['#weight'] = 200;
+      }
+      catch (\Throwable $e) {
+        // Non-fatal — if the controller can't be resolved, just skip.
+      }
+
+      // Only attach the "Print Badge Checklist" button when there is actually
+      // a checklist to print. Without items the button is meaningless.
+      if (
+        $display
+        && ($component = $display->getComponent('print_checklist'))
+        && !_appointment_facilitator_badge_checklist_is_blank($entity)
+      ) {
         $build['print_checklist'] = [
           '#type' => 'container',
           '#weight' => $component['weight'],
@@ -207,6 +231,188 @@ function _appointment_facilitator_format_badge_checklist(array &$build, TermInte
 }
 
 /**
+ * Populates the mh_badge_user_status / mh_badge_user_eligibility pseudo-fields
+ * for a badges term, when the active view display has them enabled.
+ *
+ * Implementation lives in the BadgeUserStatusResolver service; this just
+ * renders the small pill markup the embedded compliance strip and the card
+ * view mode display. The full status banner is a separate block plugin.
+ */
+function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$build, TermInterface $term, EntityViewDisplayInterface $display): void {
+  $wants_status = (bool) $display->getComponent('mh_badge_user_status');
+  $wants_eligibility = (bool) $display->getComponent('mh_badge_user_eligibility');
+  if (!$wants_status && !$wants_eligibility) {
+    return;
+  }
+
+  /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+  $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+  $current_user = \Drupal::currentUser();
+  $resolved = $resolver->resolve((int) $current_user->id(), $term);
+  $state = $resolved['state'];
+
+  $cache = CacheableMetadata::createFromRenderArray($build);
+  $cache->addCacheContexts(['user']);
+  $cache->addCacheTags($resolved['cache_tags']);
+  $cache->applyTo($build);
+
+  if ($wants_status) {
+    [$status_label, $status_tone] = _appointment_facilitator_badge_status_pill_text($state);
+    // A null label means we deliberately suppress the pill for this state
+    // (e.g. "not started" — the CTA banner below tells the story).
+    if ($status_label !== NULL) {
+      $component = $display->getComponent('mh_badge_user_status');
+      $build['mh_badge_user_status'] = [
+        '#type' => 'container',
+        '#weight' => $component['weight'] ?? -10,
+        '#attributes' => [
+          'class' => [
+            'mh-badge-status-pill',
+            'mh-badge-status-pill--' . str_replace('_', '-', $state),
+            'mh-badge-status-pill--tone-' . $status_tone,
+          ],
+          'data-state' => $state,
+        ],
+        'label' => [
+          '#markup' => '<span class="mh-badge-status-pill__label">' . Html::escape((string) $status_label) . '</span>',
+        ],
+      ];
+    }
+  }
+
+  if ($wants_eligibility) {
+    [$eligibility_label, $eligibility_tone, $eligibility_glyph] = _appointment_facilitator_badge_eligibility_text($state, $term);
+    $component = $display->getComponent('mh_badge_user_eligibility');
+
+    // Make the marker a real link to the badge page. For "quiz_needed"
+    // (member hasn't started) we render the brand-red primary CTA variant
+    // so it reads as the obvious next action on a tool page embed.
+    $classes = [
+      'mh-badge-eligibility',
+      'mh-badge-eligibility--tone-' . $eligibility_tone,
+    ];
+    if ($state === 'quiz_needed') {
+      $classes[] = 'mh-badge-eligibility--start';
+    }
+
+    $badge_href = '';
+    try {
+      $badge_href = $term->toUrl()->toString();
+    }
+    catch (\Throwable) {
+      // No URL (term unsaved?) — fall through and render a div.
+    }
+
+    $inner_markup = '<span class="mh-badge-eligibility__glyph" aria-hidden="true">'
+      . Html::escape($eligibility_glyph)
+      . '</span><span class="mh-badge-eligibility__label">'
+      . Html::escape((string) $eligibility_label)
+      . '</span>';
+
+    if ($badge_href !== '') {
+      $build['mh_badge_user_eligibility'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'a',
+        '#weight' => $component['weight'] ?? -9,
+        '#value' => $inner_markup,
+        '#attributes' => [
+          'href' => $badge_href,
+          'class' => $classes,
+          'data-state' => $state,
+          'aria-label' => (string) $eligibility_label,
+        ],
+      ];
+    }
+    else {
+      $build['mh_badge_user_eligibility'] = [
+        '#type' => 'container',
+        '#weight' => $component['weight'] ?? -9,
+        '#attributes' => [
+          'class' => $classes,
+          'data-state' => $state,
+          'aria-label' => (string) $eligibility_label,
+        ],
+        'content' => ['#markup' => $inner_markup],
+      ];
+    }
+  }
+}
+
+/**
+ * Maps a resolver state to [pill label, tone].
+ *
+ * The not-started state intentionally returns NULL — the embedded CTA
+ * banner below the pill handles that case, so showing both is redundant.
+ */
+function _appointment_facilitator_badge_status_pill_text(string $state): array {
+  return match ($state) {
+    'active' => [t('Active'), 'success'],
+    'pending' => [t('Pending checkout'), 'progress'],
+    'quiz_needed' => [NULL, 'progress'],
+    'prereqs_missing' => [t('Prereqs missing'), 'blocked'],
+    'docs_required' => [t('Docs required'), 'blocked'],
+    'suspended' => [t('Suspended'), 'warning'],
+    'expired' => [t('Expired'), 'warning'],
+    'anonymous' => [t('Log in to see status'), 'neutral'],
+    default => [t('Not started'), 'neutral'],
+  };
+}
+
+/**
+ * Maps a resolver state to [eligibility label, tone, glyph].
+ *
+ * For the "quiz_needed" state we tailor wording to the badge's checkout
+ * requirement so the embed on a tool page sends members to the badge page
+ * for learning resources (video, manual, requirements) rather than
+ * pushing them straight to the quiz.
+ */
+function _appointment_facilitator_badge_eligibility_text(string $state, ?TermInterface $term = NULL): array {
+  $checkout = '';
+  if (
+    $term
+    && $term->hasField('field_badge_checkout_requirement')
+    && !$term->get('field_badge_checkout_requirement')->isEmpty()
+  ) {
+    $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
+  }
+
+  switch ($state) {
+    case 'active':
+      return [t('You have this badge'), 'success', '✓'];
+
+    case 'pending':
+      return [t('Schedule a facilitator session — open badge page'), 'progress', '→'];
+
+    case 'quiz_needed':
+      if ($checkout === 'class') {
+        $label = t('Start this badge — workshop or documentation required');
+      }
+      else {
+        $label = t('Start this badge');
+      }
+      return [$label, 'progress', '→'];
+
+    case 'prereqs_missing':
+      return [t('Open badge page — earn prerequisite badges first'), 'blocked', '⚠'];
+
+    case 'docs_required':
+      return [t('Open badge page — submit training documentation'), 'blocked', '⚠'];
+
+    case 'suspended':
+      return [t('Suspended — contact staff'), 'warning', '⛔'];
+
+    case 'expired':
+      return [t('Expired — open badge page to renew'), 'warning', '⛔'];
+
+    case 'anonymous':
+      return [t('Log in to check eligibility'), 'neutral', '?'];
+
+    default:
+      return [t('Open badge page for details'), 'neutral', '·'];
+  }
+}
+
+/**
  * Removes duplicate title rows and stray export artifacts from checklist text.
  */
 function _appointment_facilitator_clean_checklist_item(string $text, string $badge_title): string {
@@ -216,6 +422,383 @@ function _appointment_facilitator_clean_checklist_item(string $text, string $bad
   }
 
   return trim(strcasecmp($text, trim($badge_title)) === 0 ? '' : $text);
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for views_view_unformatted.
+ *
+ * Attaches per-card data attributes to each row of the /badges directory so
+ * a small JS filter can hide/show cards without a round-trip. We also drop
+ * a filter-bar header in via hook_views_pre_render() below.
+ */
+/**
+ * Implements hook_preprocess_views_view().
+ *
+ * Adds a stable id to the event_upcoming_badging EVA so the badge status
+ * banner can deep-link from its "upcoming classes listed below" text.
+ */
+function appointment_facilitator_preprocess_views_view(array &$variables): void {
+  $view = $variables['view'] ?? NULL;
+  if (!$view || $view->id() !== 'event_upcoming_badging') {
+    return;
+  }
+  $variables['attributes']['id'] = 'earn-badge-at-event';
+}
+
+function appointment_facilitator_preprocess_views_view_unformatted(array &$variables): void {
+  $view = $variables['view'] ?? NULL;
+  if (!$view || $view->id() !== 'badges') {
+    return;
+  }
+
+  $area_map = \Drupal::hasService('appointment_facilitator.badge_area_mapper')
+    ? \Drupal::service('appointment_facilitator.badge_area_mapper')->getAreaMap()
+    : [];
+
+  $resolver = \Drupal::hasService('appointment_facilitator.badge_user_status')
+    ? \Drupal::service('appointment_facilitator.badge_user_status')
+    : NULL;
+  $uid = (int) \Drupal::currentUser()->id();
+
+  foreach ($variables['rows'] as $i => $row) {
+    $term = $view->result[$i]->_entity ?? NULL;
+    if (!$term instanceof TermInterface || $term->bundle() !== 'badges') {
+      continue;
+    }
+    $tid = (int) $term->id();
+
+    $checkout = '';
+    if ($term->hasField('field_badge_checkout_requirement') && !$term->get('field_badge_checkout_requirement')->isEmpty()) {
+      $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
+    }
+
+    $state = 'anonymous';
+    if ($resolver) {
+      $state = (string) ($resolver->resolve($uid, $term)['state'] ?? 'anonymous');
+    }
+
+    $areas = $area_map[$tid] ?? [];
+
+    if (isset($variables['rows'][$i]['attributes'])) {
+      $variables['rows'][$i]['attributes']->setAttribute('data-badge-tid', $tid);
+      $variables['rows'][$i]['attributes']->setAttribute('data-areas', implode(',', $areas));
+      $variables['rows'][$i]['attributes']->setAttribute('data-checkout', $checkout);
+      $variables['rows'][$i]['attributes']->setAttribute('data-state', $state);
+      $variables['rows'][$i]['attributes']->addClass('badge-card-row');
+    }
+  }
+
+  // Cache by user — state is per-user.
+  $variables['#cache']['contexts'][] = 'user';
+}
+
+/**
+ * Builds the /badges filter-bar markup and attaches the JS library that
+ * wires its select controls to row visibility. Called from the existing
+ * `appointment_facilitator_views_pre_render()` hook.
+ */
+function _appointment_facilitator_attach_badges_filter_bar(ViewExecutable $view): void {
+  /** @var \Drupal\taxonomy\TermStorageInterface $term_storage */
+  $term_storage = \Drupal::entityTypeManager()->getStorage('taxonomy_term');
+  // loadTree returns terms in hierarchical order (parent first, then each
+  // parent's descendants) with a `depth` property for indentation.
+  $tree = $term_storage->loadTree('area_of_interest', 0, NULL, FALSE);
+
+  $area_options_html = '';
+  foreach ($tree as $area) {
+    $depth = (int) ($area->depth ?? 0);
+    // Indent children with a hairspace-padded em-dash, e.g.
+    //   "3D Fabrication" → top-level
+    //   "— CNC Routing"  → child
+    //   "—— Detail"      → grandchild
+    $indent = $depth > 0 ? str_repeat('—', $depth) . ' ' : '';
+    $area_options_html .= '<option value="' . (int) $area->tid . '">'
+      . Html::escape($indent . $area->name)
+      . '</option>';
+  }
+
+  $logged_in = \Drupal::currentUser()->isAuthenticated();
+  $state_options = '<option value="">All states</option>';
+  if ($logged_in) {
+    $state_options .= '<option value="mine">Badges I have</option>'
+      . '<option value="pending">In progress</option>'
+      . '<option value="available">Available to start</option>'
+      . '<option value="blocked">Blocked (prereqs/docs)</option>';
+  }
+
+  $checkout_options = '<option value="">Any requirement</option>'
+    . '<option value="no">Quiz only (no checkout)</option>'
+    . '<option value="yes">In-person checkout</option>'
+    . '<option value="class">Workshop or documentation</option>';
+
+  $callout_html = _appointment_facilitator_build_badges_directory_callout();
+
+  $html = $callout_html
+    . '<div class="badges-filter-bar" data-badges-filter>'
+    . '<label class="badges-filter-bar__field"><span>Area</span>'
+    . '<select data-filter="area"><option value="">All areas</option>' . $area_options_html . '</select></label>'
+    . '<label class="badges-filter-bar__field"><span>Requirement</span>'
+    . '<select data-filter="checkout">' . $checkout_options . '</select></label>'
+    . '<label class="badges-filter-bar__field"><span>Status</span>'
+    . '<select data-filter="state">' . $state_options . '</select></label>'
+    . '<button type="button" class="badges-filter-bar__reset" data-filter-reset>Reset</button>'
+    . '<p class="badges-filter-bar__count" data-filter-count></p>'
+    . '</div>';
+
+  $view->element['#attached']['library'][] = 'appointment_facilitator/badges_filter';
+  // The callout is personalized, so make sure the view varies on user + has
+  // the right invalidation tags.
+  $view->element['#cache']['contexts'][] = 'user';
+  $view->element['#cache']['tags'][] = 'node_list:badge_request';
+  $view->element['#cache']['tags'][] = 'user_list';
+  // Mark the markup safe so Drupal's XSS filter doesn't strip <select>,
+  // <option>, etc.
+  $view->element['#prefix'] = Markup::create(
+    ($view->element['#prefix'] ?? '') . $html
+  );
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for html.
+ *
+ * Adds a `.path-taxonomy--badges` body class on badge term pages so we
+ * can scope CSS overrides — chiefly hiding Drupal's default-page node
+ * listing (course/event nodes tagged with the badge) which renders as
+ * raw teasers at the bottom and isn't useful on badge pages.
+ */
+function appointment_facilitator_preprocess_html(array &$variables): void {
+  $route_match = \Drupal::routeMatch();
+  if ($route_match->getRouteName() !== 'entity.taxonomy_term.canonical') {
+    return;
+  }
+  $term = $route_match->getParameter('taxonomy_term');
+  if (!$term instanceof TermInterface || $term->bundle() !== 'badges') {
+    return;
+  }
+  $variables['attributes']['class'][] = 'path-taxonomy--badges';
+}
+
+/**
+ * Implements hook_preprocess_HOOK() for page_title.
+ *
+ * Adds "Badge" suffix to taxonomy_term:badges pages so a page about
+ * "Panel Saw" the badge doesn't read identically to the "Panel Saw" tool
+ * page. Done at the title-block preprocess level so the head <title> and
+ * the visible page heading both pick it up.
+ */
+function appointment_facilitator_preprocess_page_title(array &$variables): void {
+  $route_match = \Drupal::routeMatch();
+  if ($route_match->getRouteName() !== 'entity.taxonomy_term.canonical') {
+    return;
+  }
+  $term = $route_match->getParameter('taxonomy_term');
+  if (!$term instanceof TermInterface || $term->bundle() !== 'badges') {
+    return;
+  }
+  $variables['title'] = t('@name Badge', ['@name' => $term->label()]);
+}
+
+/**
+ * Implements hook_field_group_pre_render_alter().
+ *
+ * Suppresses the `group_checklist` accordion on a badge term page when the
+ * badge has no checklist items — otherwise field_group renders an empty
+ * "Badge Checklist" fieldset with just the "Complete these items to earn
+ * the badge." placeholder and no content beneath it.
+ *
+ * 95 of 144 badges have empty checklists, so this affects most of the
+ * directory.
+ */
+function appointment_facilitator_field_group_pre_render_alter(array &$element, $group, &$rendering_object): void {
+  if (
+    !isset($group->group_name)
+    || $group->group_name !== 'group_checklist'
+    || !isset($group->entity_type)
+    || $group->entity_type !== 'taxonomy_term'
+    || !isset($group->bundle)
+    || $group->bundle !== 'badges'
+  ) {
+    return;
+  }
+
+  $term = $rendering_object['#taxonomy_term'] ?? NULL;
+  if (!$term instanceof TermInterface) {
+    return;
+  }
+
+  if (_appointment_facilitator_badge_checklist_is_blank($term)) {
+    $element['#access'] = FALSE;
+  }
+}
+
+/**
+ * Adds a small "badge popularity" stats panel to the badge term render.
+ *
+ * Shows what percent of active makers hold this badge plus its rank among
+ * all badges with at least one holder. Lightweight; values are cached for
+ * a day inside the service.
+ */
+function _appointment_facilitator_attach_badge_popularity_stats(array &$build, TermInterface $badge): void {
+  if (!\Drupal::hasService('appointment_facilitator.badge_popularity')) {
+    return;
+  }
+
+  /** @var \Drupal\appointment_facilitator\Service\BadgePopularityStats $service */
+  $service = \Drupal::service('appointment_facilitator.badge_popularity');
+  $stats = $service->getStats($badge);
+
+  if (($stats['holders'] ?? 0) <= 0) {
+    return;
+  }
+
+  $facts = [];
+  $facts[] = t('@n members hold this badge', ['@n' => $stats['holders']]);
+  if (!empty($stats['percent_of_active'])) {
+    $facts[] = t('@pct% of active makers', ['@pct' => $stats['percent_of_active']]);
+  }
+
+  $build['appointment_facilitator_badge_popularity'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['badge-popularity-stats']],
+    '#weight' => -50,
+    'heading' => [
+      '#type' => 'html_tag',
+      '#tag' => 'h3',
+      '#attributes' => ['class' => ['badge-popularity-stats__heading']],
+      '#value' => t('Badge popularity'),
+    ],
+    'facts' => [
+      '#theme' => 'item_list',
+      '#items' => array_map(fn ($f) => ['#markup' => (string) $f], $facts),
+      '#attributes' => ['class' => ['badge-popularity-stats__list']],
+    ],
+    '#cache' => [
+      'tags' => ['node_list:badge_request', 'taxonomy_term:' . $badge->id()],
+    ],
+  ];
+}
+
+/**
+ * Builds a "where do I start?" callout for the top of the /badges directory.
+ *
+ * 135 badges is overwhelming on first contact. This banner gives authenticated
+ * members a one-click escape to /badges/complete (their personal progress
+ * page) and surfaces their badge count + rank inline as a small nudge to
+ * keep going. Anonymous visitors get a generic "see your progress after
+ * login" pitch instead.
+ */
+function _appointment_facilitator_build_badges_directory_callout(): string {
+  $current_user = \Drupal::currentUser();
+  $uid = (int) $current_user->id();
+
+  // Anonymous variant — just the link, no stats.
+  if (!$current_user->isAuthenticated() || $uid <= 0) {
+    return '<aside class="badges-directory-callout badges-directory-callout--anon">'
+      . '<div class="badges-directory-callout__body">'
+      . '<p class="badges-directory-callout__lead">'
+      . t('New to MakeHaven badges? Log in to see your progress and personalized recommendations.')
+      . '</p>'
+      . '</div>'
+      . '<a class="badges-directory-callout__cta" href="/user/login?destination=/badges/complete">'
+      . t('Log in →')
+      . '</a>'
+      . '</aside>';
+  }
+
+  // Authenticated variant — pull the same stats /badges/complete shows.
+  $db = \Drupal::database();
+  $door_tid = 1519;
+
+  // My equipment-badge count.
+  $q = $db->select('node__field_member_to_badge', 'm');
+  $q->innerJoin('node__field_badge_status', 's', 's.entity_id = m.entity_id');
+  $q->innerJoin('node__field_badge_requested', 'b', 'b.entity_id = m.entity_id');
+  $q->innerJoin('node_field_data', 'n', 'n.nid = m.entity_id');
+  $q->condition('n.type', 'badge_request');
+  $q->condition('n.status', 1);
+  $q->condition('s.field_badge_status_value', 'active');
+  $q->condition('b.field_badge_requested_target_id', $door_tid, '<>');
+  $q->condition('m.field_member_to_badge_target_id', $uid);
+  $q->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'c');
+  $my_count = (int) $q->execute()->fetchField();
+
+  // Rank: count members with strictly more equipment badges + 1.
+  $sub = $db->select('node__field_member_to_badge', 'm');
+  $sub->innerJoin('node__field_badge_status', 's', 's.entity_id = m.entity_id');
+  $sub->innerJoin('node__field_badge_requested', 'b', 'b.entity_id = m.entity_id');
+  $sub->innerJoin('node_field_data', 'n', 'n.nid = m.entity_id');
+  $sub->innerJoin('user__roles', 'r', 'r.entity_id = m.field_member_to_badge_target_id');
+  $sub->innerJoin('users_field_data', 'u', 'u.uid = m.field_member_to_badge_target_id');
+  $sub->condition('n.type', 'badge_request');
+  $sub->condition('n.status', 1);
+  $sub->condition('s.field_badge_status_value', 'active');
+  $sub->condition('b.field_badge_requested_target_id', $door_tid, '<>');
+  $sub->condition('r.roles_target_id', 'member');
+  $sub->condition('u.status', 1);
+  $sub->addField('m', 'field_member_to_badge_target_id', 'uid');
+  $sub->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'badge_count');
+  $sub->groupBy('m.field_member_to_badge_target_id');
+  $rank = 1;
+  $total_ranked = 0;
+  foreach ($sub->execute()->fetchAll() as $row) {
+    $total_ranked++;
+    if ((int) $row->badge_count > $my_count) {
+      $rank++;
+    }
+  }
+
+  $cta_label = $my_count === 0
+    ? t('Find your first badge →')
+    : t('See your progress →');
+
+  // Tiny stats strip — only render the rank fragment when the member has
+  // earned at least one badge.
+  $stats_parts = [];
+  if ($my_count === 0) {
+    $stats_parts[] = '<strong>0</strong> ' . t('equipment badges yet — pick one to start!');
+  }
+  elseif ($my_count === 1) {
+    $stats_parts[] = '<strong>1</strong> ' . t('equipment badge');
+  }
+  else {
+    $stats_parts[] = '<strong>' . $my_count . '</strong> ' . t('equipment badges');
+  }
+  if ($my_count > 0 && $total_ranked > 0) {
+    $stats_parts[] = t('Rank <strong>#@rank</strong> of @total members', [
+      '@rank' => $rank,
+      '@total' => $total_ranked,
+    ]);
+  }
+
+  $lead = $my_count === 0
+    ? t('Overwhelmed by the list? Start with badges in your areas of interest.')
+    : t('Pick up where you left off — your in-progress badges and recommendations are waiting.');
+
+  return '<aside class="badges-directory-callout">'
+    . '<div class="badges-directory-callout__body">'
+    . '<p class="badges-directory-callout__lead">' . $lead . '</p>'
+    . '<p class="badges-directory-callout__stats">' . implode(' &middot; ', $stats_parts) . '</p>'
+    . '</div>'
+    . '<a class="badges-directory-callout__cta" href="/badges/complete">' . $cta_label . '</a>'
+    . '</aside>';
+}
+
+/**
+ * Returns TRUE when every checklist item on the badge is blank/whitespace
+ * after the same cleanup pass that the field display uses.
+ */
+function _appointment_facilitator_badge_checklist_is_blank(TermInterface $badge): bool {
+  if (!$badge->hasField('field_badge_checklist_items') || $badge->get('field_badge_checklist_items')->isEmpty()) {
+    return TRUE;
+  }
+  $title = (string) $badge->label();
+  foreach ($badge->get('field_badge_checklist_items')->getValue() as $item) {
+    $clean = _appointment_facilitator_clean_checklist_item((string) ($item['value'] ?? ''), $title);
+    if ($clean !== '') {
+      return FALSE;
+    }
+  }
+  return TRUE;
 }
 
 /**
@@ -356,12 +939,12 @@ function _appointment_facilitator_add_related_tools(array &$build, TermInterface
 }
 
 /**
- * Implements hook_field_extra_fields().
+ * Implements hook_entity_extra_field_info().
  *
- * Declares pseudo-fields so Display Suite can place them in layout regions.
- * The actual render arrays are populated in hook_node_view().
+ * Declares pseudo-fields so they can be placed in entity view displays.
+ * Render arrays are populated in hook_entity_view().
  */
-function appointment_facilitator_field_extra_fields(): array {
+function appointment_facilitator_entity_extra_field_info(): array {
   return [
     'node' => [
       'appointment' => [
@@ -395,6 +978,18 @@ function appointment_facilitator_field_extra_fields(): array {
             'description' => t('A button to open a print-friendly version of the checklist.'),
             'weight'      => 50,
             'visible'     => TRUE,
+          ],
+          'mh_badge_user_status' => [
+            'label'       => t("Member's badge status pill"),
+            'description' => t("Pill showing the current user's status on this badge (Active / Pending / Not started / Suspended)."),
+            'weight'      => -10,
+            'visible'     => FALSE,
+          ],
+          'mh_badge_user_eligibility' => [
+            'label'       => t("Member's badge eligibility marker"),
+            'description' => t("Inline icon + label indicating whether the current user can move forward (prereqs met, documentation approved)."),
+            'weight'      => -9,
+            'visible'     => FALSE,
           ],
         ],
       ],
@@ -791,7 +1386,48 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
     ];
   }
 
-  $blocked_by_gate = is_array($gate_result) && empty($gate_result['allowed']);
+  // Members who already hold the badge shouldn't see the prerequisite-gate
+  // warning — they cleared it long ago. Use the same resolver the banner
+  // block uses so "active" stays the source of truth for this branch.
+  $has_active_badge = FALSE;
+  if ($uid > 0 && \Drupal::hasService('appointment_facilitator.badge_user_status')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+    $resolved = $resolver->resolve($uid, $badge);
+    $has_active_badge = ($resolved['state'] ?? '') === 'active';
+  }
+
+  // For class-required badges (e.g. Bridgeport) attending a class is the
+  // primary path, with the training-documentation form acting as the
+  // opt-out for experienced members. Make that explicit at the top of
+  // the term content — but only when the member doesn't already hold
+  // the badge. This fires regardless of gate-block state so members
+  // still see the two-path framing even when their documentation isn't
+  // yet approved.
+  if ($checkout_requirement === 'class' && !$has_active_badge) {
+    $build['appointment_facilitator_class_required_notice'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--status', 'badge-class-required-notice']],
+      '#weight' => -180,
+      'heading' => [
+        '#markup' => '<p><strong>' . t('Two ways to earn this badge:') . '</strong></p>',
+      ],
+      'list' => [
+        '#theme' => 'item_list',
+        '#items' => [
+          [
+            '#markup' => '<strong>' . t('Attend a class') . '</strong> — ' . t('upcoming sessions appear below.'),
+          ],
+          [
+            '#markup' => '<strong>' . t('Already experienced?') . '</strong> ' . t('Submit the Training Documentation form (linked further down this page) to request a prior-experience opt-out.'),
+          ],
+        ],
+        '#attributes' => ['class' => ['badge-class-required-notice__items']],
+      ],
+    ];
+  }
+
+  $blocked_by_gate = !$has_active_badge && is_array($gate_result) && empty($gate_result['allowed']);
   if ($blocked_by_gate) {
     _appointment_facilitator_hide_badge_page_components($build, [
       'field_badge_quiz_reference',
@@ -807,84 +1443,86 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
       'event_upcoming_badging_badge_events',
     ]);
 
-    $parts = [
-      t('This badge has prerequisites. Complete them first to unlock quiz and checkout scheduling.'),
-    ];
+    $reasons = [];
     if (!empty($gate_result['prerequisites_missing_labels'])) {
-      $parts[] = t('Missing prerequisite badges: @badges', [
-        '@badges' => implode(', ', $gate_result['prerequisites_missing_labels']),
-      ]);
+      $reasons[] = t(
+        'Earn the prerequisite badge(s) first: @badges.',
+        ['@badges' => implode(', ', $gate_result['prerequisites_missing_labels'])]
+      );
     }
     if (!empty($gate_result['requires_documentation']) && empty($gate_result['documentation_approved'])) {
-      if (!empty($gate_result['documentation_form_url'])) {
-        $parts[] = t('Required documentation must be approved first: @url', [
-          '@url' => $gate_result['documentation_form_url'],
-        ]);
-      }
-      else {
-        $parts[] = t('Required documentation must be approved before continuing.');
-      }
+      $reasons[] = t('Submit and get approval on the Training Documentation form (linked further down this page).');
     }
+    if (!$reasons) {
+      $reasons[] = t('Complete the listed requirements first.');
+    }
+
+    $items = array_map(
+      fn ($r) => ['#markup' => '<li>' . $r . '</li>'],
+      $reasons
+    );
 
     $build['appointment_facilitator_badge_gate_warning'] = [
       '#type' => 'container',
-      '#attributes' => ['class' => ['messages', 'messages--warning']],
+      '#attributes' => ['class' => ['messages', 'messages--warning', 'badge-gate-warning']],
       '#weight' => -200,
-      'message' => [
-        '#markup' => '<p>' . implode(' ', $parts) . '</p>',
+      'heading' => [
+        '#markup' => '<p><strong>' . t('Before you can take the quiz or schedule a checkout:') . '</strong></p>',
+      ],
+      'list' => [
+        '#theme' => 'item_list',
+        '#items' => $reasons,
+        '#attributes' => ['class' => ['badge-gate-warning__items']],
       ],
     ];
     if ($requires_checkout) {
       _appointment_facilitator_add_checkout_unavailable_notice(
         $build,
-        (string) t('Checkout is required for this badge. Scheduling will be revealed after prerequisites are complete and you pass the quiz.')
+        (string) t('Checkout is required for this badge. Scheduling appears after the requirements above are complete and you pass the quiz.')
       );
     }
     _appointment_facilitator_attach_badge_checkout_gate_css($build);
     return;
   }
 
-  // Keep facilitator schedules hidden until the member has a pending instance.
-  if (!$has_pending_instance) {
+  // Before the member has a pending instance, keep the staff/contact-badger
+  // grouping hidden but leave the facilitator schedule EVA visible so members
+  // can see what availability exists before they commit to taking the quiz.
+  // The Banner block (BadgeStatusBannerBlock) tells the user their next step,
+  // so we don't add a separate "Checkout scheduling appears after…" notice.
+  // Skip this entire branch for members who already hold the badge — they
+  // still want to see the facilitator schedule (so they can recommend it
+  // to others or browse class sessions).
+  if (!$has_pending_instance && !$has_active_badge) {
     _appointment_facilitator_hide_badge_page_components($build, [
       'group_contact_badger',
       'group_checkout',
       'field_badge_issuer_on_request',
-      'facilitator_schedules_facilitator_schedule_tool_eva',
       'facilitator_schedules_facilitator_profile_badger_list',
       'event_upcoming_badging_badge_events',
     ]);
-    $build['appointment_facilitator_badge_pending_notice'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['messages', 'messages--status']],
-      '#weight' => -190,
-      'message' => [
-        '#markup' => '<p>' . t('Checkout scheduling appears after you pass this badge quiz and your badge is marked pending.') . '</p>',
-      ],
-    ];
-    if ($requires_checkout) {
-      _appointment_facilitator_add_checkout_unavailable_notice(
-        $build,
-        (string) t('Checkout is required for this badge. Scheduling will be revealed after you pass the quiz and your badge is marked pending.')
-      );
-    }
     _appointment_facilitator_attach_badge_checkout_gate_css($build);
   }
   elseif ($has_pending_instance) {
-    // Replace legacy schedule/event blocks with the new schedule table format.
+    // Keep the EVA-based facilitator schedule cards visible (the same UI the
+    // tool page used to embed). Hide the legacy profile-badger list and the
+    // events EVA — the schedule cards cover availability.
     _appointment_facilitator_hide_badge_page_components($build, [
-      'facilitator_schedules_facilitator_schedule_tool_eva',
       'facilitator_schedules_facilitator_profile_badger_list',
       'event_upcoming_badging_badge_events',
     ]);
 
+    // Also keep the controller's pending banner + private-session fallback,
+    // which add the "pending for X days" notice and the request-a-session
+    // link when no upcoming slots are available. We deliberately do NOT
+    // attach the badge_term_cleanup library because that JS removes the EVA
+    // schedule cards — and we want to keep those visible.
     /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
     $controller = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
     if ($controller instanceof BadgeNextStepsController) {
       $schedule_section = $controller->buildScheduleSectionForBadgeTerm($badge, $uid);
       if (!empty($schedule_section)) {
         $schedule_section['#weight'] = -185;
-        $schedule_section['#attached']['library'][] = 'appointment_facilitator/badge_term_cleanup';
         $build['appointment_facilitator_badge_schedule_section'] = $schedule_section;
       }
     }
@@ -3802,6 +4440,11 @@ function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
     $view->element['#cache']['contexts'][] = 'user.roles:authenticated';
   }
 
+  // Inject the filter-bar header into the /badges directory.
+  if ($view->id() === 'badges' && $view->current_display === 'page_1') {
+    _appointment_facilitator_attach_badges_filter_bar($view);
+  }
+
   if ($view->id() !== 'badge_approval' || $view->current_display !== 'badge_approval' || empty($view->appointment_facilitator_default_issuer_filter)) {
     return;
   }
@@ -3881,6 +4524,16 @@ function appointment_facilitator_theme(): array {
         'is_past'      => FALSE,
         'feedback_url' => '',
         'sort_value'   => 0,
+      ],
+    ],
+    'first_badge_next_step' => [
+      'variables' => [
+        'headline'      => '',
+        'intro'         => '',
+        'steps'         => [],
+        'primary_cta'   => [],
+        'secondary_cta' => [],
+        'help_link'     => [],
       ],
     ],
   ];

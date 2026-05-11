@@ -74,3 +74,25 @@ facilitator_profile:
   css:
     theme:
       css/facilitator-profile.css: {}
+
+badges_filter:
+  version: 1.x
+  js:
+    js/badges-filter.js: {}
+  css:
+    theme:
+      css/badges-filter.css: {}
+  dependencies:
+    - core/drupal
+
+first_badge_next_step:
+  version: 1.x
+  css:
+    theme:
+      css/first-badge-next-step.css: {}
+
+badge_status_banner:
+  version: 1.x
+  css:
+    theme:
+      css/badge-status-banner.css: {}
