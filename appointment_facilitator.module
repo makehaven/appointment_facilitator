@@ -105,17 +105,24 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       _appointment_facilitator_attach_badge_popularity_stats($build, $entity);
 
       // Paid private session sits at the bottom of the page as a true
-      // last-resort fallback. Most members never click it; placing it
-      // beneath the actual schedule + checklist keeps the primary actions
-      // visually dominant.
-      try {
-        /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $next_steps */
-        $next_steps = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
-        $build['appointment_facilitator_paid_private_fallback'] = $next_steps->buildPaidPrivateSessionFallback($entity);
-        $build['appointment_facilitator_paid_private_fallback']['#weight'] = 200;
-      }
-      catch (\Throwable $e) {
-        // Non-fatal — if the controller can't be resolved, just skip.
+      // last-resort fallback. Only render it when the upcoming-options it
+      // claims to fall back from are actually visible to this viewer —
+      // otherwise it becomes the ONLY visible CTA (anonymous users and
+      // logged-in members without a pending instance have the schedule
+      // hidden by enforce_badge_page_flow), making "paid" appear to be
+      // the only path to the badge.
+      if (_appointment_facilitator_paid_private_fallback_visible($entity)) {
+        try {
+          /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $next_steps */
+          $next_steps = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
+          $build['appointment_facilitator_paid_private_fallback'] = $next_steps->buildPaidPrivateSessionFallback($entity);
+          $build['appointment_facilitator_paid_private_fallback']['#weight'] = 200;
+          $build['#cache']['contexts'][] = 'user';
+          $build['#cache']['max-age'] = 0;
+        }
+        catch (\Throwable $e) {
+          // Non-fatal — if the controller can't be resolved, just skip.
+        }
       }
 
       // Only attach the "Print Badge Checklist" button when there is actually
@@ -1589,6 +1596,47 @@ function _appointment_facilitator_attach_badge_checkout_gate_css(array &$build):
     ],
     'appointment_facilitator_badge_gate_hide_checkout',
   ];
+}
+
+/**
+ * Whether the paid-private-session fallback should render on a badge term page.
+ *
+ * The fallback only makes sense when the upcoming-options it sits beneath
+ * are actually visible — otherwise it becomes the only CTA on the page.
+ * Mirror the gating in _appointment_facilitator_enforce_badge_page_flow():
+ * the schedule is visible when the viewer is logged in AND either has a
+ * pending instance for this badge OR already holds the badge. Anonymous
+ * viewers, members blocked by the prerequisite gate, and members who
+ * haven't requested checkout yet all see a hidden schedule, so they
+ * shouldn't see the "paid private session" fallback either.
+ *
+ * Admins (administer nodes) always see the fallback so they can preview it.
+ */
+function _appointment_facilitator_paid_private_fallback_visible(TermInterface $badge): bool {
+  $account = \Drupal::currentUser();
+  $uid = (int) $account->id();
+  if ($uid <= 0) {
+    return FALSE;
+  }
+  if ($account->hasPermission('administer nodes')) {
+    return TRUE;
+  }
+
+  $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($uid);
+  if (in_array((int) $badge->id(), $pending_tids, TRUE)) {
+    return TRUE;
+  }
+
+  if (\Drupal::hasService('appointment_facilitator.badge_user_status')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+    $resolved = $resolver->resolve($uid, $badge);
+    if (($resolved['state'] ?? '') === 'active') {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
 }
 
 /**
