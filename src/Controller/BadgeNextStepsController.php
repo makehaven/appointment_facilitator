@@ -652,8 +652,14 @@ class BadgeNextStepsController extends ControllerBase {
    *
    * This is used by other pages (e.g. quiz result pages) that want the
    * schedule matrix above legacy facilitator listings.
+   *
+   * @param bool $is_gated
+   *   When TRUE, the badge page is showing this grid as a *preview* (member
+   *   hasn't cleared prereqs yet). The Schedule buttons are rendered as
+   *   non-actionable disabled spans so members can see availability without
+   *   accidentally arriving at a booking form that would 403/400 on them.
    */
-  public function buildScheduleTableForBadgeTerm(TermInterface $term): array {
+  public function buildScheduleTableForBadgeTerm(TermInterface $term, bool $is_gated = FALSE): array {
     if ($this->isBadgeOffline($term)) {
       return [
         '#type' => 'container',
@@ -668,7 +674,7 @@ class BadgeNextStepsController extends ControllerBase {
     if (!$facilitators) {
       return [];
     }
-    return $this->buildFacilitatorScheduleTable($facilitators, (int) $term->id());
+    return $this->buildFacilitatorScheduleTable($facilitators, (int) $term->id(), $is_gated);
   }
 
   /**
@@ -1013,13 +1019,25 @@ class BadgeNextStepsController extends ControllerBase {
    * Returns an array of ['user', 'availability'] entries.
    */
   protected function getFacilitatorsForBadge(TermInterface $term): array {
-    $users = [];
-    foreach (['field_badge_issuer_on_request', 'field_badge_issuer'] as $field) {
-      if ($term->hasField($field) && !$term->get($field)->isEmpty()) {
-        $users = $term->get($field)->referencedEntities();
-        break;
+    // Union BOTH issuer fields, deduped by uid. The previous "prefer
+    // on-request, else fall back to all issuers" logic silently dropped
+    // every trained facilitator on tools where only a couple of people
+    // had toggled the on-request flag — e.g. table-saw has 14 issuers
+    // and 1 on-request entry (currently on break), and that lone entry
+    // was hiding the other 13's published hours from the schedule grid.
+    $users_by_uid = [];
+    foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $field) {
+      if (!$term->hasField($field) || $term->get($field)->isEmpty()) {
+        continue;
+      }
+      foreach ($term->get($field)->referencedEntities() as $user) {
+        $uid = (int) $user->id();
+        if (!isset($users_by_uid[$uid])) {
+          $users_by_uid[$uid] = $user;
+        }
       }
     }
+    $users = array_values($users_by_uid);
     if (!$users) {
       return [];
     }
@@ -1095,8 +1113,13 @@ class BadgeNextStepsController extends ControllerBase {
 
   /**
    * Builds a week-style schedule table from facilitator availability slots.
+   *
+   * When $is_gated is TRUE the per-slot "Schedule @time" element is rendered
+   * as an inert button (no href, aria-disabled, btn-secondary disabled) so
+   * preview-only viewers cannot click through to a booking form they don't
+   * have permission to submit.
    */
-  protected function buildFacilitatorScheduleTable(array $facilitators, int $badge_tid): array {
+  protected function buildFacilitatorScheduleTable(array $facilitators, int $badge_tid, bool $is_gated = FALSE): array {
     $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
     $timezone = new \DateTimeZone($timezone_name);
 
@@ -1224,18 +1247,35 @@ class BadgeNextStepsController extends ControllerBase {
         ];
 
         foreach ($slots as $i => $slot) {
+          if ($is_gated) {
+            $action = [
+              '#type' => 'html_tag',
+              '#tag' => 'span',
+              '#value' => $this->t('Schedule @time', ['@time' => $slot['label']]),
+              '#attributes' => [
+                'class' => ['btn', 'btn-secondary', 'btn-sm', 'disabled', 'appointment-facilitator-slot-disabled'],
+                'aria-disabled' => 'true',
+                'tabindex' => '-1',
+                'role' => 'button',
+                'title' => (string) $this->t('Booking unlocks after you finish the prerequisites and pass the quiz above.'),
+              ],
+            ];
+          }
+          else {
+            $action = [
+              '#type' => 'link',
+              '#title' => $this->t('Schedule @time', ['@time' => $slot['label']]),
+              '#url' => $slot['url'],
+              '#attributes' => ['class' => ['btn', 'btn-primary', 'btn-sm']],
+            ];
+          }
           $cell['slot_' . $i] = [
             '#type' => 'container',
             '#attributes' => ['class' => ['calendly-slot-entry']],
             'event' => [
               '#markup' => '<div class="calendly-slot-event-name"><small>' . $this->t('Facilitator badge checkout') . '</small></div>',
             ],
-            'link' => [
-              '#type' => 'link',
-              '#title' => $this->t('Schedule @time', ['@time' => $slot['label']]),
-              '#url' => $slot['url'],
-              '#attributes' => ['class' => ['btn', 'btn-primary', 'btn-sm']],
-            ],
+            'link' => $action,
             'details' => [
               '#markup' => '<div class="calendly-slot-details">' . $this->t('With @name', ['@name' => $slot['host']]) . '</div>',
             ],

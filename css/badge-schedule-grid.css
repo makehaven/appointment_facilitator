@@ -1,0 +1,65 @@
+/* Bottom-of-badge "Facilitator Checkout" schedule grid: variants for the
+   normal bookable state and the prerequisite-gated preview state. */
+
+.appointment-facilitator-schedule-intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: #4a5563;
+}
+
+/* Gated state — member can preview availability but hasn't unlocked
+   booking yet (missing prereq, missing quiz, etc.). The intro is a
+   warning callout, the table itself is dimmed/desaturated, and the
+   slot buttons stay clickable so the appointment form / quiz flow can
+   surface the precise next step when they try to book. */
+
+.appointment-facilitator-schedule-intro--gated {
+  display: block;
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 0.95rem;
+  border: 1px solid #e8c987;
+  border-left: 4px solid #b3781b;
+  border-radius: 0.45rem;
+  background: #fff8e6;
+  color: #4a3712;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.appointment-facilitator-schedule-intro--gated strong {
+  display: block;
+  margin-bottom: 0.15rem;
+  color: #6c4710;
+}
+
+.appointment-facilitator-schedule-grid--gated .calendly-week-table {
+  filter: grayscale(0.55);
+  opacity: 0.7;
+  position: relative;
+}
+
+.appointment-facilitator-schedule-grid--gated .calendly-week-table::before {
+  content: 'Preview only — finish requirements above to book';
+  position: absolute;
+  top: 0.45rem;
+  right: 0.55rem;
+  background: #4a5563;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.appointment-facilitator-schedule-grid--gated .calendly-slot-entry .btn {
+  background: #6c757d;
+  border-color: #6c757d;
+}
+
+.appointment-facilitator-schedule-grid--gated .calendly-slot-entry .btn:hover {
+  background: #5a6268;
+  border-color: #5a6268;
+}

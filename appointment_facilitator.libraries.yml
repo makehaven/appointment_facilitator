@@ -91,8 +91,45 @@ first_badge_next_step:
     theme:
       css/first-badge-next-step.css: {}
 
+facilitator_schedules_on_break:
+  version: 1.x
+  css:
+    theme:
+      css/facilitator-schedules-on-break.css: {}
+
+badge_video_timestamps:
+  version: 1.x
+  js:
+    js/badge-video-timestamps.js: {}
+  dependencies:
+    - core/drupal
+
+badge_schedule_grid:
+  version: 1.x
+  css:
+    theme:
+      css/badge-schedule-grid.css: {}
+
+badge_prereq_list:
+  version: 1.x
+  css:
+    theme:
+      css/badge-prereq-list.css: {}
+
 badge_status_banner:
   version: 1.x
   css:
     theme:
       css/badge-status-banner.css: {}
+
+pending_badges_prompt:
+  version: 1.x
+  css:
+    theme:
+      css/pending-badges-prompt.css: {}
+
+badge_members_page:
+  version: 1.x
+  css:
+    theme:
+      css/badge-members-page.css: {}

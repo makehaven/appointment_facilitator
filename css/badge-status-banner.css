@@ -4,7 +4,11 @@
 .mh-badge-status-banner {
   position: sticky;
   top: 0;
-  z-index: 5;
+  /* Above embedded YouTube iframes (which create their own stacking
+     context and otherwise paint over the sticky banner when scrolled
+     into view), and below the Gin admin top-bar. */
+  z-index: 100;
+  isolation: isolate;
   margin: 0 0 1.5rem;
   padding: 1.1rem 1.25rem;
   border-radius: 0.75rem;
@@ -201,4 +205,533 @@
     justify-self: stretch;
     text-align: center;
   }
+}
+
+/* ── Sticky offset for Gin's fixed top-bar.
+   The banner is position:sticky; top:0 — when the Gin admin
+   navigation's `.top-bar` is fixed across the top, the banner
+   slides under it and loses the heading. Offset by the bar's
+   declared height. Falls back to 0 for non-admin viewers
+   where the variable isn't set. ─────────────────────────── */
+body.gin--core-navigation .mh-badge-status-banner,
+.gin--core-navigation .mh-badge-status-banner {
+  top: var(--gin-toolbar-secondary-height, 54px);
+}
+
+/* Drupal core admin toolbar (legacy / non-Gin admins). */
+body.toolbar-fixed .mh-badge-status-banner {
+  top: var(--drupal-displace-offset-top, 39px);
+}
+body.toolbar-fixed.toolbar-tray-open .mh-badge-status-banner {
+  top: var(--drupal-displace-offset-top, 79px);
+}
+
+/* ── Detail page width cap (loads with the block so it applies in
+       both barrio and gin themes) ──────────────────────────── */
+.path-taxonomy--badges main,
+.path-taxonomy--badges .region-content,
+.path-taxonomy--badges .layout-content {
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Centered hero: badge image above the H1, both centered ───
+   The image is injected via title_prefix on the page-title block;
+   the H1 itself is centered below. */
+.path-taxonomy--badges .badge-hero-image {
+  display: flex;
+  justify-content: center;
+  margin: 0.5rem 0 0.75rem;
+}
+.path-taxonomy--badges .badge-hero-image img {
+  max-width: 180px;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.15));
+}
+.path-taxonomy--badges h1.page-title,
+.path-taxonomy--badges .page-title {
+  text-align: center;
+}
+/* The Gin / Barrio page-title block sits outside .layout-content but
+   needs to align with the (now-narrower) hero column. Pull it inward
+   so the H1 doesn't dangle to the far left of the content card. */
+.path-taxonomy--badges .block-page-title-block,
+.path-taxonomy--badges .page-title-block,
+.path-taxonomy--badges header .page-title,
+.path-taxonomy--badges main > h1.page-title {
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Per-prerequisite pills with state ────────────────────────
+   When a member is blocked at step 1, list each prereq with a
+   small state pill (Earned ✓, Quiz pending, Not started, etc.)
+   so they can target the right one. ────────────────────────── */
+.mh-badge-status-banner__prereqs--with-state {
+  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 560px;
+}
+.mh-badge-status-banner__prereqs--with-state .mh-badge-status-banner__prereq-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  text-decoration: none;
+}
+.mh-badge-status-banner__prereqs--with-state .mh-badge-status-banner__prereq-link:hover {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.15);
+}
+.mh-badge-status-banner__prereq-name {
+  font-weight: 600;
+  color: var(--mh-color-brand-primary-strong, #710a0a);
+}
+.mh-badge-status-banner__prereq-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--mh-radius-pill, 999px);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.mh-badge-status-banner__prereq-pill--success { background: rgba(31, 140, 91, 0.15); color: #146f48; }
+.mh-badge-status-banner__prereq-pill--info    { background: rgba(78, 161, 211, 0.18); color: #1f6c93; }
+.mh-badge-status-banner__prereq-pill--warning { background: rgba(214, 139, 0, 0.18); color: #8a4d00; }
+.mh-badge-status-banner__prereq-pill--danger  { background: rgba(180, 30, 30, 0.12); color: #8b1919; }
+.mh-badge-status-banner__prereq-pill--muted   { background: rgba(0, 0, 0, 0.05);     color: #4b5563; }
+
+/* ── Progress stepper inside the banner ────────────────────── */
+.mh-badge-steps {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+.mh-badge-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  grid-template-areas:
+    "num label"
+    "num hint";
+  column-gap: 0.6rem;
+  row-gap: 0.1rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0.55rem;
+  font-size: 0.9rem;
+  line-height: 1.25;
+  color: var(--mh-color-neutral-700, #4b5563);
+}
+.mh-badge-step__num {
+  grid-area: num;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 50%;
+  background: var(--mh-color-neutral-200, #e5e7eb);
+  color: var(--mh-color-neutral-700, #4b5563);
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.mh-badge-step__label {
+  grid-area: label;
+  font-weight: 600;
+  color: var(--mh-color-neutral-800, #1f2937);
+}
+.mh-badge-step__hint {
+  grid-area: hint;
+  font-size: 0.8rem;
+  color: var(--mh-color-neutral-600, #6b7280);
+}
+.mh-badge-step--done {
+  background: rgba(31, 140, 91, 0.08);
+  border-color: rgba(31, 140, 91, 0.25);
+}
+.mh-badge-step--done .mh-badge-step__num {
+  background: var(--mh-color-success, #1f8c5b);
+  color: #fff;
+}
+.mh-badge-step--current {
+  background: #fff;
+  border-color: var(--mh-color-brand-primary, #8b1919);
+  box-shadow: 0 0 0 1px var(--mh-color-brand-primary, #8b1919);
+}
+.mh-badge-step--current .mh-badge-step__num {
+  background: var(--mh-color-brand-primary, #8b1919);
+  color: #fff;
+}
+.mh-badge-step--locked {
+  opacity: 0.65;
+}
+.mh-badge-step--locked .mh-badge-step__num {
+  background: var(--mh-color-neutral-200, #e5e7eb);
+  color: var(--mh-color-neutral-500, #6b7280);
+}
+.mh-badge-step--locked .mh-badge-step__num::after {
+  content: "🔒";
+  font-size: 0.85rem;
+}
+.mh-badge-step--locked .mh-badge-step__num {
+  font-size: 0;
+}
+.mh-badge-step--skipped {
+  background: rgba(0, 0, 0, 0.03);
+  border-style: dashed;
+}
+.mh-badge-step--skipped .mh-badge-step__num {
+  background: var(--mh-color-neutral-200, #e5e7eb);
+  color: var(--mh-color-neutral-500, #9ca3af);
+  font-size: 0.95rem;
+}
+
+@media (max-width: 768px) {
+  .mh-badge-steps {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+  .mh-badge-step {
+    padding: 0.5rem 0.7rem;
+  }
+}
+
+/* ── Checkout requirement notice (cleaned up alignment) ──────
+   Drop the field label ("Badge Checkout Requirement") — the icon
+   plus the option label ("In person checkout required" / "Submit
+   documentation or complete a workshop") is self-describing.
+   Without this, the bold label dominated the row and the small
+   value text sat misaligned next to it. ───────────────────────── */
+.path-taxonomy--badges .field--name-field-badge-checkout-requirement {
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.path-taxonomy--badges .field--name-field-badge-checkout-requirement .field__label {
+  display: none;
+}
+.path-taxonomy--badges .field--name-field-badge-checkout-requirement .field__items,
+.path-taxonomy--badges .field--name-field-badge-checkout-requirement .field__item {
+  margin: 0;
+  padding: 0;
+  font-weight: 600;
+}
+
+/* ── Badge "at a glance" stats cards ──────────────────────────── */
+.badge-popularity-stats--cards {
+  max-width: 960px;
+  margin: 0.75rem auto 1.25rem;
+  padding: 1rem 1.1rem 1.1rem;
+  background: var(--mh-color-surface, #fff);
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-radius: 0.75rem;
+  border-left: 4px solid var(--mh-color-brand-primary, #8b1919);
+}
+.badge-popularity-stats__heading {
+  margin: 0 0 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--mh-color-neutral-700, #4b5563);
+}
+.badge-popularity-stats__cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+}
+.badge-popularity-stats__card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--mh-color-neutral-50, #fafafa);
+  border: 1px solid var(--mh-color-border, #e5e7eb);
+  border-radius: 0.55rem;
+  position: relative;
+  overflow: hidden;
+}
+.badge-popularity-stats__card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--mh-color-neutral-300, #d1d5db);
+}
+.badge-popularity-stats__card--primary::before { background: var(--mh-color-brand-primary, #8b1919); }
+.badge-popularity-stats__card--success::before { background: var(--mh-color-success, #1f8c5b); }
+.badge-popularity-stats__card--info::before    { background: var(--mh-color-info, #4ea1d3); }
+.badge-popularity-stats__card--accent::before  { background: #b88600; }
+.badge-popularity-stats__card-value {
+  font-size: 1.55rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--mh-color-neutral-900, #111827);
+  font-variant-numeric: tabular-nums;
+}
+.badge-popularity-stats__card-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--mh-color-neutral-700, #4b5563);
+  line-height: 1.25;
+}
+.badge-popularity-stats__card-sub {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--mh-color-neutral-600, #6b7280);
+  line-height: 1.3;
+}
+.badge-popularity-stats__card--linked {
+  padding: 0;
+  transition: box-shadow 120ms ease, transform 120ms ease, border-color 120ms ease;
+}
+.badge-popularity-stats__card--linked:hover {
+  border-color: var(--mh-color-brand-primary, #8b1919);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+.badge-popularity-stats__card-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.7rem 0.85rem;
+  color: inherit;
+  text-decoration: none;
+  width: 100%;
+}
+.badge-popularity-stats__card-link:hover,
+.badge-popularity-stats__card-link:focus {
+  color: inherit;
+  text-decoration: none;
+}
+.badge-popularity-stats__card-link:focus-visible {
+  outline: 2px solid var(--mh-color-brand-primary, #8b1919);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+/* ── Tool manuals inside the Review materials fieldset ───────── */
+.badge-tool-manuals {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--mh-color-border, #e5e7eb);
+}
+.badge-tool-manuals__heading {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--mh-color-brand-primary, #8b1919);
+}
+.badge-tool-manuals__intro {
+  margin: 0 0 0.6rem;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-600, #6b7280);
+}
+.badge-tool-manuals__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.badge-tool-manuals__item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--mh-color-neutral-50, #fafafa);
+  border: 1px solid var(--mh-color-border, #e5e7eb);
+  border-radius: 0.4rem;
+  font-size: 0.92rem;
+}
+.badge-tool-manuals__link {
+  font-weight: 600;
+  color: var(--mh-color-brand-primary-strong, #710a0a);
+  text-decoration: none;
+}
+.badge-tool-manuals__link::before {
+  content: "📄 ";
+  margin-right: 0.25rem;
+}
+.badge-tool-manuals__link:hover {
+  text-decoration: underline;
+}
+.badge-tool-manuals__source {
+  color: var(--mh-color-neutral-600, #6b7280);
+  font-size: 0.85rem;
+}
+
+/* ── Quiz preview meta (X questions etc.) ────────────────── */
+.badge-quiz-meta {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--mh-color-neutral-800, #1f2937);
+}
+.badge-quiz-meta__hint {
+  font-weight: 400;
+  color: var(--mh-color-neutral-600, #6b7280);
+}
+
+/* ── Quiz locked surrogate (materials not yet reviewed) ──── */
+.badge-quiz-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+.badge-quiz-locked__btn {
+  pointer-events: none;
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+.badge-quiz-locked__btn::before {
+  content: "🔒";
+  margin-right: 0.35rem;
+  font-size: 0.9em;
+}
+.badge-quiz-locked__hint {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--mh-color-neutral-600, #6b7280);
+}
+
+/* ── "I've watched the video" honor-system toggle ─────────────── */
+.badge-video-watched {
+  margin: 0.5rem auto 1.25rem;
+  max-width: 800px;
+  padding: 1rem 1.1rem;
+  background: var(--mh-color-surface, #fff);
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-radius: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.badge-video-watched-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.badge-video-watched-form__btn {
+  min-width: 14rem;
+}
+.badge-video-watched-form__btn--done {
+  background: var(--mh-color-success, #1f8c5b);
+  border-color: var(--mh-color-success, #1f8c5b);
+  color: #fff;
+}
+.badge-video-watched-form__note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--mh-color-neutral-600, #6b7280);
+}
+.badge-video-watched-form__login {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* ── Gated schedule grid: belt + braces so preview buttons can't click ─ */
+.appointment-facilitator-schedule-grid--gated .appointment-facilitator-slot-disabled,
+.appointment-facilitator-schedule-grid--gated a.btn,
+.appointment-facilitator-schedule-grid--gated button.btn {
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.appointment-facilitator-schedule-grid--gated .appointment-facilitator-slot-disabled {
+  opacity: 0.7;
+  text-decoration: none;
+}
+
+/* ── Documentation status row (secondary indicator) ────────────── */
+.mh-badge-docs-row {
+  margin: 0.6rem 0 0;
+  padding: 0.55rem 0.85rem;
+  border-radius: 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  background: var(--mh-color-surface, #fff);
+}
+.mh-badge-docs-row__label {
+  font-weight: 600;
+}
+.mh-badge-docs-row__sub {
+  color: var(--mh-color-neutral-700, #4b5563);
+}
+.mh-badge-docs-row__action {
+  margin-left: auto;
+  padding: 0.3rem 0.7rem;
+  border-radius: 0.4rem;
+  text-decoration: none;
+  background: var(--mh-color-brand-primary, #8b1919);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.mh-badge-docs-row__action:hover,
+.mh-badge-docs-row__action:focus {
+  color: #fff;
+  filter: brightness(1.1);
+  text-decoration: none;
+}
+
+.mh-badge-docs-row--success {
+  background: rgba(31, 140, 91, 0.08);
+  border-color: rgba(31, 140, 91, 0.35);
+}
+.mh-badge-docs-row--success .mh-badge-docs-row__label::before {
+  content: "✓ ";
+  color: var(--mh-color-success, #1f8c5b);
+}
+
+.mh-badge-docs-row--warning {
+  background: rgba(220, 162, 0, 0.08);
+  border-color: rgba(220, 162, 0, 0.4);
+}
+.mh-badge-docs-row--warning .mh-badge-docs-row__label::before {
+  content: "… ";
+}
+
+.mh-badge-docs-row--danger {
+  background: rgba(177, 27, 27, 0.06);
+  border-color: rgba(177, 27, 27, 0.35);
+}
+.mh-badge-docs-row--danger .mh-badge-docs-row__label::before {
+  content: "○ ";
 }

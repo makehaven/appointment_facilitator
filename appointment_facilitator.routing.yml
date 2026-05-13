@@ -139,3 +139,13 @@ appointment_facilitator.badge_print_checklist:
   requirements:
     _entity_access: 'taxonomy_term.view'
     taxonomy_term: '\d+'
+
+appointment_facilitator.badge_members:
+  path: '/members/badge/{taxonomy_term}'
+  defaults:
+    _controller: '\Drupal\appointment_facilitator\Controller\BadgeMembersController::view'
+    _title_callback: '\Drupal\appointment_facilitator\Controller\BadgeMembersController::title'
+  requirements:
+    _entity_access: 'taxonomy_term.view'
+    _role: 'administrator+manager+event_management+special+member+member_pending_approval'
+    taxonomy_term: '\d+'

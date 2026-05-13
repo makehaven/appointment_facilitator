@@ -99,10 +99,22 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
     }
 
     if ($view_mode === 'full') {
+      // The badge image renders as a centered hero above the H1 via
+      // preprocess_page_title; suppress the in-body field render so the
+      // image doesn't appear twice on the page.
+      if (isset($build['field_member_badge_image'])) {
+        $build['field_member_badge_image']['#access'] = FALSE;
+      }
       _appointment_facilitator_enforce_badge_page_flow($build, $entity);
-      _appointment_facilitator_add_related_tools($build, $entity);
       _appointment_facilitator_format_badge_checklist($build, $entity);
-      _appointment_facilitator_attach_badge_popularity_stats($build, $entity);
+      _appointment_facilitator_attach_video_watched_form($build, $entity);
+      // Popularity stats now live in the pre_content region via
+      // BadgePopularityStatsBlock — the inline render below is suppressed
+      // to avoid duplicating them on the page.
+      _appointment_facilitator_attach_badge_next_step_banner($build, $entity);
+      _appointment_facilitator_decorate_prerequisite_field($build, $entity);
+      $build['#attached']['library'][] = 'appointment_facilitator/badge_video_timestamps';
+      $build['#attached']['library'][] = 'appointment_facilitator/badge_schedule_grid';
 
       // Paid private session sits at the bottom of the page as a true
       // last-resort fallback. Only render it when the upcoming-options it
@@ -602,7 +614,42 @@ function appointment_facilitator_preprocess_page_title(array &$variables): void 
   if (!$term instanceof TermInterface || $term->bundle() !== 'badges') {
     return;
   }
-  $variables['title'] = t('@name Badge', ['@name' => $term->label()]);
+  $label = (string) $term->label();
+  $variables['title'] = stripos($label, 'badge') !== FALSE
+    ? $label
+    : t('@name Badge', ['@name' => $label]);
+
+  // Associated tools sit at the very top — they're decision context
+  // about the badge, not a step in earning it. Rendered above the hero
+  // image and title so members can see what hardware this unlocks
+  // before they read anything else.
+  $tools_render = _appointment_facilitator_build_related_tools($term);
+  if (!empty($tools_render)) {
+    $variables['title_prefix']['badge_related_tools'] = $tools_render + ['#weight' => -200];
+  }
+
+  // Promote the badge image above the title. The original field render
+  // (further down in the entity view) is suppressed in
+  // appointment_facilitator_entity_view() so this is the only place it
+  // appears, and the layout reads as a centered hero (image → title).
+  if ($term->hasField('field_member_badge_image') && !$term->get('field_member_badge_image')->isEmpty()) {
+    $image = $term->get('field_member_badge_image')->view([
+      'label' => 'hidden',
+      'type' => 'image',
+      'settings' => [
+        'image_style' => 'medium',
+        'image_link' => '',
+        'image_loading' => ['attribute' => 'eager'],
+      ],
+    ]);
+    $variables['title_prefix']['badge_hero_image'] = [
+      '#type' => 'container',
+      '#weight' => -100,
+      '#attributes' => ['class' => ['badge-hero-image']],
+      'image' => $image,
+    ];
+    $variables['#cache']['tags'] = array_merge($variables['#cache']['tags'] ?? [], $term->getCacheTags());
+  }
 }
 
 /**
@@ -619,7 +666,6 @@ function appointment_facilitator_preprocess_page_title(array &$variables): void 
 function appointment_facilitator_field_group_pre_render_alter(array &$element, $group, &$rendering_object): void {
   if (
     !isset($group->group_name)
-    || $group->group_name !== 'group_checklist'
     || !isset($group->entity_type)
     || $group->entity_type !== 'taxonomy_term'
     || !isset($group->bundle)
@@ -633,9 +679,342 @@ function appointment_facilitator_field_group_pre_render_alter(array &$element, $
     return;
   }
 
-  if (_appointment_facilitator_badge_checklist_is_blank($term)) {
-    $element['#access'] = FALSE;
+  if ($group->group_name === 'group_checklist') {
+    if (_appointment_facilitator_badge_checklist_is_blank($term)) {
+      $element['#access'] = FALSE;
+    }
+    return;
   }
+
+  if ($group->group_name === 'group_prerequisite') {
+    // The status banner stepper already communicates "where you are" and
+    // the banner body lists the specific prerequisite badges the viewer
+    // still needs. Repeating that as a body-region card duplicated the
+    // information and dropped a chunky "Prerequisite" box halfway down
+    // the page even for members who'd already cleared the gate.
+    $element['#access'] = FALSE;
+    return;
+  }
+
+  if ($group->group_name === 'group_timestamps') {
+    // The timestamps list is often 15-20 entries — long enough to push
+    // the quiz button below the fold. Wrap as a closed <details> so
+    // members can expand it on demand. The field_group module renders
+    // this as a fieldset by default; rewriting the element type here is
+    // a smaller change than altering the view-display config.
+    $element['#type'] = 'details';
+    $element['#open'] = FALSE;
+    $element['#title'] = (string) t('Timestamps');
+    return;
+  }
+
+  if ($group->group_name === 'group_quiz') {
+    // Tell members up front what they're about to do — "X questions"
+    // makes the Take quiz button less of a leap of faith. Also gate the
+    // quiz link itself on the materials-reviewed flag: if the badge has
+    // a video and the member hasn't ticked "I've reviewed the materials",
+    // replace the live link with a clear "review first" hint so the
+    // dependency is explicit rather than just stylistic on the stepper.
+    if (!$term->hasField('field_badge_quiz_reference') || $term->get('field_badge_quiz_reference')->isEmpty()) {
+      return;
+    }
+    $quiz = $term->get('field_badge_quiz_reference')->entity;
+    if (!$quiz || !method_exists($quiz, 'id')) {
+      return;
+    }
+
+    $count = (int) \Drupal::database()
+      ->select('quiz_question_relationship', 'r')
+      ->condition('r.quiz_id', (int) $quiz->id())
+      ->condition('r.question_status', 1)
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+
+    if ($count > 0) {
+      $element['appointment_facilitator_quiz_meta'] = [
+        '#type' => 'inline_template',
+        '#template' => '<p class="badge-quiz-meta">{{ count_label }} &middot; <span class="badge-quiz-meta__hint">{{ hint }}</span></p>',
+        '#context' => [
+          'count_label' => \Drupal::translation()->formatPlural($count, '1 question', '@count questions'),
+          'hint' => t('You can retake if you don\'t pass.'),
+        ],
+        '#weight' => -10,
+      ];
+    }
+
+    // Review-gate: if there's a video to watch but the member hasn't
+    // self-attested to watching it, swap the active quiz link for a
+    // disabled-button-plus-hint pair. We rely on the same user.data
+    // flag the stepper reads.
+    $has_video = $term->hasField('field_badge_video') && !$term->get('field_badge_video')->isEmpty();
+    $uid = (int) \Drupal::currentUser()->id();
+    $watched = $has_video
+      ? \Drupal\appointment_facilitator\Form\BadgeVideoWatchedForm::isWatched(\Drupal::service('user.data'), $uid, (int) $term->id())
+      : TRUE;
+    $is_admin = \Drupal::currentUser()->hasPermission('administer nodes');
+
+    if ($has_video && !$watched && !$is_admin && $uid > 0) {
+      // Hide the actual quiz link and inject a disabled-button surrogate
+      // so the visual remains balanced (quiz card always has a CTA-shape
+      // element). Anonymous viewers fall through unchanged — they see
+      // the link, since they'd be sent to /user/login first anyway.
+      if (isset($element['field_badge_quiz_reference'])) {
+        $element['field_badge_quiz_reference']['#access'] = FALSE;
+      }
+      $element['appointment_facilitator_quiz_locked'] = [
+        '#type' => 'inline_template',
+        '#template' => <<<TWIG
+<div class="badge-quiz-locked">
+  <span class="btn btn-secondary btn-sm disabled badge-quiz-locked__btn" aria-disabled="true" role="button" title="{{ tooltip }}">{{ label }}</span>
+  <p class="badge-quiz-locked__hint">{{ hint }}</p>
+</div>
+TWIG,
+        '#context' => [
+          'label' => t('Take quiz'),
+          'tooltip' => t('Mark the materials as reviewed first.'),
+          'hint' => t('The quiz unlocks once you mark the materials above as reviewed.'),
+        ],
+        '#weight' => 5,
+      ];
+      // The user-state-driven swap needs the per-user cache context so
+      // anon/auth/different members don't share a cached fragment.
+      $element['#cache']['contexts'][] = 'user';
+      $element['#cache']['max-age'] = 0;
+    }
+    return;
+  }
+
+  if ($group->group_name === 'group_video') {
+    // The fieldset is the "review materials" hub on the badge page, not
+    // just a video container — relabel so members understand that
+    // checklists, manuals, and transcripts also live here.
+    $element['#title'] = (string) t('Review materials');
+
+    // Pull any manuals attached to the associated tool pages so members
+    // have all the prep material in one place. The manuals are file
+    // entities on `field_manuals` of the related item nodes. The helper
+    // returns an empty array for anonymous viewers — vendor manuals
+    // aren't meant to be publicly indexable.
+    $manuals = _appointment_facilitator_collect_tool_manuals($term);
+    // Per-user gate above — make sure the cache reflects that.
+    $element['#cache']['contexts'][] = 'user.roles:authenticated';
+    if (!empty($manuals)) {
+      $element['appointment_facilitator_tool_manuals'] = [
+        '#type' => 'container',
+        '#weight' => 5,
+        '#attributes' => ['class' => ['badge-tool-manuals']],
+        'heading' => [
+          '#type' => 'html_tag',
+          '#tag' => 'h3',
+          '#attributes' => ['class' => ['h5', 'badge-tool-manuals__heading']],
+          '#value' => t('Tool manuals'),
+        ],
+        'intro' => [
+          '#markup' => '<p class="badge-tool-manuals__intro">' . t('From the associated tool pages — members-only prep material.') . '</p>',
+        ],
+        'list' => $manuals,
+      ];
+    }
+    return;
+  }
+
+  if ($group->group_name === 'group_documentation') {
+    // For badges where training documentation is offered as a path (the
+    // banner asks the member to "Submit documentation"), the actual link
+    // sits in group_documentation at weight=5 — far below the banner that
+    // referenced it. Pull it up so the link is reachable without scrolling.
+    // Detection: the badge has a documentation node reference AND uses a
+    // checkout requirement that surfaces the docs path (class, or yes
+    // when the gate evaluator routes to STATE_DOCS_REQUIRED).
+    if (!empty($term) && $term->hasField('field_training_documentation') && !$term->get('field_training_documentation')->isEmpty()) {
+      $element['#weight'] = 0.5;
+    }
+    return;
+  }
+
+  if ($group->group_name === 'group_checkout' || $group->group_name === 'group_complete_checkout') {
+    _appointment_facilitator_replace_checkout_group_with_schedule($element, $term);
+    return;
+  }
+}
+
+/**
+ * Inside the Facilitator Checkout group, replace the per-slot facilitator
+ * cards with the calendar-grid schedule used on /badges/complete, and hide
+ * the now-redundant raw badge_issuer username lists.
+ *
+ * The grid renders even when the prerequisite gate would otherwise hide
+ * scheduling — members on the path to the badge benefit from seeing real
+ * facilitator availability while planning, and the appointment form / quiz
+ * flow handles enforcement when they actually try to book. A clear banner
+ * inside the grid section explains what they need to finish first.
+ *
+ * Tool-offline state still suppresses the grid: scheduling is genuinely
+ * impossible until the tool is back, so the offline notice stands alone.
+ */
+function _appointment_facilitator_replace_checkout_group_with_schedule(array &$element, TermInterface $term): void {
+  // Short-circuit when this badge auto-issues after the quiz — there's no
+  // checkout to book, and enforce_badge_page_flow has already added the
+  // "No facilitator checkout required" notice elsewhere on the page.
+  // Hiding the entire group prevents the field_group from rendering an
+  // empty "Facilitator Checkout" fieldset.
+  if (
+    $term->hasField('field_badge_checkout_requirement')
+    && !$term->get('field_badge_checkout_requirement')->isEmpty()
+    && strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value)) === 'no'
+  ) {
+    $element['#access'] = FALSE;
+    return;
+  }
+
+  // The plain entity_reference_label list of facilitator usernames is
+  // redundant with the calendar grid we're about to render below.
+  foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $key) {
+    if (isset($element[$key])) {
+      $element[$key]['#access'] = FALSE;
+    }
+  }
+
+  // The legacy EVA renders one card per slot per facilitator — visually
+  // noisy and duplicative of the calendar grid we're about to inject.
+  $eva_key = 'facilitator_schedules_facilitator_schedule_tool_eva';
+  if (isset($element[$eva_key])) {
+    $element[$eva_key]['#access'] = FALSE;
+  }
+
+  $tool_offline = FALSE;
+  if (\Drupal::hasService('appointment_facilitator.badge_gate')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgePrerequisiteGate $gate */
+    $gate = \Drupal::service('appointment_facilitator.badge_gate');
+    $tool_offline = $gate->isBadgeOffline($term);
+  }
+
+  // Tag the group so the gate-CSS hider exempts it — without this class,
+  // members who haven't started the badge would have the whole group_checkout
+  // fieldset hidden by display:none, swallowing the grid we're rendering.
+  $element['#attributes']['class'][] = 'appointment-facilitator-has-schedule-grid';
+
+  if ($tool_offline) {
+    $element['appointment_facilitator_schedule_table'] = [
+      '#weight' => -50,
+      '#type' => 'container',
+      '#attributes' => ['class' => ['appointment-facilitator-schedule-empty', 'alert', 'alert-warning']],
+      'message' => [
+        '#markup' => '<p>' . t('This tool is currently offline for maintenance. Booking is paused until it returns. Check Slack #facilitator-hours for an update.') . '</p>',
+      ],
+    ];
+    return;
+  }
+
+  $is_gated = _appointment_facilitator_checkout_group_gate_blocked($term);
+
+  try {
+    /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
+    $controller = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
+  }
+  catch (\Throwable $e) {
+    return;
+  }
+
+  $table = $controller->buildScheduleTableForBadgeTerm($term, $is_gated);
+
+  if (empty($table)) {
+    // Either the badge has no rostered facilitators, or every rostered
+    // facilitator currently has no published hours / is on break this week.
+    // Either way, point members to /facilitator/schedules where they'll see
+    // the full roster (greyed entries included) so they can decide who to
+    // ping on Slack.
+    $element['appointment_facilitator_schedule_table'] = [
+      '#weight' => -50,
+      '#type' => 'container',
+      '#attributes' => ['class' => ['appointment-facilitator-schedule-empty', 'alert', 'alert-info']],
+      'message' => [
+        '#markup' => '<p>'
+          . t('No facilitator has published checkout times in the next two weeks. See the <a href="@url">facilitator schedule</a> for who is normally on the schedule (including anyone on break), then ping them on Slack #facilitator-hours.',
+            ['@url' => '/facilitator/schedules'])
+          . '</p>',
+      ],
+    ];
+    return;
+  }
+
+  $grid_classes = ['appointment-facilitator-schedule-grid'];
+  if ($is_gated) {
+    $grid_classes[] = 'appointment-facilitator-schedule-grid--gated';
+    $intro_markup = '<div class="appointment-facilitator-schedule-intro appointment-facilitator-schedule-intro--gated">'
+      . '<strong>' . t('Complete the requirements above first.') . '</strong> '
+      . t('You can preview facilitator availability below — but booking is locked until you finish the prerequisites and pass the quiz on this badge page.')
+      . '</div>';
+  }
+  else {
+    $intro_markup = '<p class="appointment-facilitator-schedule-intro">'
+      . t('Pick a checkout time below. All bookings flow through the appointment system — please do not arrange checkouts via Slack.')
+      . '</p>';
+  }
+
+  $element['appointment_facilitator_schedule_table'] = [
+    '#weight' => -50,
+    '#type' => 'container',
+    '#attributes' => ['class' => $grid_classes],
+    'intro' => [
+      '#markup' => $intro_markup,
+    ],
+    'table' => $table,
+  ];
+}
+
+/**
+ * Returns TRUE when the prerequisite gate (or tool-offline state) has wiped
+ * the checkout group, so we should not re-inject scheduling.
+ */
+function _appointment_facilitator_checkout_group_gate_blocked(TermInterface $term): bool {
+  if (!\Drupal::hasService('appointment_facilitator.badge_gate')) {
+    return FALSE;
+  }
+  /** @var \Drupal\appointment_facilitator\Service\BadgePrerequisiteGate $gate */
+  $gate = \Drupal::service('appointment_facilitator.badge_gate');
+
+  if ($gate->isBadgeOffline($term)) {
+    return TRUE;
+  }
+
+  $account = \Drupal::currentUser();
+  $uid = (int) $account->id();
+  if ($uid <= 0 || $account->hasPermission('administer nodes')) {
+    return FALSE;
+  }
+
+  // Use the resolver's state as the source of truth: only ACTIVE (already
+  // has the badge) or PENDING (passed quiz, awaiting checkout) should see
+  // an unlocked schedule. Earlier code only checked prereqs+docs and let
+  // members book a checkout slot before passing the quiz — which produced
+  // the bug surfaced on fabricator-sewing-machine where Schedule buttons
+  // were live while the quiz was still required.
+  //
+  // Additional gate: when the badge requires training documentation, the
+  // schedule stays blocked in PENDING until the documentation is approved.
+  // (Members on docs-required badges who pass the quiz reach PENDING with
+  // documentation_status='not_submitted' or 'pending_review'; only
+  // 'approved' should unlock scheduling.)
+  if (\Drupal::hasService('appointment_facilitator.badge_user_status')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+    $resolved = $resolver->resolve($uid, $term);
+    $state = $resolved['state'] ?? '';
+    if (in_array($state, ['active', 'pending'], TRUE)) {
+      $docs_status = $resolved['documentation_status'] ?? 'not_required';
+      if ($docs_status !== 'not_required' && $docs_status !== 'approved') {
+        return TRUE;
+      }
+      return FALSE;
+    }
+    return TRUE;
+  }
+
+  // Fallback to legacy gate when the resolver isn't available.
+  $result = $gate->evaluate($uid, $term);
+  return is_array($result) && empty($result['allowed']);
 }
 
 /**
@@ -683,6 +1062,209 @@ function _appointment_facilitator_attach_badge_popularity_stats(array &$build, T
       'tags' => ['node_list:badge_request', 'taxonomy_term:' . $badge->id()],
     ],
   ];
+}
+
+/**
+ * Renders the BadgeStatusBannerBlock content inline at the very top of the
+ * badge term render array (just under the page title), instead of in the
+ * pre_content region above the title. Pairs with the BadgePopularityStats
+ * block which now sits in pre_content where the banner used to live —
+ * order on the page becomes: stats → title → next-step banner → content.
+ *
+ * The block is invoked programmatically rather than placed at content,
+ * because Drupal's block layout doesn't have a "between title and content"
+ * region in this theme — inline rendering is the cleanest way to anchor
+ * the banner to the badge term entity itself.
+ */
+function _appointment_facilitator_attach_badge_next_step_banner(array &$build, TermInterface $badge): void {
+  try {
+    $block_manager = \Drupal::service('plugin.manager.block');
+    /** @var \Drupal\appointment_facilitator\Plugin\Block\BadgeStatusBannerBlock $block */
+    $block = $block_manager->createInstance('appointment_facilitator_badge_status_banner', []);
+    $rendered = $block->build();
+  }
+  catch (\Throwable $e) {
+    return;
+  }
+
+  if (empty($rendered)) {
+    return;
+  }
+
+  $build['appointment_facilitator_next_step_banner'] = [
+    '#weight' => -200,
+    'banner' => $rendered,
+  ];
+  $build['#cache']['contexts'][] = 'user';
+}
+
+/**
+ * Replaces the plain entity_reference_label rendering of
+ * `field_badge_prerequisite` with a card-style list that shows the viewer's
+ * progress against each prereq:
+ *   - Earned   → green pill "Earned ✓", no CTA needed
+ *   - Pending  → amber pill "In progress", link to that badge page
+ *   - Missing  → red pill "Not earned — start here", link to that badge page
+ *
+ * Mirrors the way tool pages already surface this — without it, a member on
+ * a gated badge page sees the prereq's name but no signal about whether
+ * they need to act on it, which is the exact "confused and stuck" failure
+ * the user flagged.
+ */
+function _appointment_facilitator_decorate_prerequisite_field(array &$build, TermInterface $badge): void {
+  if (
+    !$badge->hasField('field_badge_prerequisite')
+    || $badge->get('field_badge_prerequisite')->isEmpty()
+    || empty($build['field_badge_prerequisite'])
+  ) {
+    return;
+  }
+
+  $prereq_terms = $badge->get('field_badge_prerequisite')->referencedEntities();
+  if (!$prereq_terms) {
+    return;
+  }
+
+  $resolver = NULL;
+  $uid = (int) \Drupal::currentUser()->id();
+  if ($uid > 0 && \Drupal::hasService('appointment_facilitator.badge_user_status')) {
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+  }
+
+  $items = [];
+  foreach ($prereq_terms as $prereq) {
+    if (!$prereq instanceof TermInterface) {
+      continue;
+    }
+    $url = '/taxonomy/term/' . (int) $prereq->id();
+    try {
+      $url = $prereq->toUrl()->toString();
+    }
+    catch (\Throwable) {
+    }
+
+    [$pill_label, $pill_tone, $cta_label] = _appointment_facilitator_prerequisite_status_meta($prereq, $resolver, $uid);
+
+    $items[] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-prereq-card', 'badge-prereq-card--tone-' . $pill_tone]],
+      'name' => [
+        '#type' => 'html_tag',
+        '#tag' => 'a',
+        '#value' => $prereq->label(),
+        '#attributes' => [
+          'href' => $url,
+          'class' => ['badge-prereq-card__name'],
+        ],
+      ],
+      'pill' => [
+        '#type' => 'html_tag',
+        '#tag' => 'span',
+        '#attributes' => ['class' => ['badge-prereq-card__pill', 'badge-prereq-card__pill--' . $pill_tone]],
+        '#value' => $pill_label,
+      ],
+      'cta' => $cta_label !== NULL ? [
+        '#type' => 'html_tag',
+        '#tag' => 'a',
+        '#value' => $cta_label,
+        '#attributes' => [
+          'href' => $url,
+          'class' => ['badge-prereq-card__cta'],
+        ],
+      ] : ['#access' => FALSE],
+    ];
+  }
+
+  if (!$items) {
+    return;
+  }
+
+  // The field group (group_prerequisite) renders its own "Prerequisite"
+  // legend — we don't add a second label here. The original field render
+  // had `label: inline` which the field-group fieldset already collapses
+  // visually, but the entity_reference_label formatter still emits an
+  // inline label span; replacing the whole field with a container drops
+  // that span and avoids the double-heading.
+  $weight = $build['field_badge_prerequisite']['#weight'] ?? 0;
+  $build['field_badge_prerequisite'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['field', 'field--name-field-badge-prerequisite', 'badge-prereq-list']],
+    '#weight' => $weight,
+    'items' => [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-prereq-list__items']],
+    ] + $items,
+    '#attached' => [
+      'library' => ['appointment_facilitator/badge_prereq_list'],
+    ],
+  ];
+
+  // Status varies per user; don't serve a stale render to other viewers.
+  $build['#cache']['contexts'][] = 'user';
+  $build['#cache']['max-age'] = 0;
+}
+
+/**
+ * Returns [pill label, tone, CTA label-or-NULL] for a prerequisite badge.
+ *
+ * Every non-active CTA points to the prereq's badge page (NOT directly to
+ * the quiz), so members go through the full flow on that page — watch the
+ * video, review requirements, then take the quiz — rather than skipping
+ * straight to the quiz and bouncing off when they miss the framing.
+ */
+function _appointment_facilitator_prerequisite_status_meta(TermInterface $prereq, $resolver, int $uid): array {
+  if (!$resolver || $uid <= 0) {
+    return [
+      (string) t('Required'),
+      'muted',
+      (string) t('Open this badge page →'),
+    ];
+  }
+
+  $resolved = $resolver->resolve($uid, $prereq);
+  $state = $resolved['state'] ?? '';
+  return match ($state) {
+    'active' => [
+      (string) t('Earned ✓'),
+      'success',
+      NULL,
+    ],
+    'pending' => [
+      (string) t('In progress'),
+      'info',
+      (string) t('Continue on this badge page →'),
+    ],
+    'quiz_needed' => [
+      (string) t('Quiz pending'),
+      'info',
+      (string) t('Continue on this badge page →'),
+    ],
+    'prereqs_missing' => [
+      (string) t('Blocked by prereqs'),
+      'warning',
+      (string) t('Open this badge page →'),
+    ],
+    'docs_required' => [
+      (string) t('Class or docs needed'),
+      'warning',
+      (string) t('Open this badge page →'),
+    ],
+    'expired' => [
+      (string) t('Expired'),
+      'warning',
+      (string) t('Renew on this badge page →'),
+    ],
+    'suspended' => [
+      (string) t('Suspended'),
+      'warning',
+      (string) t('Open this badge page →'),
+    ],
+    default => [
+      (string) t('Not started'),
+      'danger',
+      (string) t('Start on this badge page →'),
+    ],
+  };
 }
 
 /**
@@ -809,9 +1391,125 @@ function _appointment_facilitator_badge_checklist_is_blank(TermInterface $badge)
 }
 
 /**
- * Adds links back to tools associated with a badge term.
+ * Renders the "I've watched the video" toggle below the video iframe.
+ *
+ * Skipped when the badge has no video — the step is moot in that case.
+ * The form lives just after group_video (weight=2) and before group_quiz
+ * (weight=3) so it reads as a transition between the two phases.
  */
-function _appointment_facilitator_add_related_tools(array &$build, TermInterface $term): void {
+function _appointment_facilitator_attach_video_watched_form(array &$build, TermInterface $term): void {
+  if (!$term->hasField('field_badge_video') || $term->get('field_badge_video')->isEmpty()) {
+    return;
+  }
+  try {
+    $form = \Drupal::formBuilder()->getForm(
+      \Drupal\appointment_facilitator\Form\BadgeVideoWatchedForm::class,
+      $term
+    );
+  }
+  catch (\Throwable $e) {
+    return;
+  }
+  if (empty($form)) {
+    return;
+  }
+  $build['appointment_facilitator_video_watched'] = [
+    '#type' => 'container',
+    '#weight' => 2.5,
+    '#attributes' => ['class' => ['badge-video-watched']],
+    'form' => $form,
+    '#cache' => [
+      'contexts' => ['user'],
+      'max-age' => 0,
+    ],
+    '#attached' => [
+      'library' => ['appointment_facilitator/badge_status_banner'],
+    ],
+  ];
+}
+
+/**
+ * Collects manual files from every tool associated with a badge.
+ *
+ * Returns a render array of links keyed by file URI. Empty when no
+ * associated tool has a `field_manuals` value or the field doesn't exist.
+ * Tool name is included in the link text so members can tell which tool
+ * a given manual belongs to when multiple tools share the badge.
+ */
+function _appointment_facilitator_collect_tool_manuals(TermInterface $term): array {
+  // Gate to authenticated viewers — some vendor manuals aren't meant for
+  // public distribution and the tool pages already require login to view
+  // the file field. Returning early for anonymous keeps the badge page
+  // from inadvertently leaking files.
+  if ((int) \Drupal::currentUser()->id() <= 0) {
+    return [];
+  }
+
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'item')
+    ->condition('status', 1)
+    ->sort('title', 'ASC');
+  $badge_group = $query->orConditionGroup()
+    ->condition('field_member_badges.target_id', (int) $term->id())
+    ->condition('field_additional_badges.target_id', (int) $term->id());
+  $query->condition($badge_group);
+  $nids = $query->execute();
+  if (!$nids) {
+    return [];
+  }
+
+  $tools = Node::loadMultiple($nids);
+  $items = [];
+  $seen = [];
+  foreach ($tools as $tool) {
+    if (!$tool instanceof NodeInterface || !$tool->access('view')) {
+      continue;
+    }
+    if (!$tool->hasField('field_manuals') || $tool->get('field_manuals')->isEmpty()) {
+      continue;
+    }
+    foreach ($tool->get('field_manuals')->referencedEntities() as $file) {
+      if (!$file || !method_exists($file, 'createFileUrl')) {
+        continue;
+      }
+      $url = $file->createFileUrl();
+      $uri = (string) $file->getFileUri();
+      if (isset($seen[$uri])) {
+        continue;
+      }
+      $seen[$uri] = TRUE;
+      $name = $file->getFilename() ?: basename($uri);
+      $items[] = [
+        '#type' => 'inline_template',
+        '#template' => '<li class="badge-tool-manuals__item"><a href="{{ url }}" class="badge-tool-manuals__link" target="_blank" rel="noopener">{{ name }}</a> <span class="badge-tool-manuals__source">— {{ tool }}</span></li>',
+        '#context' => [
+          'url' => $url,
+          'name' => $name,
+          'tool' => $tool->label(),
+        ],
+      ];
+    }
+  }
+
+  if (!$items) {
+    return [];
+  }
+  return [
+    '#type' => 'inline_template',
+    '#template' => '<ul class="badge-tool-manuals__list">{% for item in items %}{{ item }}{% endfor %}</ul>',
+    '#context' => ['items' => $items],
+  ];
+}
+
+/**
+ * Builds the Associated Tools render array for a badge term.
+ *
+ * Returns an empty array when the badge has no associated tools. Caller
+ * decides where to attach it — currently the page-title preprocess
+ * injects it into title_prefix so it sits above the hero image.
+ */
+function _appointment_facilitator_build_related_tools(TermInterface $term): array {
   $query = \Drupal::entityQuery('node')
     ->accessCheck(FALSE)
     ->condition('type', 'item')
@@ -825,13 +1523,13 @@ function _appointment_facilitator_add_related_tools(array &$build, TermInterface
 
   $nids = $query->execute();
   if (!$nids) {
-    return;
+    return [];
   }
 
   /** @var \Drupal\node\NodeInterface[] $tools */
   $tools = Node::loadMultiple($nids);
   if (!$tools) {
-    return;
+    return [];
   }
 
   $cards = [];
@@ -904,12 +1602,11 @@ function _appointment_facilitator_add_related_tools(array &$build, TermInterface
   }
 
   if (!$cards) {
-    return;
+    return [];
   }
 
-  $build['appointment_facilitator_related_tools'] = [
+  $render = [
     '#type' => 'container',
-    '#weight' => 1,
     '#attached' => [
       'library' => ['appointment_facilitator/badge_related_tools'],
     ],
@@ -923,9 +1620,6 @@ function _appointment_facilitator_add_related_tools(array &$build, TermInterface
       '#attributes' => [
         'class' => ['h4'],
       ],
-    ],
-    'intro' => [
-      '#markup' => '<p>' . t('Use this badge with these tool pages:') . '</p>',
     ],
     'cards' => [
       '#type' => 'container',
@@ -942,7 +1636,9 @@ function _appointment_facilitator_add_related_tools(array &$build, TermInterface
   foreach ($tools as $tool) {
     $cacheability->addCacheableDependency($tool);
   }
-  $cacheability->applyTo($build['appointment_facilitator_related_tools']);
+  $cacheability->applyTo($render);
+
+  return $render;
 }
 
 /**
@@ -1362,6 +2058,41 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
   // Align with quiz-result flow: treat any non-"no" value as requiring checkout.
   $requires_checkout = ($checkout_requirement !== '' && $checkout_requirement !== 'no');
 
+  // For badges that auto-issue once the quiz is passed, the whole
+  // "Facilitator Checkout" section is misleading — there's no checkout to
+  // book and the calendar grid would just confuse members. Hide the group
+  // entirely; a small inline note inside the (hidden) group is replaced
+  // with a "no checkout required" callout further down via the
+  // pre_render alter so admins editing the term still see the section.
+  if (!$requires_checkout) {
+    _appointment_facilitator_hide_badge_page_components($build, [
+      'group_checkout',
+      'group_contact_badger',
+      'field_badge_checkout_requirement',
+      'field_badge_issuer',
+      'field_badge_issuer_on_request',
+      'facilitator_schedules_facilitator_schedule_tool_eva',
+      'facilitator_schedules_facilitator_profile_badger_list',
+    ]);
+    // The stepper's earn step shows the "Auto-issued" hint; this small
+    // confirmation lives next to the quiz so it's clear what happens when
+    // the member finishes — but without the redundant yellow "🎓"
+    // checkout-requirement pill above it.
+    $build['appointment_facilitator_no_checkout_notice'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--status', 'badge-no-checkout-notice']],
+      '#weight' => 7,
+      'message' => [
+        '#markup' => '<p><strong>'
+          . t('Auto-issued.')
+          . '</strong> '
+          . t('You get this badge as soon as you pass the quiz above.')
+          . '</p>',
+      ],
+    ];
+    return;
+  }
+
   $gate_result = NULL;
   $gate = NULL;
   if (\Drupal::hasService('appointment_facilitator.badge_gate')) {
@@ -1436,12 +2167,16 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
 
   $blocked_by_gate = !$has_active_badge && is_array($gate_result) && empty($gate_result['allowed']);
   if ($blocked_by_gate) {
+    // group_checkout is intentionally NOT in this hide list — we want the
+    // pre_render_alter to inject the calendar-grid schedule (with a banner
+    // explaining booking unlocks once prereqs are done) so members can see
+    // facilitator availability while planning. The grid handles its own
+    // gated framing; no separate "Checkout is required..." notice needed.
     _appointment_facilitator_hide_badge_page_components($build, [
       'field_badge_quiz_reference',
       'field_badge_quiz',
       'group_quiz',
       'group_contact_badger',
-      'group_checkout',
       'field_badge_checklist',
       'field_badge_checkout_minutes',
       'field_badge_issuer_on_request',
@@ -1450,43 +2185,21 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
       'event_upcoming_badging_badge_events',
     ]);
 
-    $reasons = [];
-    if (!empty($gate_result['prerequisites_missing_labels'])) {
-      $reasons[] = t(
-        'Earn the prerequisite badge(s) first: @badges.',
-        ['@badges' => implode(', ', $gate_result['prerequisites_missing_labels'])]
-      );
-    }
+    // The "You need to earn prerequisites first" banner from
+    // BadgeStatusBannerBlock already covers this state at the top of the
+    // page (with the lock icon + branded prereq button) — a second
+    // "Before you can take the quiz" warning was redundant and pushed the
+    // actual badge content down. The branded banner + the schedule
+    // section's gated intro carry the same information.
     if (!empty($gate_result['requires_documentation']) && empty($gate_result['documentation_approved'])) {
-      $reasons[] = t('Submit and get approval on the Training Documentation form (linked further down this page).');
-    }
-    if (!$reasons) {
-      $reasons[] = t('Complete the listed requirements first.');
-    }
-
-    $items = array_map(
-      fn ($r) => ['#markup' => '<li>' . $r . '</li>'],
-      $reasons
-    );
-
-    $build['appointment_facilitator_badge_gate_warning'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['messages', 'messages--warning', 'badge-gate-warning']],
-      '#weight' => -200,
-      'heading' => [
-        '#markup' => '<p><strong>' . t('Before you can take the quiz or schedule a checkout:') . '</strong></p>',
-      ],
-      'list' => [
-        '#theme' => 'item_list',
-        '#items' => $reasons,
-        '#attributes' => ['class' => ['badge-gate-warning__items']],
-      ],
-    ];
-    if ($requires_checkout) {
-      _appointment_facilitator_add_checkout_unavailable_notice(
-        $build,
-        (string) t('Checkout is required for this badge. Scheduling appears after the requirements above are complete and you pass the quiz.')
-      );
+      $build['appointment_facilitator_badge_documentation_required'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--warning', 'badge-gate-warning']],
+        '#weight' => -200,
+        'message' => [
+          '#markup' => '<p>' . t('Submit and get approval on the Training Documentation form (linked further down this page).') . '</p>',
+        ],
+      ];
     }
     _appointment_facilitator_attach_badge_checkout_gate_css($build);
     return;
@@ -1501,9 +2214,11 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
   // still want to see the facilitator schedule (so they can recommend it
   // to others or browse class sessions).
   if (!$has_pending_instance && !$has_active_badge) {
+    // Keep group_checkout in the build so the pre_render_alter can inject
+    // the calendar-grid schedule. Members exploring a badge they haven't
+    // committed to yet still benefit from seeing real facilitator times.
     _appointment_facilitator_hide_badge_page_components($build, [
       'group_contact_badger',
-      'group_checkout',
       'field_badge_issuer_on_request',
       'facilitator_schedules_facilitator_profile_badger_list',
       'event_upcoming_badging_badge_events',
@@ -1587,7 +2302,15 @@ function _appointment_facilitator_add_checkout_unavailable_notice(array &$build,
  * Hides checkout scheduling UI for gated badge-page states.
  */
 function _appointment_facilitator_attach_badge_checkout_gate_css(array &$build): void {
-  $css = '.group-checkout:not(.appointment-facilitator-checkout-notice), .group-contact-badger, a[href*="/node/add/appointment"] { display: none !important; }';
+  // The .appointment-facilitator-has-schedule-grid exemption keeps the
+  // checkout group visible whenever it contains the new calendar grid —
+  // the grid itself is the call-to-action members are looking for, so the
+  // legacy "hide everything until they're approved" rule no longer applies.
+  // The legacy `a[href*=node/add/appointment]` blanket-hide is dropped: the
+  // calendar-grid links inside .calendly-slot-entry are intentional CTAs;
+  // the legacy EVA-card "Request appointment" links they were aimed at are
+  // already removed via #access=FALSE in the field-group pre-render alter.
+  $css = '.group-checkout:not(.appointment-facilitator-checkout-notice):not(.appointment-facilitator-has-schedule-grid), .group-contact-badger { display: none !important; }';
   $build['#attached']['html_head'][] = [
     [
       '#tag' => 'style',
@@ -1622,18 +2345,78 @@ function _appointment_facilitator_paid_private_fallback_visible(TermInterface $b
     return TRUE;
   }
 
+  // Eligibility gate: member must either have a pending instance for this
+  // badge, or already hold it (so they can refer / refresh).
+  $eligible = FALSE;
   $pending_tids = _appointment_facilitator_load_pending_badge_term_ids($uid);
   if (in_array((int) $badge->id(), $pending_tids, TRUE)) {
-    return TRUE;
+    $eligible = TRUE;
   }
-
-  if (\Drupal::hasService('appointment_facilitator.badge_user_status')) {
+  if (!$eligible && \Drupal::hasService('appointment_facilitator.badge_user_status')) {
     /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
     $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
     $resolved = $resolver->resolve($uid, $badge);
     if (($resolved['state'] ?? '') === 'active') {
+      $eligible = TRUE;
+    }
+  }
+  if (!$eligible) {
+    return FALSE;
+  }
+
+  // Last-resort rule: paid private session is *only* meant for badges
+  // where there's nothing else scheduleable. If the facilitator schedule
+  // grid has any slots OR there's an upcoming class event, the cheaper
+  // path is available and the paid CTA would just compete with it.
+  if (_appointment_facilitator_has_scheduleable_path($badge)) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/**
+ * Returns TRUE when the badge has at least one upcoming class event OR
+ * at least one facilitator schedule slot available in the next two weeks.
+ *
+ * Used to suppress the "Request a paid private session" fallback when a
+ * free or built-in path already exists for the member.
+ */
+function _appointment_facilitator_has_scheduleable_path(TermInterface $badge): bool {
+  // Upcoming class events for the badge.
+  try {
+    $view = \Drupal::entityTypeManager()->getStorage('view')->load('event_upcoming_badging');
+    if ($view) {
+      $exec = $view->getExecutable();
+      $exec->setDisplay('badge_events');
+      $exec->setArguments([(string) $badge->id()]);
+      $exec->setItemsPerPage(1);
+      $exec->execute();
+      if (!empty($exec->result)) {
+        $exec->destroy();
+        return TRUE;
+      }
+      $exec->destroy();
+    }
+  }
+  catch (\Throwable) {
+    // View-execution problems shouldn't gate the fallback; fall through
+    // to the schedule check.
+  }
+
+  // Facilitator schedule grid — same lookup the embedded grid uses.
+  try {
+    /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
+    $controller = \Drupal::classResolver()->getInstanceFromDefinition(
+      \Drupal\appointment_facilitator\Controller\BadgeNextStepsController::class
+    );
+    $table = $controller->buildScheduleTableForBadgeTerm($badge);
+    if (!empty($table)) {
       return TRUE;
     }
+  }
+  catch (\Throwable) {
+    // If the schedule build fails, default to showing the paid fallback
+    // — it's the last-resort path either way.
   }
 
   return FALSE;
@@ -2640,6 +3423,24 @@ function appointment_facilitator_entity_presave(EntityInterface $entity): void {
     $old_status = (string) $original->get('field_badge_status')->value;
   }
   if ($old_status === 'active') {
+    return;
+  }
+
+  // Block activation of class-required badges until class completion is stamped.
+  $badge_term = $entity->hasField('field_badge_requested') && !$entity->get('field_badge_requested')->isEmpty()
+    ? $entity->get('field_badge_requested')->entity
+    : NULL;
+  $requirement = $badge_term && $badge_term->hasField('field_badge_checkout_requirement')
+    ? (string) $badge_term->get('field_badge_checkout_requirement')->value
+    : '';
+  if ($requirement === 'class'
+    && $entity->hasField('field_class_completed_date')
+    && $entity->get('field_class_completed_date')->isEmpty()) {
+    // Revert to previous status (or pending) and warn.
+    $entity->set('field_badge_status', $old_status ?: 'pending');
+    \Drupal::messenger()->addError(t('@badge cannot be activated yet: the instructor has not recorded class completion. Use the class checkout page first.', [
+      '@badge' => $badge_term ? $badge_term->getName() : 'This badge',
+    ]));
     return;
   }
 
@@ -4368,6 +5169,32 @@ function appointment_facilitator_preprocess_views_bootstrap_cards(array &$variab
 
   $current_user = \Drupal::currentUser();
   $logged_in = $current_user->isAuthenticated();
+
+  // Tag rows where the facilitator has flagged their listing hidden for the
+  // week. The /facilitator/schedules display now includes them (instead of
+  // silently dropping them) so members can see who's normally on the schedule
+  // and is temporarily off — CSS in the on-break library greys the card.
+  $has_on_break = FALSE;
+  $on_break_display = (
+    $view->current_display === 'facilitator_schedule'
+  );
+  if ($on_break_display) {
+    foreach ($variables['rows'] as $id => $row) {
+      $entity = $view->result[$id]->_entity ?? NULL;
+      if (!$entity || $entity->getEntityTypeId() !== 'profile' || !$entity->hasField('field_coordinator_hours_display')) {
+        continue;
+      }
+      $is_hidden = !$entity->get('field_coordinator_hours_display')->isEmpty()
+        && (string) $entity->get('field_coordinator_hours_display')->value === 'hide';
+      if ($is_hidden && isset($variables['rows'][$id]['attributes'])) {
+        $variables['rows'][$id]['attributes']->addClass('facilitator-card--on-break');
+        $has_on_break = TRUE;
+      }
+    }
+    if ($has_on_break) {
+      $variables['#attached']['library'][] = 'appointment_facilitator/facilitator_schedules_on_break';
+    }
+  }
 
   foreach ($variables['rows'] as $id => &$row) {
     // 1. Card body — strip dual divs and inject single CTA.

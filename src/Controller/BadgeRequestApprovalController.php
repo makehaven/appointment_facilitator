@@ -45,6 +45,18 @@ class BadgeRequestApprovalController extends ControllerBase {
       return $this->redirectToNode($node);
     }
 
+    // Class-required badges need the class-completion attestation before activation.
+    $badge_term = $node->get('field_badge_requested')->entity;
+    $requirement = $badge_term && $badge_term->hasField('field_badge_checkout_requirement')
+      ? (string) $badge_term->get('field_badge_checkout_requirement')->value
+      : '';
+    if ($requirement === 'class'
+      && $node->hasField('field_class_completed_date')
+      && $node->get('field_class_completed_date')->isEmpty()) {
+      $this->messenger()->addError($this->t('Cannot activate yet: the instructor has not recorded class completion. Use the class checkout page first.'));
+      return $this->redirectToNode($node);
+    }
+
     $node->set('field_badge_status', 'active');
     $node->setNewRevision(TRUE);
     $node->setRevisionUserId((int) $this->currentUser()->id());

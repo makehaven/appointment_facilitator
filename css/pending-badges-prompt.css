@@ -1,0 +1,46 @@
+/* Pending-badges prompt — shown on the user's own /badges page when
+   they have one or more pending badge_request nodes. */
+.mh-pending-badges-prompt {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 1.25rem;
+  margin: 0 0 1.5rem;
+  padding: 1.1rem 1.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid #f5d76e;
+  border-left-width: 6px;
+  border-left-color: #c98a00;
+  background: #fff8e1;
+  color: #5a3d00;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+}
+
+.mh-pending-badges-prompt__headline {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #5a3d00;
+}
+
+.mh-pending-badges-prompt__body {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #5a3d00;
+}
+
+.mh-pending-badges-prompt__cta {
+  justify-self: end;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+@media (max-width: 36em) {
+  .mh-pending-badges-prompt {
+    grid-template-columns: 1fr;
+  }
+  .mh-pending-badges-prompt__cta {
+    justify-self: stretch;
+    text-align: center;
+  }
+}

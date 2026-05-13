@@ -1,0 +1,150 @@
+/* Card-style prerequisite list with per-prereq status pill so members can
+   tell at a glance whether they already hold a prereq, are mid-way through
+   it, or still need to start. Replaces the bare entity_reference_label
+   rendering of field_badge_prerequisite. */
+
+.badge-prereq-list {
+  margin: 0.75rem 0 1rem;
+}
+
+.badge-prereq-list__label {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}
+
+.badge-prereq-list__items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.6rem;
+}
+
+.badge-prereq-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #d9dee5;
+  border-radius: 0.55rem;
+  background: #fff;
+}
+
+.badge-prereq-card--tone-success {
+  background: #f1faf4;
+  border-color: #bfe2cc;
+}
+
+.badge-prereq-card--tone-info {
+  background: #eff6fc;
+  border-color: #bcd9ee;
+}
+
+.badge-prereq-card--tone-warning {
+  background: #fff8e6;
+  border-color: #f0d795;
+}
+
+.badge-prereq-card--tone-danger {
+  background: #fdecec;
+  border-color: #f0baba;
+}
+
+.badge-prereq-card__name {
+  font-weight: 600;
+  color: #1a1f24;
+  text-decoration: none;
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.badge-prereq-card__name:hover {
+  text-decoration: underline;
+}
+
+.badge-prereq-card__pill {
+  align-self: start;
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.badge-prereq-card__pill--success {
+  background: #156842;
+  color: #fff;
+}
+
+.badge-prereq-card__pill--info {
+  background: #1c5d92;
+  color: #fff;
+}
+
+.badge-prereq-card__pill--warning {
+  background: #b3781b;
+  color: #fff;
+}
+
+.badge-prereq-card__pill--danger {
+  background: #b71c1c;
+  color: #fff;
+}
+
+.badge-prereq-card__pill--muted {
+  background: #4a5563;
+  color: #fff;
+}
+
+.badge-prereq-card__cta {
+  grid-column: 1 / -1;
+  justify-self: start;
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0.4rem;
+  background: #8b1919;
+  color: #fff;
+  border: 1px solid #710a0a;
+  line-height: 1.2;
+}
+
+.badge-prereq-card__cta:hover,
+.badge-prereq-card__cta:focus {
+  background: #710a0a;
+  color: #fff;
+  text-decoration: none;
+}
+
+.badge-prereq-card--tone-success .badge-prereq-card__cta {
+  background: #156842;
+  border-color: #0e4d31;
+}
+
+.badge-prereq-card--tone-success .badge-prereq-card__cta:hover {
+  background: #0e4d31;
+}
+
+.badge-prereq-card--tone-info .badge-prereq-card__cta {
+  background: #1c5d92;
+  border-color: #144872;
+}
+
+.badge-prereq-card--tone-info .badge-prereq-card__cta:hover {
+  background: #144872;
+}
+
+.badge-prereq-card--tone-warning .badge-prereq-card__cta {
+  background: #b3781b;
+  border-color: #8a5d15;
+}
+
+.badge-prereq-card--tone-warning .badge-prereq-card__cta:hover {
+  background: #8a5d15;
+}

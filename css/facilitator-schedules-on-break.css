@@ -1,0 +1,38 @@
+/* Greyed-out card for a facilitator with field_coordinator_hours_display=hide.
+   These people have scheduled hours but have toggled their listing off for
+   the week. Showing the card greyed makes their absence legible — silently
+   omitting them just made the schedule confusing. */
+
+.card.facilitator-card--on-break {
+  background: #f3f4f6;
+  border-color: #e1e3e7;
+  opacity: 0.7;
+  position: relative;
+}
+
+.card.facilitator-card--on-break::after {
+  content: 'On break this week';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: #4a5563;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Booking is meaningless while they're hidden — hide the appointment CTA. */
+.card.facilitator-card--on-break a[href*="/node/add/appointment"] {
+  display: none !important;
+}
+
+/* Slightly desaturate the photo so it reads as inactive at a glance. */
+.card.facilitator-card--on-break .card-img-top img,
+.card.facilitator-card--on-break img {
+  filter: grayscale(0.7);
+}

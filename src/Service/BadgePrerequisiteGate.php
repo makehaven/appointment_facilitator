@@ -84,6 +84,11 @@ class BadgePrerequisiteGate {
    *   Keys:
    *   - allowed: bool
    *   - requires_documentation: bool
+   *   - documentation_submitted: bool — at least one non-draft submission
+   *     exists for this user against the badge's documentation webform,
+   *     regardless of approval status.
+   *   - documentation_submitted_at: int|null — UNIX timestamp of the most
+   *     recent non-draft submission, or NULL if none.
    *   - documentation_approved: bool
    *   - documentation_webform_id: string|null
    *   - documentation_form_url: string|null
@@ -96,6 +101,8 @@ class BadgePrerequisiteGate {
     $result = [
       'allowed' => TRUE,
       'requires_documentation' => FALSE,
+      'documentation_submitted' => FALSE,
+      'documentation_submitted_at' => NULL,
       'documentation_approved' => TRUE,
       'documentation_webform_id' => NULL,
       'documentation_form_url' => NULL,
@@ -116,6 +123,9 @@ class BadgePrerequisiteGate {
       $result['requires_documentation'] = TRUE;
       $result['documentation_webform_id'] = $webform_id;
       $result['documentation_form_url'] = $this->resolveTrainingDocumentationFormUrl($badge);
+      $latest_submission_ts = $this->latestDocumentationSubmissionTimestamp($memberUid, $webform_id);
+      $result['documentation_submitted'] = $latest_submission_ts !== NULL;
+      $result['documentation_submitted_at'] = $latest_submission_ts;
       $result['documentation_approved'] = $this->hasApprovedDocumentationSubmission($memberUid, $webform_id);
       if (!$result['documentation_approved']) {
         $result['allowed'] = FALSE;
@@ -139,6 +149,47 @@ class BadgePrerequisiteGate {
     }
 
     return $result;
+  }
+
+  /**
+   * Returns the timestamp of the user's most recent non-draft submission to
+   * the documentation webform, or NULL when none exists.
+   *
+   * Unlike hasApprovedDocumentationSubmission(), this ignores the submission's
+   * own `status` field — it's the "did they submit at all?" signal used to
+   * distinguish "not submitted" from "submitted, awaiting staff review" on
+   * the badge page.
+   */
+  public function latestDocumentationSubmissionTimestamp(int $memberUid, string $webformId): ?int {
+    if ($memberUid <= 0 || $webformId === '') {
+      return NULL;
+    }
+    if (!$this->entityTypeManager->hasDefinition('webform_submission')) {
+      return NULL;
+    }
+
+    $storage = $this->entityTypeManager->getStorage('webform_submission');
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('webform_id', $webformId)
+      ->condition('uid', $memberUid)
+      ->sort('created', 'DESC')
+      ->range(0, 1);
+
+    if ($storage->getEntityType()->hasKey('in_draft')) {
+      $query->condition('in_draft', 0);
+    }
+
+    $sids = $query->execute();
+    if (!$sids) {
+      return NULL;
+    }
+    $submission = $storage->load((int) reset($sids));
+    if (!$submission || !method_exists($submission, 'getCreatedTime')) {
+      return NULL;
+    }
+    $ts = (int) $submission->getCreatedTime();
+    return $ts > 0 ? $ts : NULL;
   }
 
   /**

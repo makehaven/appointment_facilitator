@@ -312,6 +312,39 @@ class JoinAppointmentForm extends FormBase {
       return $this->addCacheContexts($form);
     }
 
+    // Documentation gate: if any of this appointment's badges requires
+    // training documentation and the member has not gotten staff approval,
+    // they can't book a facilitator checkout (the docs path exists so the
+    // class-based earning route still works without scheduling). This
+    // mirrors _appointment_facilitator_checkout_group_gate_blocked() on
+    // badge pages.
+    $docs_blocked_badges = $this->docsBlockedBadgesForAppointment($node, $uid);
+    if ($docs_blocked_badges) {
+      $form['#attached']['library'][] = 'appointment_facilitator/appointments';
+      $names = array_map(fn ($t) => $t->label(), $docs_blocked_badges);
+      $form['docs_required'] = [
+        '#type'       => 'container',
+        '#attributes' => ['class' => ['join-pending-gate']],
+        'icon'        => ['#markup' => '<div class="join-pending-gate__icon">📋</div>'],
+        'heading'     => ['#markup' => '<h3 class="join-pending-gate__heading">' . $this->t('Training documentation required') . '</h3>'],
+        'body'        => ['#markup' => '<p class="join-pending-gate__body">' . $this->t(
+          'Before you can book a facilitator checkout for @badges, your training documentation form needs to be submitted and approved by staff.',
+          ['@badges' => implode(', ', $names)]
+        ) . '</p>'],
+      ];
+      $buttons = ['#type' => 'container', '#attributes' => ['class' => ['join-pending-gate__buttons']]];
+      foreach ($docs_blocked_badges as $idx => $term) {
+        $buttons['badge_' . $idx] = [
+          '#type'       => 'link',
+          '#title'      => $this->t('Go to @badge →', ['@badge' => $term->label()]),
+          '#url'        => Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $term->id()]),
+          '#attributes' => ['class' => ['btn', 'btn-outline-primary', 'join-pending-gate__btn']],
+        ];
+      }
+      $form['docs_required']['buttons'] = $buttons;
+      return $this->addCacheContexts($form);
+    }
+
     // --- Already joined / Full / Join button ---
     if (in_array($uid, $current_ids, TRUE)) {
       $form['message'] = ['#markup' => '<p>' . $this->t('You are already on this appointment.') . '</p>'];
@@ -619,6 +652,42 @@ class JoinAppointmentForm extends FormBase {
     }
 
     return FALSE;
+  }
+
+  /**
+   * Returns the appointment's badges where this user is blocked by an unmet
+   * training-documentation requirement.
+   *
+   * @return \Drupal\taxonomy\TermInterface[]
+   *   Badge terms requiring docs that the member has not had approved. Empty
+   *   array means scheduling is allowed (no docs needed, or already approved,
+   *   or the resolver / status service is unavailable).
+   */
+  protected function docsBlockedBadgesForAppointment(NodeInterface $node, int $uid): array {
+    if ($uid <= 0) {
+      return [];
+    }
+    if (!$node->hasField('field_appointment_badges') || $node->get('field_appointment_badges')->isEmpty()) {
+      return [];
+    }
+    if (!\Drupal::hasService('appointment_facilitator.badge_user_status')) {
+      return [];
+    }
+    /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+
+    $blocked = [];
+    foreach ($node->get('field_appointment_badges')->referencedEntities() as $term) {
+      if (!$term instanceof \Drupal\taxonomy\TermInterface) {
+        continue;
+      }
+      $resolved = $resolver->resolve($uid, $term);
+      $ds = $resolved['documentation_status'] ?? 'not_required';
+      if ($ds === 'not_submitted' || $ds === 'pending_review') {
+        $blocked[] = $term;
+      }
+    }
+    return $blocked;
   }
 
 }
