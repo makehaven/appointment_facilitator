@@ -86,11 +86,15 @@ class BadgeVideoWatchedForm extends FormBase {
     }
 
     $watched = self::isWatched($this->userData, $uid, $tid);
-    $ajax = [
-      'wrapper' => self::FORM_WRAPPER,
-      'effect' => 'none',
-      'progress' => ['type' => 'throbber'],
-    ];
+
+    // AJAX intentionally disabled: when this form is built inside
+    // hook_entity_view (term canonical render), Drupal's AJAX rebuild renders
+    // the form in its hosting render context — the entire taxonomy term view.
+    // Each AJAX response then injects a fresh nested copy of the term view
+    // (banner + content + form) into the form wrapper, compounding on every
+    // toggle. A plain non-AJAX submit + page reload sidesteps the issue
+    // entirely. UX cost: a quick page reload after the click instead of an
+    // inline button morph. Worth it for correctness.
 
     if ($watched) {
       $form['submit'] = [
@@ -100,7 +104,6 @@ class BadgeVideoWatchedForm extends FormBase {
           'class' => ['btn', 'btn-success', 'btn-sm', 'badge-video-watched-form__btn', 'badge-video-watched-form__btn--done'],
         ],
         '#submit' => ['::clear'],
-        '#ajax' => $ajax,
       ];
       $form['note'] = [
         '#markup' => '<p class="badge-video-watched-form__note">' . $this->t("Honor system — we don't auto-check, but staff can see who marked themselves done.") . '</p>',
@@ -113,7 +116,6 @@ class BadgeVideoWatchedForm extends FormBase {
         '#attributes' => [
           'class' => ['btn', 'btn-primary', 'btn-sm', 'badge-video-watched-form__btn'],
         ],
-        '#ajax' => $ajax,
       ];
       $form['note'] = [
         '#markup' => '<p class="badge-video-watched-form__note">' . $this->t('Confirms you watched the video, read the manual, or otherwise prepared. Required before the quiz makes sense.') . '</p>',
@@ -139,7 +141,8 @@ class BadgeVideoWatchedForm extends FormBase {
     // the relevant render-cache entry so the next page render reflects
     // the new state instead of returning the pre-toggle copy.
     Cache::invalidateTags(['user:' . $uid, 'taxonomy_term:' . $tid]);
-    $form_state->setRebuild(TRUE);
+    // No setRebuild — let the default redirect-after-submit reload the term
+    // page so the banner above the form reflects the new state.
   }
 
   /**
@@ -153,7 +156,8 @@ class BadgeVideoWatchedForm extends FormBase {
     }
     $this->userData->delete('appointment_facilitator', $uid, 'badge_video_watched.' . $tid);
     Cache::invalidateTags(['user:' . $uid, 'taxonomy_term:' . $tid]);
-    $form_state->setRebuild(TRUE);
+    // No setRebuild — let the default redirect-after-submit reload the term
+    // page so the banner above the form reflects the new state.
   }
 
   /**
