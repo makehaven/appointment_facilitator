@@ -2186,18 +2186,43 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
     ]);
 
     // The "You need to earn prerequisites first" banner from
-    // BadgeStatusBannerBlock already covers this state at the top of the
-    // page (with the lock icon + branded prereq button) — a second
-    // "Before you can take the quiz" warning was redundant and pushed the
-    // actual badge content down. The branded banner + the schedule
-    // section's gated intro carry the same information.
+    // BadgeStatusBannerBlock already covers the prereq state at the top of
+    // the page. For the docs-pending state we own the messaging here, and
+    // it has three distinct presentations so members aren't left guessing
+    // whether their submission was received:
+    //   - not submitted yet,
+    //   - submitted and awaiting staff approval (show the date),
+    // The third state — class-registration bypass — is handled earlier in
+    // the gate (allowed = TRUE), so the page renders the quiz normally and
+    // this block is skipped.
     if (!empty($gate_result['requires_documentation']) && empty($gate_result['documentation_approved'])) {
+      if (empty($gate_result['documentation_submitted'])) {
+        $message_markup = '<p>'
+          . t('Submit the Training Documentation form below to unlock the quiz, or register for a class on this badge — either path opens the quiz.')
+          . '</p>';
+      }
+      else {
+        $submitted_at = (int) ($gate_result['documentation_submitted_at'] ?? 0);
+        $submitted_label = $submitted_at > 0
+          ? \Drupal::service('date.formatter')->format($submitted_at, 'medium')
+          : (string) t('recently');
+        $message_markup = '<p>'
+          . t('<strong>Training documentation submitted @when</strong> — awaiting staff approval. The quiz unlocks once approved, or you can register for a class on this badge to unlock it sooner.', ['@when' => $submitted_label])
+          . '</p>';
+      }
       $build['appointment_facilitator_badge_documentation_required'] = [
         '#type' => 'container',
         '#attributes' => ['class' => ['messages', 'messages--warning', 'badge-gate-warning']],
         '#weight' => -200,
         'message' => [
-          '#markup' => '<p>' . t('Submit and get approval on the Training Documentation form (linked further down this page).') . '</p>',
+          '#markup' => $message_markup,
+        ],
+        // Submission date is per-user, so the cached fragment must not be
+        // shared across members; matches the per-user caching used on the
+        // video-not-watched quiz surrogate.
+        '#cache' => [
+          'contexts' => ['user'],
+          'max-age' => 0,
         ],
       ];
     }

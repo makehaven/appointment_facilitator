@@ -13,6 +13,7 @@ services:
       - '@entity_type.manager'
       - '@logger.factory'
       - '@?asset_status.availability'
+      - '@?database'
 
   appointment_facilitator.badge_user_status:
     class: Drupal\appointment_facilitator\Service\BadgeUserStatusResolver

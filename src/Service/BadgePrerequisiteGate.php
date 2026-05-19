@@ -3,6 +3,7 @@
 namespace Drupal\appointment_facilitator\Service;
 
 use Drupal\asset_status\Service\AssetAvailability;
+use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\taxonomy\TermInterface;
@@ -16,6 +17,7 @@ class BadgePrerequisiteGate {
     protected EntityTypeManagerInterface $entityTypeManager,
     LoggerChannelFactoryInterface $loggerFactory,
     protected readonly ?AssetAvailability $assetAvailability = NULL,
+    protected readonly ?Connection $database = NULL,
   ) {
     $this->logger = $loggerFactory->get('appointment_facilitator');
   }
@@ -92,6 +94,11 @@ class BadgePrerequisiteGate {
    *   - documentation_approved: bool
    *   - documentation_webform_id: string|null
    *   - documentation_form_url: string|null
+   *   - class_registration_satisfies_docs: bool — TRUE when the member has a
+   *     non-cancelled CiviCRM registration for an event tied to this badge,
+   *     which bypasses the otherwise-blocking docs gate. The badge itself
+   *     still flows through the normal pending → checkout sequence; this only
+   *     unlocks quiz access so the typical "quiz before class" path works.
    *   - prerequisites_required: int[]
    *   - prerequisites_missing: int[]
    *   - prerequisites_missing_labels: string[]
@@ -106,6 +113,7 @@ class BadgePrerequisiteGate {
       'documentation_approved' => TRUE,
       'documentation_webform_id' => NULL,
       'documentation_form_url' => NULL,
+      'class_registration_satisfies_docs' => FALSE,
       'prerequisites_required' => [],
       'prerequisites_missing' => [],
       'prerequisites_missing_labels' => [],
@@ -128,8 +136,19 @@ class BadgePrerequisiteGate {
       $result['documentation_submitted_at'] = $latest_submission_ts;
       $result['documentation_approved'] = $this->hasApprovedDocumentationSubmission($memberUid, $webform_id);
       if (!$result['documentation_approved']) {
-        $result['allowed'] = FALSE;
-        $result['reasons'][] = 'Documentation approval is required before this badge can be requested.';
+        // Class-registration bypass: the documented MakeHaven flow is for
+        // members to take the quiz BEFORE the class, so a non-cancelled
+        // CiviCRM registration for any event whose `field_civi_event_badges`
+        // includes this badge satisfies the docs gate for quiz access. The
+        // badge itself still goes through pending → facilitator checkout —
+        // this only opens the quiz door, it doesn't grant the badge.
+        if ($this->hasActiveClassRegistrationForBadge($memberUid, (int) $badge->id())) {
+          $result['class_registration_satisfies_docs'] = TRUE;
+        }
+        else {
+          $result['allowed'] = FALSE;
+          $result['reasons'][] = 'Documentation approval is required before this badge can be requested.';
+        }
       }
     }
 
@@ -235,6 +254,76 @@ class BadgePrerequisiteGate {
     }
 
     return FALSE;
+  }
+
+  /**
+   * Returns TRUE when the member has a non-cancelled CiviCRM registration for
+   * any event whose `field_civi_event_badges` includes this badge.
+   *
+   * "Non-cancelled" mirrors the filter used by instructor_companion's
+   * AttendanceManager: status names in {Cancelled, Rejected, Transferred,
+   * Expired} are treated as out. Everything else — Registered, On waitlist,
+   * Attended, Pending from waitlist, etc. — counts as an active link to a
+   * class that earns this badge, and is enough to unlock quiz access.
+   *
+   * All failure modes (no database, no civicrm_event entity, missing field,
+   * no contact_id mapping) return FALSE so the docs gate falls back to its
+   * normal behavior — this method only ever flips a member from "blocked"
+   * to "allowed", never the other direction.
+   */
+  public function hasActiveClassRegistrationForBadge(int $memberUid, int $badgeTid): bool {
+    if ($memberUid <= 0 || $badgeTid <= 0) {
+      return FALSE;
+    }
+    if (!$this->database) {
+      return FALSE;
+    }
+    if (!$this->entityTypeManager->hasDefinition('civicrm_event')) {
+      return FALSE;
+    }
+
+    try {
+      $event_ids = $this->entityTypeManager->getStorage('civicrm_event')
+        ->getQuery()
+        ->accessCheck(FALSE)
+        ->condition('field_civi_event_badges', $badgeTid)
+        ->execute();
+    }
+    catch (\Throwable $e) {
+      // field_civi_event_badges may not exist yet in some environments.
+      return FALSE;
+    }
+    if (!$event_ids) {
+      return FALSE;
+    }
+
+    try {
+      $contact_id = (int) $this->database->select('civicrm_uf_match', 'm')
+        ->fields('m', ['contact_id'])
+        ->condition('m.uf_id', $memberUid)
+        ->execute()
+        ->fetchField();
+    }
+    catch (\Throwable $e) {
+      return FALSE;
+    }
+    if ($contact_id <= 0) {
+      return FALSE;
+    }
+
+    try {
+      $query = $this->database->select('civicrm_participant', 'p');
+      $query->innerJoin('civicrm_participant_status_type', 'pst', 'pst.id = p.status_id');
+      $query->fields('p', ['id']);
+      $query->condition('p.contact_id', $contact_id);
+      $query->condition('p.event_id', array_values($event_ids), 'IN');
+      $query->condition('pst.name', ['Cancelled', 'Rejected', 'Transferred', 'Expired'], 'NOT IN');
+      $query->range(0, 1);
+      return $query->execute()->fetchField() !== FALSE;
+    }
+    catch (\Throwable $e) {
+      return FALSE;
+    }
   }
 
   /**
