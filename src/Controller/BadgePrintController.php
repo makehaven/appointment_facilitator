@@ -33,10 +33,26 @@ class BadgePrintController extends ControllerBase {
     if (!empty($checklist_items)) {
       $checklist_html = '<ul class="standard-checklist">';
       foreach ($checklist_items as $item_text) {
-        // Skip items that are just the title
-        if (trim(strtolower($item_text)) === trim(strtolower($title))) {
+        $trimmed = trim($item_text);
+
+        // Empty row → visual spacer.
+        if ($trimmed === '') {
+          $checklist_html .= '<li style="list-style:none; height: 10px;" aria-hidden="true"></li>';
           continue;
         }
+
+        // "## Section" or "# Section" → section header, no checkbox.
+        if (preg_match('/^#{1,2}\s+(.+)$/', $trimmed, $m)) {
+          $section = htmlspecialchars($m[1]);
+          $checklist_html .= '<li style="list-style:none; margin: 18px 0 6px; font-size: 14pt; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 2px;">' . $section . '</li>';
+          continue;
+        }
+
+        // Skip items that are just the badge title.
+        if (strtolower($trimmed) === trim(strtolower($title))) {
+          continue;
+        }
+
         $checklist_html .= '<li style="list-style:none; margin-bottom: 10px; display: flex; align-items: flex-start; font-size: 14pt;"><input type="checkbox" style="width: 22px; height: 22px; margin-right: 15px; flex-shrink: 0; margin-top: 2px;"> ' . htmlspecialchars($item_text) . '</li>';
       }
       $checklist_html .= '</ul>';

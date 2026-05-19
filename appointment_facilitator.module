@@ -191,6 +191,15 @@ function _appointment_facilitator_format_badge_checklist(array &$build, TermInte
       continue;
     }
 
+    // "## Section" → bold section row, no checkbox, no card chrome.
+    if (preg_match('/^#{1,2}\s+(.+)$/', $text, $m)) {
+      $items[] = [
+        '#markup' => '<span class="badge-checklist-section__text">' . Html::escape(trim($m[1])) . '</span>',
+        '#wrapper_attributes' => ['class' => ['badge-checklist-section']],
+      ];
+      continue;
+    }
+
     $items[] = [
       '#markup' => '<span class="badge-checklist-item__box" aria-hidden="true"></span><span class="badge-checklist-item__text">' . Html::escape($text) . '</span>',
     ];
@@ -243,6 +252,20 @@ function _appointment_facilitator_format_badge_checklist(array &$build, TermInte
           .badge-checklist-item__text {
             display: inline-block;
             line-height: 1.45;
+          }
+          .badge-checklist-list li.badge-checklist-section {
+            border: 0;
+            background: transparent;
+            padding: 0;
+            margin: 1.1rem 0 0.35rem;
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: #2d3a23;
+            border-bottom: 1px solid #d9dee5;
+            padding-bottom: 0.2rem;
+          }
+          .badge-checklist-list li.badge-checklist-section:first-child {
+            margin-top: 0;
           }
         </style>',
     ],
