@@ -1123,11 +1123,18 @@ class BadgeNextStepsController extends ControllerBase {
     $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
     $timezone = new \DateTimeZone($timezone_name);
 
-    // Match the Calendly chooser layout cadence.
+    // Contiguous, full-day coverage so no eligible facilitator slot is ever
+    // dropped. The previous sparse blocks (9-11, 11-2, 5-8) silently hid any
+    // availability set for early morning, 2-5 PM, or after 8 PM — e.g. a
+    // facilitator with a standing Tue 9 PM or Mon 2 PM slot never rendered
+    // even though they passed every eligibility check. Each block spans a
+    // half-open hour range [start, end); together they cover hours 0-23 with
+    // no gaps. The exact slot time still appears on each "Schedule" button,
+    // so per-hour granularity is preserved within the column.
     $time_blocks = [
-      'morning' => ['label' => (string) $this->t('Morning (9 AM - 11 AM)'), 'start' => 9, 'end' => 11],
-      'midday' => ['label' => (string) $this->t('Mid Day (11 AM - 2 PM)'), 'start' => 11, 'end' => 14],
-      'evening' => ['label' => (string) $this->t('Evening (5 PM - 8 PM)'), 'start' => 17, 'end' => 20],
+      'morning' => ['label' => (string) $this->t('Morning (before 12 PM)'), 'start' => 0, 'end' => 12],
+      'afternoon' => ['label' => (string) $this->t('Afternoon (12 - 5 PM)'), 'start' => 12, 'end' => 17],
+      'evening' => ['label' => (string) $this->t('Evening (after 5 PM)'), 'start' => 17, 'end' => 24],
     ];
 
     $days_to_show = 15;
@@ -1139,11 +1146,7 @@ class BadgeNextStepsController extends ControllerBase {
       $days[$key] = [
         'label' => $this->dateFormatter->format($day_dt->getTimestamp(), 'custom', 'l'),
         'date' => $this->dateFormatter->format($day_dt->getTimestamp(), 'custom', 'F j, Y'),
-        'blocks' => [
-          'morning' => [],
-          'midday' => [],
-          'evening' => [],
-        ],
+        'blocks' => array_fill_keys(array_keys($time_blocks), []),
       ];
     }
 
