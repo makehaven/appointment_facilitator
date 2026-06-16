@@ -505,6 +505,16 @@ class JoinAppointmentForm extends FormBase {
       return;
     }
 
+    // Block joining when the member is already booked into another appointment
+    // that overlaps this one's time. Members reported being tagged onto two
+    // appointments at the same time (cycle review 2026-06-15); the client-side
+    // slot disabling only covers the same view, not a different tool/session.
+    if ($this->memberHasOverlappingAppointment($node, $uid)) {
+      $this->messenger()->addError($this->t('You are already booked for another appointment at this time. Cancel that one first, or pick a different slot.'));
+      $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);
+      return;
+    }
+
     $attendee_field->appendItem($uid);
 
     // Append joiner info to notes if possible.
@@ -625,6 +635,61 @@ class JoinAppointmentForm extends FormBase {
       return FALSE;
     }
     return (string) $node->get('field_appointment_purpose')->value === 'checkout';
+  }
+
+  /**
+   * Returns TRUE if the member already has an overlapping booked appointment.
+   *
+   * "Booked into" means the member is the owner (booker) or an attendee
+   * (tagalong) of another non-cancelled appointment whose time overlaps this
+   * one. Two ranges overlap when each starts before the other ends.
+   *
+   * @param \Drupal\node\NodeInterface $node
+   *   The appointment the member is trying to join.
+   * @param int $uid
+   *   The member's user id.
+   *
+   * @return bool
+   *   TRUE if a conflicting appointment exists; FALSE if none (or this
+   *   appointment has no resolvable time, in which case we cannot judge).
+   */
+  protected function memberHasOverlappingAppointment(NodeInterface $node, int $uid): bool {
+    if ($uid <= 0
+      || !$node->hasField('field_appointment_timerange')
+      || $node->get('field_appointment_timerange')->isEmpty()) {
+      return FALSE;
+    }
+
+    $range = $node->get('field_appointment_timerange')->first();
+    $start = (int) ($range->value ?? 0);
+    $end = (int) ($range->end_value ?? 0);
+    if ($start <= 0 || $end <= 0) {
+      return FALSE;
+    }
+
+    $storage = $this->entityTypeManager->getStorage('node');
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('type', 'appointment')
+      ->condition('nid', $node->id(), '<>')
+      // Overlap: existing.start < this.end AND existing.end > this.start.
+      ->condition('field_appointment_timerange.value', $end, '<')
+      ->condition('field_appointment_timerange.end_value', $start, '>')
+      ->range(0, 1);
+
+    // The member is the booker (owner) or a tagalong attendee.
+    $who = $query->orConditionGroup()
+      ->condition('uid', $uid)
+      ->condition('field_appointment_attendees.target_id', $uid);
+    $query->condition($who);
+
+    // Ignore cancelled appointments (status unset counts as active).
+    $not_cancelled = $query->orConditionGroup()
+      ->condition('field_appointment_status', 'canceled', '<>')
+      ->notExists('field_appointment_status');
+    $query->condition($not_cancelled);
+
+    return !empty($query->execute());
   }
 
   /**
