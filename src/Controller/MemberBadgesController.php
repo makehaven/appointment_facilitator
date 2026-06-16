@@ -87,6 +87,17 @@ class MemberBadgesController extends ControllerBase {
       $requests_by_badge[$tid][] = $request;
     }
 
+    // Collapse duplicate holdings for the same badge to a single card. When a
+    // member has an `active` badge_request plus a stale `pending` one for the
+    // same badge, show only the highest-priority record so an earned badge is
+    // not shadowed by a "pending" duplicate (reported on the waterjet badge,
+    // cycle review 2026-06-15).
+    foreach ($requests_by_badge as $tid => $tid_requests) {
+      if (count($tid_requests) > 1) {
+        $requests_by_badge[$tid] = [$this->pickPrimaryRequest($tid_requests)];
+      }
+    }
+
     if (!$badge_tids) {
       return ['#markup' => '<p>' . $this->t('No badge data found.') . '</p>'];
     }
@@ -235,6 +246,33 @@ class MemberBadgesController extends ControllerBase {
     }
 
     return array_map('array_values', $area_map);
+  }
+
+  /**
+   * Picks the single representative badge_request for one badge.
+   *
+   * Orders by status priority (STATUS_ORDER: active > pending > suspended >
+   * expired > rejected), breaking ties to the most recently created record.
+   * Collapses an `active` badge plus a stale `pending` duplicate to the active
+   * one so the badge is not listed twice.
+   *
+   * @param \Drupal\node\NodeInterface[] $requests
+   *   The badge_request nodes for a single badge.
+   *
+   * @return \Drupal\node\NodeInterface
+   *   The highest-priority request.
+   */
+  protected function pickPrimaryRequest(array $requests) {
+    $status_order = array_flip(self::STATUS_ORDER);
+    usort($requests, function ($a, $b) use ($status_order) {
+      $ra = $status_order[$a->get('field_badge_status')->value ?? 'active'] ?? 99;
+      $rb = $status_order[$b->get('field_badge_status')->value ?? 'active'] ?? 99;
+      if ($ra !== $rb) {
+        return $ra <=> $rb;
+      }
+      return $b->getCreatedTime() <=> $a->getCreatedTime();
+    });
+    return reset($requests);
   }
 
   /**
