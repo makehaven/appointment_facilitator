@@ -897,11 +897,14 @@ class BadgeNextStepsController extends ControllerBase {
    *
    * Excludes sessions the current user has already joined — there is no point
    * offering to join something they are already part of. Only looks within the
-   * current scheduling window (7 days).
+   * current scheduling window (14 days).
    */
   protected function findOpenAppointments(int $badge_tid, int $uid): array {
     $now = \Drupal::time()->getRequestTime();
-    $week_ahead = $now + (7 * 24 * 60 * 60);
+    // 14-day window: badges whose facilitators run sparse (biweekly/monthly)
+    // availability were showing "no slots" when the next slot was 8+ days out
+    // (cycle review 2026-06-15). Match the facilitator_schedules view window.
+    $week_ahead = $now + (14 * 24 * 60 * 60);
 
     $storage = $this->entityTypeManager()->getStorage('node');
     $query = $storage->getQuery()
@@ -1047,9 +1050,11 @@ class BadgeNextStepsController extends ControllerBase {
     $profile_storage = $this->entityTypeManager()->getStorage('profile');
 
     $now = \Drupal::time()->getRequestTime();
-    // Match /facilitator/schedules view window: 2 hours ago → 1 week ahead.
+    // Match /facilitator/schedules view window: 2 hours ago → 2 weeks ahead.
+    // Widened from 1 week so sparse-availability badges (next slot 8+ days out)
+    // don't show "no slots available" (cycle review 2026-06-15).
     $window_start = $now - (2 * 60 * 60);
-    $window_end   = $now + (7 * 24 * 60 * 60);
+    $window_end   = $now + (14 * 24 * 60 * 60);
 
     $available = [];
     foreach ($users as $user) {
