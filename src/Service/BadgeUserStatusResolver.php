@@ -188,15 +188,35 @@ class BadgeUserStatusResolver {
       ->condition('field_member_to_badge.target_id', $uid)
       ->condition('field_badge_requested.target_id', $tid)
       ->sort('changed', 'DESC')
-      ->range(0, 1)
       ->execute();
 
     if (!$nids) {
       return NULL;
     }
-    $nid = (int) reset($nids);
-    $node = $storage->load($nid);
-    return $node instanceof NodeInterface ? $node : NULL;
+
+    // loadMultiple() returns keyed by nid, not in query order — re-order to the
+    // changed-DESC nid order so the fallback below is "most recently changed".
+    $nodes = $storage->loadMultiple($nids);
+    $ordered = [];
+    foreach ($nids as $nid) {
+      if (isset($nodes[$nid]) && $nodes[$nid] instanceof NodeInterface) {
+        $ordered[] = $nodes[$nid];
+      }
+    }
+
+    // An active badge_request means the member actually holds the badge; it
+    // must win over a more-recently-changed but stale 'pending' duplicate for
+    // the same badge. Otherwise the badge page banner and tool-page next-steps
+    // report "pending" next to an earned badge (reported on the waterjet badge,
+    // cycle review 2026-06-15). Fall back to the most-recently-changed request.
+    foreach ($ordered as $node) {
+      if ($node->hasField('field_badge_status')
+        && strtolower(trim((string) $node->get('field_badge_status')->value)) === 'active') {
+        return $node;
+      }
+    }
+
+    return $ordered ? reset($ordered) : NULL;
   }
 
 }
