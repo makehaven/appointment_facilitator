@@ -1,0 +1,152 @@
+/* ── Badge certificate (badge_request instance page) ───────────────
+   Turns the badge_request "instance" node into a gamified, certificate-style
+   presentation of an earned (or in-progress) badge. Module-owned so it looks
+   the same in the front-end barrio theme and the Gin admin theme. */
+
+.mh-badge-cert {
+  --mh-cert-accent: var(--mh-color-brand-primary, #8b1919);
+  --mh-cert-gold: #c9a227;
+  --mh-cert-paper: #fffdf6;
+  position: relative;
+  max-width: 640px;
+  margin: 1.5rem auto 2rem;
+  padding: 2rem 2.25rem 2.25rem;
+  text-align: center;
+  background:
+    radial-gradient(circle at top, rgba(201, 162, 39, 0.06), transparent 60%),
+    var(--mh-cert-paper);
+  border: 1px solid var(--mh-cert-gold);
+  border-radius: var(--mh-radius-lg, 0.75rem);
+  box-shadow: var(--mh-shadow-md, 0 6px 20px rgb(19 19 20 / 0.12));
+  color: #2b2b2b;
+}
+
+/* Inner hairline frame for the "certificate" feel. */
+.mh-badge-cert::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1px solid rgba(201, 162, 39, 0.45);
+  border-radius: calc(var(--mh-radius-lg, 0.75rem) - 4px);
+  pointer-events: none;
+}
+
+.mh-badge-cert__seal {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding: 0.2rem 0.85rem;
+  font-family: var(--mh-font-display, "Roboto Condensed", sans-serif);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--mh-cert-accent);
+  border-radius: var(--mh-radius-pill, 999px);
+}
+
+.mh-badge-cert__image {
+  margin: 0.25rem auto 0.75rem;
+}
+
+.mh-badge-cert__image img {
+  width: 150px;
+  height: 150px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 10px rgb(0 0 0 / 0.18));
+}
+
+.mh-badge-cert__eyebrow {
+  margin: 0;
+  font-family: var(--mh-font-display, "Roboto Condensed", sans-serif);
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mh-cert-gold);
+}
+
+.mh-badge-cert__title {
+  margin: 0.1rem 0 0.5rem;
+  font-family: var(--mh-font-display, "Roboto Condensed", sans-serif);
+  font-size: 2rem;
+  line-height: 1.1;
+  color: var(--mh-cert-accent);
+}
+
+.mh-badge-cert__awarded-to {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.mh-badge-cert__awarded-to strong {
+  font-size: 1.2rem;
+}
+
+.mh-badge-cert__meta {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+  color: #555;
+}
+
+.mh-badge-cert__message {
+  margin: 1rem auto 0;
+  max-width: 42ch;
+  font-size: 0.97rem;
+  color: #444;
+}
+
+.mh-badge-cert__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: center;
+  margin-top: 1.25rem;
+}
+
+.mh-badge-cert__actions .button,
+.mh-badge-cert__actions a.button {
+  margin: 0;
+}
+
+/* ── In-progress (pending) ── muted, grayscale badge art ── */
+.mh-badge-cert--pending {
+  --mh-cert-paper: #f7f9fb;
+  --mh-cert-gold: #9fb4c4;
+}
+
+.mh-badge-cert--pending .mh-badge-cert__seal {
+  background: #4a6b86;
+}
+
+.mh-badge-cert--pending .mh-badge-cert__image img {
+  filter: grayscale(0.85) opacity(0.7);
+}
+
+.mh-badge-cert--pending .mh-badge-cert__title {
+  color: #34506a;
+}
+
+/* ── Warning states (expired / suspended) ── */
+.mh-badge-cert--warning {
+  --mh-cert-paper: #fff8f0;
+  --mh-cert-gold: #d9a441;
+}
+
+.mh-badge-cert--warning .mh-badge-cert__seal {
+  background: #9a6a12;
+}
+
+@media (max-width: 480px) {
+  .mh-badge-cert {
+    padding: 1.5rem 1.1rem 1.6rem;
+  }
+  .mh-badge-cert__title {
+    font-size: 1.6rem;
+  }
+  .mh-badge-cert__image img {
+    width: 120px;
+    height: 120px;
+  }
+}

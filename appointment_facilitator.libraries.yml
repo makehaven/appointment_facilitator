@@ -122,6 +122,12 @@ badge_status_banner:
     theme:
       css/badge-status-banner.css: {}
 
+badge_certificate:
+  version: 1.x
+  css:
+    theme:
+      css/badge-certificate.css: {}
+
 pending_badges_prompt:
   version: 1.x
   css:

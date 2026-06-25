@@ -35,6 +35,7 @@ class BadgeRequestMemberCtaTest extends KernelTestBase {
     'field',
     'text',
     'options',
+    'datetime',
     'taxonomy',
     'appointment_facilitator',
   ];
@@ -65,13 +66,14 @@ class BadgeRequestMemberCtaTest extends KernelTestBase {
       'active' => 'Active',
       'suspended' => 'Suspended',
     ]);
+    $this->ensureNodeDateField('badge_request', 'field_class_completed_date');
 
     // uid 1 placeholder so created members aren't treated as the super-user.
     User::create(['uid' => 1, 'name' => 'root', 'status' => 1])->save();
   }
 
   /**
-   * The owner of a pending request gets a schedule CTA to the badge page.
+   * The owner of a pending request gets the in-progress certificate + schedule.
    */
   public function testPendingOwnerSeesScheduleCta(): void {
     [$member, $badge, $node] = $this->makeRequest('pending');
@@ -79,8 +81,9 @@ class BadgeRequestMemberCtaTest extends KernelTestBase {
     $build = $this->buildFullViewAs($node, $member);
     $this->assertArrayHasKey('appointment_facilitator_member_cta', $build);
     $cta = $build['appointment_facilitator_member_cta'];
-    $this->assertStringContainsString('pending', (string) $cta['heading']['#value']);
-    $this->assertArrayHasKey('badge', $cta['actions']);
+    $this->assertContains('mh-badge-cert--pending', $cta['#attributes']['class']);
+    $this->assertSame($badge->label(), (string) $cta['title']['#value']);
+    $this->assertStringContainsStringIgnoringCase('schedule', (string) $cta['actions']['badge']['#title']);
     $this->assertSame((int) $badge->id(), (int) $cta['actions']['badge']['#url']->getRouteParameters()['taxonomy_term']);
     $this->assertContains('user', $build['#cache']['contexts'] ?? []);
   }
@@ -98,14 +101,38 @@ class BadgeRequestMemberCtaTest extends KernelTestBase {
   }
 
   /**
-   * An active badge shows an affirming CTA, not a "pending" one.
+   * An active badge renders the "Earned" certificate seal + recipient.
    */
-  public function testActiveOwnerSeesEarnedMessage(): void {
+  public function testActiveOwnerSeesEarnedCertificate(): void {
     [$member, , $node] = $this->makeRequest('active');
 
     $build = $this->buildFullViewAs($node, $member);
     $this->assertArrayHasKey('appointment_facilitator_member_cta', $build);
-    $this->assertStringContainsStringIgnoringCase('earned', (string) $build['appointment_facilitator_member_cta']['heading']['#value']);
+    $cta = $build['appointment_facilitator_member_cta'];
+    $this->assertContains('mh-badge-cert--earned', $cta['#attributes']['class']);
+    $this->assertStringContainsStringIgnoringCase('earned', (string) $cta['seal']['#value']);
+    $this->assertStringContainsString($member->getDisplayName(), (string) $cta['awarded_to']['#value']);
+  }
+
+  /**
+   * Earned certificate shows the earned date and the awarding facilitator.
+   */
+  public function testActiveCertificateShowsDateAndAwarder(): void {
+    $facilitator = User::create(['name' => 'fac_jane', 'status' => 1]);
+    $facilitator->save();
+    [$member, , $node] = $this->makeRequest('active');
+    $node->set('field_class_completed_date', '2026-06-01T12:00:00');
+    $node->setNewRevision(TRUE);
+    $node->setRevisionUserId((int) $facilitator->id());
+    $node->save();
+
+    $cta = $this->buildFullViewAs($node, $member)['appointment_facilitator_member_cta'];
+    $this->assertArrayHasKey('meta', $cta);
+    $meta = (string) $cta['meta']['#value'];
+    $this->assertStringContainsString('Earned', $meta);
+    $this->assertStringContainsString('June 1, 2026', $meta);
+    $this->assertStringContainsString('Awarded by', $meta);
+    $this->assertStringContainsString('fac_jane', $meta);
   }
 
   /**
@@ -151,6 +178,29 @@ class BadgeRequestMemberCtaTest extends KernelTestBase {
         'entity_type' => 'node',
         'type' => 'entity_reference',
         'settings' => ['target_type' => $target_type],
+        'cardinality' => 1,
+      ])->save();
+    }
+    if (!FieldConfig::loadByName('node', $bundle, $field_name)) {
+      FieldConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'node',
+        'bundle' => $bundle,
+        'label' => $field_name,
+      ])->save();
+    }
+  }
+
+  /**
+   * Creates a node datetime field.
+   */
+  protected function ensureNodeDateField(string $bundle, string $field_name): void {
+    if (!FieldStorageConfig::loadByName('node', $field_name)) {
+      FieldStorageConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'node',
+        'type' => 'datetime',
+        'settings' => ['datetime_type' => 'datetime'],
         'cardinality' => 1,
       ])->save();
     }

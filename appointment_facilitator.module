@@ -2063,16 +2063,17 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
 }
 
 /**
- * Adds a member-facing next-step CTA to a badge_request canonical page.
+ * Renders the badge_request "instance" page as a gamified certificate.
  *
- * The badge_request node is the "instance" of a member's request for a badge.
- * On its own it only shows status, so a member who returns to a badge they are
- * still trying to earn hits a dead end here. This injects a status-aware banner
- * that links to the badge term page — where the full next-steps banner and the
- * facilitator schedule grid live — so they can actually take the next step.
+ * The badge_request node is the instance of a member's request for a badge. On
+ * its own it only shows raw status fields — a dead end for a member returning
+ * to a badge they care about. For the owning member this replaces those rows
+ * with a certificate-style card: the badge artwork, who it was awarded to, when
+ * it was earned and by whom (for active badges), a status seal, and a clear
+ * next step (schedule a checkout / visit the badge page).
  *
- * Only the member who owns the request sees it; facilitators get the separate
- * approval action instead.
+ * Only the member who owns the request sees it; facilitators keep the raw
+ * fields plus the separate approval action.
  */
 function _appointment_facilitator_attach_badge_request_member_cta(array &$build, NodeInterface $entity, AccountInterface $account, string $status): void {
   $owner_id = $entity->hasField('field_member_to_badge') && !$entity->get('field_member_to_badge')->isEmpty()
@@ -2090,38 +2091,36 @@ function _appointment_facilitator_attach_badge_request_member_cta(array &$build,
   }
   $badge_label = $badge->label();
 
-  // Tone, heading, body, and whether to offer the "go schedule" CTA, per
-  // status. 'pending' is the reported case; the others keep the page useful
-  // rather than a bare status line.
-  [$tone, $heading, $body, $show_badge_cta] = match ($status) {
+  // variant (drives styling), seal text, optional message, and whether to
+  // label the primary action as "schedule".
+  [$variant, $seal, $message, $is_schedule] = match ($status) {
     'pending' => [
-      'progress',
-      t('This badge is pending — you haven’t earned it yet.'),
-      t('To finish earning the @badge badge, go to the badge page to review the steps and schedule your facilitator checkout.', ['@badge' => $badge_label]),
+      'pending',
+      t('In progress'),
+      t('You haven’t earned this badge yet. Head to the badge page to review the steps and schedule your facilitator checkout.'),
       TRUE,
     ],
     'active' => [
-      'success',
-      t('✓ You’ve earned the @badge badge.', ['@badge' => $badge_label]),
-      t('You’re authorized for the associated tools. Visit the badge page for tool details and resources.'),
-      TRUE,
+      'earned',
+      t('Earned'),
+      NULL,
+      FALSE,
     ],
     'expired' => [
       'warning',
-      t('Your @badge badge has expired.', ['@badge' => $badge_label]),
-      t('Visit the badge page to renew it — re-take the quiz or schedule a refresher.'),
-      TRUE,
+      t('Expired'),
+      t('This badge has expired. Visit the badge page to renew it — re-take the quiz or schedule a refresher.'),
+      FALSE,
     ],
     'suspended' => [
       'warning',
-      t('Your @badge badge is suspended.', ['@badge' => $badge_label]),
-      t('Please contact staff for next steps.'),
+      t('Suspended'),
+      t('This badge is currently suspended. Please contact staff for next steps.'),
       FALSE,
     ],
-    default => ['neutral', NULL, NULL, FALSE],
+    default => [NULL, NULL, NULL, FALSE],
   };
-
-  if ($heading === NULL) {
+  if ($variant === NULL) {
     return;
   }
 
@@ -2132,51 +2131,149 @@ function _appointment_facilitator_attach_badge_request_member_cta(array &$build,
     $badge_url = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $badge->id()]);
   }
 
-  // Map the tone onto a core message style so warning states read as warnings.
-  $message_modifier = $tone === 'warning' ? 'messages--warning' : 'messages--status';
-
-  $cta = [
+  $cert = [
     '#type' => 'container',
-    '#attributes' => [
-      'class' => ['messages', $message_modifier, 'badge-request-member-cta', 'badge-request-member-cta--' . $tone],
-    ],
+    '#attributes' => ['class' => ['mh-badge-cert', 'mh-badge-cert--' . $variant]],
     '#weight' => -100,
-    'heading' => [
+    '#attached' => ['library' => ['appointment_facilitator/badge_certificate']],
+    'seal' => [
       '#type' => 'html_tag',
-      '#tag' => 'h3',
-      '#value' => $heading,
-    ],
-    'body' => [
-      '#type' => 'html_tag',
-      '#tag' => 'p',
-      '#value' => $body,
-    ],
-    'actions' => [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['badge-request-member-cta__actions']],
+      '#tag' => 'span',
+      '#value' => $seal,
+      '#attributes' => ['class' => ['mh-badge-cert__seal']],
     ],
   ];
 
-  if ($show_badge_cta) {
-    $cta['actions']['badge'] = [
-      '#type' => 'link',
-      '#title' => $status === 'pending'
-        ? t('Go to the @badge page to schedule', ['@badge' => $badge_label])
-        : t('Go to the @badge page', ['@badge' => $badge_label]),
-      '#url' => $badge_url,
-      '#attributes' => ['class' => ['button', 'button--primary']],
+  // Badge artwork from the term.
+  if ($badge->hasField('field_member_badge_image') && !$badge->get('field_member_badge_image')->isEmpty()) {
+    $file = $badge->get('field_member_badge_image')->first()?->entity;
+    if ($file) {
+      $cert['image'] = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['mh-badge-cert__image']],
+        'img' => [
+          '#theme' => 'image_style',
+          '#style_name' => 'medium',
+          '#uri' => $file->getFileUri(),
+          '#alt' => $badge_label,
+        ],
+      ];
+    }
+  }
+
+  $cert['eyebrow'] = [
+    '#type' => 'html_tag',
+    '#tag' => 'p',
+    '#value' => t('MakeHaven Badge'),
+    '#attributes' => ['class' => ['mh-badge-cert__eyebrow']],
+  ];
+  $cert['title'] = [
+    '#type' => 'html_tag',
+    '#tag' => 'h2',
+    '#value' => $badge_label,
+    '#attributes' => ['class' => ['mh-badge-cert__title']],
+  ];
+
+  $member = $entity->get('field_member_to_badge')->entity;
+  if ($member) {
+    $cert['awarded_to'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => t('Awarded to <strong>@name</strong>', ['@name' => $member->getDisplayName()]),
+      '#attributes' => ['class' => ['mh-badge-cert__awarded-to']],
     ];
   }
 
-  $cta['actions']['all_badges'] = [
-    '#type' => 'link',
-    '#title' => t('View all my badges'),
-    '#url' => Url::fromRoute('appointment_facilitator.member_badges'),
-    '#attributes' => ['class' => ['button', 'button--small']],
+  // Earned date + awarded-by line, for active badges only.
+  if ($status === 'active') {
+    $meta = [];
+    if ($earned = _appointment_facilitator_format_badge_earned_date($entity)) {
+      $meta[] = t('Earned @date', ['@date' => $earned]);
+    }
+    if ($awarder = _appointment_facilitator_badge_awarder_name($entity, $owner_id)) {
+      $meta[] = t('Awarded by @who', ['@who' => $awarder]);
+    }
+    if ($meta) {
+      $cert['meta'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => implode(' · ', array_map('strval', $meta)),
+        '#attributes' => ['class' => ['mh-badge-cert__meta']],
+      ];
+    }
+  }
+
+  if ($message) {
+    $cert['message'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => $message,
+      '#attributes' => ['class' => ['mh-badge-cert__message']],
+    ];
+  }
+
+  $cert['actions'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-cert__actions']],
+    'badge' => [
+      '#type' => 'link',
+      '#title' => $is_schedule ? t('Schedule your checkout') : t('Visit the @badge page', ['@badge' => $badge_label]),
+      '#url' => $badge_url,
+      '#attributes' => ['class' => ['button', 'button--primary']],
+    ],
+    'all_badges' => [
+      '#type' => 'link',
+      '#title' => t('View all my badges'),
+      '#url' => Url::fromRoute('appointment_facilitator.member_badges'),
+      '#attributes' => ['class' => ['button', 'button--small']],
+    ],
   ];
 
-  $build['appointment_facilitator_member_cta'] = $cta;
+  $build['appointment_facilitator_member_cta'] = $cert;
   $build['#cache']['contexts'][] = 'user';
+
+  // The certificate already presents these, so hide the raw rows for the owner.
+  // (Facilitators are not owners and keep the operational field display.)
+  foreach (['field_badge_requested', 'field_badge_status', 'field_member_to_badge', 'field_class_completed_date'] as $field_name) {
+    if (isset($build[$field_name])) {
+      $build[$field_name]['#access'] = FALSE;
+    }
+  }
+}
+
+/**
+ * Formats a badge_request's earned date ("F j, Y"), or NULL when unset.
+ */
+function _appointment_facilitator_format_badge_earned_date(NodeInterface $entity): ?string {
+  if (!$entity->hasField('field_class_completed_date') || $entity->get('field_class_completed_date')->isEmpty()) {
+    return NULL;
+  }
+  $raw = (string) $entity->get('field_class_completed_date')->value;
+  $ts = strtotime($raw);
+  if ($ts === FALSE) {
+    return NULL;
+  }
+  return \Drupal::service('date.formatter')->format($ts, 'custom', 'F j, Y');
+}
+
+/**
+ * Returns the display name of the facilitator who awarded the badge, or NULL.
+ *
+ * Uses the revision author recorded when the request was approved (see
+ * BadgeRequestApprovalController). Only returned when it's a real, different
+ * user than the recipient and not the uid-1 system account — so the
+ * certificate never shows "Awarded by you" or "Awarded by root".
+ */
+function _appointment_facilitator_badge_awarder_name(NodeInterface $entity, int $owner_id): ?string {
+  $reviser = $entity->getRevisionUser();
+  if (!$reviser || !$reviser->isAuthenticated()) {
+    return NULL;
+  }
+  $rid = (int) $reviser->id();
+  if ($rid === $owner_id || $rid === 1) {
+    return NULL;
+  }
+  return $reviser->getDisplayName();
 }
 
 /**
