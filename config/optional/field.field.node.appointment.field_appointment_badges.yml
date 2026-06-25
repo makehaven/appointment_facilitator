@@ -16,10 +16,13 @@ translatable: false
 default_value: {  }
 default_value_callback: ''
 settings:
-  handler: views
+  handler: 'appointment_facilitator_issuable_badge:taxonomy_term'
   handler_settings:
-    view:
-      view_name: badgers_reference
-      display_name: badge_reference_w_time_pending_only
-      arguments: {  }
+    target_bundles:
+      badges: badges
+    sort:
+      field: name
+      direction: asc
+    auto_create: false
+    auto_create_bundle: ''
 field_type: entity_reference
