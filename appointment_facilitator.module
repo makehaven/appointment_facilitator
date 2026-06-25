@@ -2010,6 +2010,20 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
 
   $account = \Drupal::currentUser();
   $status = (string) $entity->get('field_badge_status')->value;
+
+  // Member-facing next-step CTA on the badge_request canonical page. A member
+  // returning to a badge they're trying to earn lands here from their badge
+  // list; the request "instance" only shows status, so without this it's a
+  // dead end. Point them at the badge page where they can review the steps and
+  // schedule a checkout.
+  if ($view_mode === 'full') {
+    // The full-view build varies by viewer (owner CTA below, facilitator
+    // approve action further down), so it must always be cached per user —
+    // otherwise the first viewer's variant leaks to everyone else.
+    $build['#cache']['contexts'][] = 'user';
+    _appointment_facilitator_attach_badge_request_member_cta($build, $entity, $account, $status);
+  }
+
   if ($status !== 'pending') {
     return;
   }
@@ -2046,6 +2060,123 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
       ],
     ],
   ];
+}
+
+/**
+ * Adds a member-facing next-step CTA to a badge_request canonical page.
+ *
+ * The badge_request node is the "instance" of a member's request for a badge.
+ * On its own it only shows status, so a member who returns to a badge they are
+ * still trying to earn hits a dead end here. This injects a status-aware banner
+ * that links to the badge term page — where the full next-steps banner and the
+ * facilitator schedule grid live — so they can actually take the next step.
+ *
+ * Only the member who owns the request sees it; facilitators get the separate
+ * approval action instead.
+ */
+function _appointment_facilitator_attach_badge_request_member_cta(array &$build, NodeInterface $entity, AccountInterface $account, string $status): void {
+  $owner_id = $entity->hasField('field_member_to_badge') && !$entity->get('field_member_to_badge')->isEmpty()
+    ? (int) $entity->get('field_member_to_badge')->target_id
+    : 0;
+  if ($owner_id <= 0 || $owner_id !== (int) $account->id()) {
+    return;
+  }
+
+  $badge = $entity->hasField('field_badge_requested') && !$entity->get('field_badge_requested')->isEmpty()
+    ? $entity->get('field_badge_requested')->entity
+    : NULL;
+  if (!$badge instanceof TermInterface) {
+    return;
+  }
+  $badge_label = $badge->label();
+
+  // Tone, heading, body, and whether to offer the "go schedule" CTA, per
+  // status. 'pending' is the reported case; the others keep the page useful
+  // rather than a bare status line.
+  [$tone, $heading, $body, $show_badge_cta] = match ($status) {
+    'pending' => [
+      'progress',
+      t('This badge is pending — you haven’t earned it yet.'),
+      t('To finish earning the @badge badge, go to the badge page to review the steps and schedule your facilitator checkout.', ['@badge' => $badge_label]),
+      TRUE,
+    ],
+    'active' => [
+      'success',
+      t('✓ You’ve earned the @badge badge.', ['@badge' => $badge_label]),
+      t('You’re authorized for the associated tools. Visit the badge page for tool details and resources.'),
+      TRUE,
+    ],
+    'expired' => [
+      'warning',
+      t('Your @badge badge has expired.', ['@badge' => $badge_label]),
+      t('Visit the badge page to renew it — re-take the quiz or schedule a refresher.'),
+      TRUE,
+    ],
+    'suspended' => [
+      'warning',
+      t('Your @badge badge is suspended.', ['@badge' => $badge_label]),
+      t('Please contact staff for next steps.'),
+      FALSE,
+    ],
+    default => ['neutral', NULL, NULL, FALSE],
+  };
+
+  if ($heading === NULL) {
+    return;
+  }
+
+  try {
+    $badge_url = $badge->toUrl();
+  }
+  catch (\Throwable) {
+    $badge_url = Url::fromRoute('entity.taxonomy_term.canonical', ['taxonomy_term' => $badge->id()]);
+  }
+
+  // Map the tone onto a core message style so warning states read as warnings.
+  $message_modifier = $tone === 'warning' ? 'messages--warning' : 'messages--status';
+
+  $cta = [
+    '#type' => 'container',
+    '#attributes' => [
+      'class' => ['messages', $message_modifier, 'badge-request-member-cta', 'badge-request-member-cta--' . $tone],
+    ],
+    '#weight' => -100,
+    'heading' => [
+      '#type' => 'html_tag',
+      '#tag' => 'h3',
+      '#value' => $heading,
+    ],
+    'body' => [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => $body,
+    ],
+    'actions' => [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['badge-request-member-cta__actions']],
+    ],
+  ];
+
+  if ($show_badge_cta) {
+    $cta['actions']['badge'] = [
+      '#type' => 'link',
+      '#title' => $status === 'pending'
+        ? t('Go to the @badge page to schedule', ['@badge' => $badge_label])
+        : t('Go to the @badge page', ['@badge' => $badge_label]),
+      '#url' => $badge_url,
+      '#attributes' => ['class' => ['button', 'button--primary']],
+    ];
+  }
+
+  $cta['actions']['all_badges'] = [
+    '#type' => 'link',
+    '#title' => t('View all my badges'),
+    '#url' => Url::fromRoute('appointment_facilitator.member_badges'),
+    '#attributes' => ['class' => ['button', 'button--small']],
+  ];
+
+  $build['appointment_facilitator_member_cta'] = $cta;
+  $build['#cache']['contexts'][] = 'user';
 }
 
 /**
