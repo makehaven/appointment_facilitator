@@ -352,10 +352,9 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
       . '</span>';
 
     if ($badge_href !== '') {
-      $build['mh_badge_user_eligibility'] = [
+      $marker = [
         '#type' => 'html_tag',
         '#tag' => 'a',
-        '#weight' => $component['weight'] ?? -9,
         '#value' => $inner_markup,
         '#attributes' => [
           'href' => $badge_href,
@@ -366,9 +365,8 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
       ];
     }
     else {
-      $build['mh_badge_user_eligibility'] = [
+      $marker = [
         '#type' => 'container',
-        '#weight' => $component['weight'] ?? -9,
         '#attributes' => [
           'class' => $classes,
           'data-state' => $state,
@@ -377,7 +375,101 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
         'content' => ['#markup' => $inner_markup],
       ];
     }
+
+    // On the tool-page embed, fold the "how to get checked out" options
+    // (scheduled Build & Badge classes + by-request badgers) below the marker.
+    // Both were dropped from the badges.embedded display in the 2026-05-10
+    // badging-UX simplification; members reported the class list and the
+    // by-request badgers vanished from tool pages. The compact "card" view mode
+    // also carries this pseudo-field, so we render the options only on the
+    // embedded view mode to keep cards tidy.
+    $options = ($display->getMode() === 'embedded')
+      ? _appointment_facilitator_badge_checkout_options($term, $state)
+      : [];
+
+    $weight = $component['weight'] ?? -9;
+    if ($options) {
+      $build['mh_badge_user_eligibility'] = [
+        '#type' => 'container',
+        '#weight' => $weight,
+        '#attributes' => ['class' => ['mh-badge-eligibility-wrap']],
+        'marker' => $marker,
+        'options' => $options,
+      ];
+    }
+    else {
+      $marker['#weight'] = $weight;
+      $build['mh_badge_user_eligibility'] = $marker;
+    }
   }
+}
+
+/**
+ * Builds the "how to get checked out" options for a badge term embed.
+ *
+ * Renders the scheduled Build & Badge classes (the facilitator_schedules tool
+ * EVA) and any by-request badgers (field_badge_issuer_on_request) so they show
+ * on tool-page badge embeds again. The 2026-05-10 badging-UX simplification
+ * moved both off the badges.embedded display, and members reported (2026-06-23
+ * /i/25299, 2026-06-24 /badges/gerber-cnc) that the class list and by-request
+ * badgers disappeared from tool pages.
+ *
+ * Returns an empty array when the member already holds the badge (or it is
+ * suspended/expired) — they don't need checkout options.
+ */
+function _appointment_facilitator_badge_checkout_options(TermInterface $term, string $state): array {
+  if (in_array($state, ['active', 'suspended', 'expired'], TRUE)) {
+    return [];
+  }
+
+  $tid = (int) $term->id();
+  $children = [];
+
+  // Scheduled Build & Badge classes / facilitator checkout slots for this badge.
+  // The view prints its own empty text when nothing is scheduled.
+  $children['schedule'] = [
+    '#type' => 'view',
+    '#name' => 'facilitator_schedules',
+    '#display_id' => 'facilitator_schedule_tool_eva',
+    '#arguments' => [$tid],
+  ];
+
+  // By-request badgers — experienced members willing to come in on request.
+  if (
+    $term->hasField('field_badge_issuer_on_request')
+    && !$term->get('field_badge_issuer_on_request')->isEmpty()
+  ) {
+    $children['on_request'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mh-badge-on-request']],
+      'title' => [
+        '#markup' => '<h4 class="mh-badge-on-request__title">'
+          . Html::escape((string) t('Available by request'))
+          . '</h4>',
+      ],
+      // Names only, not linked — these are members who agreed to be contacted
+      // for a checkout, not a directory of profile links.
+      'people' => $term->get('field_badge_issuer_on_request')->view([
+        'label' => 'hidden',
+        'type' => 'entity_reference_label',
+        'settings' => ['link' => FALSE],
+      ]),
+      'hint' => [
+        '#markup' => '<p class="mh-badge-on-request__hint">'
+          . Html::escape((string) t('Ask in the space or on Slack to arrange a checkout.'))
+          . '</p>',
+      ],
+    ];
+  }
+
+  return [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-checkout-options']],
+    // Reuse the schedule-grid styling already shipped for the full badge page;
+    // it is not otherwise attached on the embedded view mode.
+    '#attached' => ['library' => ['appointment_facilitator/badge_schedule_grid']],
+    'children' => $children,
+  ];
 }
 
 /**
