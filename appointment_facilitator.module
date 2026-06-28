@@ -96,6 +96,7 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
     if ($display) {
       _appointment_facilitator_attach_badge_status_pseudo_fields($build, $entity, $display);
+      _appointment_facilitator_attach_badge_event_card_pseudo_field($build, $entity, $display);
     }
 
     if ($view_mode === 'full') {
@@ -1774,6 +1775,142 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
 }
 
 /**
+ * Implements hook_entity_view_alter().
+ *
+ * The `event_badge` view mode (Badges Earned listing on event pages) must
+ * render ONLY the compact card. View attachments such as the upcoming-events
+ * EVA and the facilitator schedule grid attach themselves to every badge
+ * view mode regardless of the entity display config, so strip anything that
+ * isn't the card pseudo-field or render metadata.
+ */
+function appointment_facilitator_entity_view_alter(array &$build, EntityInterface $entity, EntityViewDisplayInterface $display): void {
+  if ($entity->getEntityTypeId() !== 'taxonomy_term' || $entity->bundle() !== 'badges') {
+    return;
+  }
+  if (($build['#view_mode'] ?? NULL) !== 'event_badge') {
+    return;
+  }
+  foreach (array_keys($build) as $key) {
+    // Preserve the card and all render metadata (#cache, #view_mode, …).
+    if ($key === 'mh_badge_event_card' || (is_string($key) && str_starts_with($key, '#'))) {
+      continue;
+    }
+    unset($build[$key]);
+  }
+}
+
+/**
+ * Returns link render arrays for the tools a badge unlocks.
+ *
+ * A tool (node type `item`) "needs" a badge when it references the term in
+ * either field_member_badges (required) or field_additional_badges (optional).
+ * Access checking is enabled so anonymous viewers only see published,
+ * viewable tools — this list renders on the public event info page.
+ *
+ * @return array[]
+ *   A list of renderable Link arrays, sorted by tool title.
+ */
+function _appointment_facilitator_unlocked_tool_links(TermInterface $term): array {
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(TRUE)
+    ->condition('type', 'item')
+    ->condition('status', 1)
+    ->sort('title', 'ASC');
+  $badge_group = $query->orConditionGroup()
+    ->condition('field_member_badges.target_id', (int) $term->id())
+    ->condition('field_additional_badges.target_id', (int) $term->id());
+  $query->condition($badge_group);
+  $nids = $query->execute();
+  if (!$nids) {
+    return [];
+  }
+
+  $links = [];
+  foreach (Node::loadMultiple($nids) as $tool) {
+    if (!$tool instanceof NodeInterface) {
+      continue;
+    }
+    $link = Link::fromTextAndUrl($tool->label(), $tool->toUrl())->toRenderable();
+    $link['#attributes']['class'][] = 'mh-badge-event-card__tool-link';
+    $links[] = $link;
+  }
+  return $links;
+}
+
+/**
+ * Populates the mh_badge_event_card pseudo-field for a badges term.
+ *
+ * Builds a compact card — badge image, a link to the badge page, and the
+ * tools the badge unlocks — used by the "Badges Earned" listing on the
+ * CiviCRM event info page (event_information_bar view, event_badge view
+ * mode). Only runs when the active display enables the pseudo-field.
+ */
+function _appointment_facilitator_attach_badge_event_card_pseudo_field(array &$build, TermInterface $term, EntityViewDisplayInterface $display): void {
+  $component = $display->getComponent('mh_badge_event_card');
+  if (!$component) {
+    return;
+  }
+
+  $card = [
+    '#type' => 'container',
+    '#weight' => $component['weight'] ?? 0,
+    '#attributes' => ['class' => ['mh-badge-event-card']],
+    '#attached' => ['library' => ['appointment_facilitator/badge_event_card']],
+  ];
+
+  // Badge image (optional — not every badge has artwork).
+  if ($term->hasField('field_member_badge_image') && !$term->get('field_member_badge_image')->isEmpty()) {
+    $card['image'] = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mh-badge-event-card__image']],
+      'content' => $term->get('field_member_badge_image')->view([
+        'label' => 'hidden',
+        'type' => 'image',
+        'settings' => [
+          'image_style' => 'small_square',
+          'image_link' => 'content',
+          'image_loading' => ['attribute' => 'lazy'],
+        ],
+      ]),
+    ];
+  }
+
+  $name_link = Link::fromTextAndUrl($term->label(), $term->toUrl())->toRenderable();
+  $name_link['#attributes']['class'][] = 'mh-badge-event-card__name-link';
+
+  $body = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-event-card__body']],
+    'name' => [
+      '#type' => 'html_tag',
+      '#tag' => 'span',
+      '#attributes' => ['class' => ['mh-badge-event-card__name']],
+      'link' => $name_link,
+    ],
+  ];
+
+  $tool_links = _appointment_facilitator_unlocked_tool_links($term);
+  if ($tool_links) {
+    $body['unlocks'] = [
+      '#type' => 'inline_template',
+      '#template' => '<div class="mh-badge-event-card__unlocks"><span class="mh-badge-event-card__unlocks-label">{{ "Unlocks:"|t }}</span> {% for link in links %}{{ link }}{% if not loop.last %}, {% endif %}{% endfor %}</div>',
+      '#context' => ['links' => $tool_links],
+    ];
+  }
+
+  $card['body'] = $body;
+
+  // Tool membership can change without editing the badge term, so the card
+  // must rebuild when any item node changes.
+  $cache = CacheableMetadata::createFromRenderArray($card);
+  $cache->addCacheableDependency($term);
+  $cache->addCacheTags(['node_list:item']);
+  $cache->applyTo($card);
+
+  $build['mh_badge_event_card'] = $card;
+}
+
+/**
  * Implements hook_entity_extra_field_info().
  *
  * Declares pseudo-fields so they can be placed in entity view displays.
@@ -1824,6 +1961,12 @@ function appointment_facilitator_entity_extra_field_info(): array {
             'label'       => t("Member's badge eligibility marker"),
             'description' => t("Inline icon + label indicating whether the current user can move forward (prereqs met, documentation approved)."),
             'weight'      => -9,
+            'visible'     => FALSE,
+          ],
+          'mh_badge_event_card' => [
+            'label'       => t('Event listing card (image + name + unlocked tools)'),
+            'description' => t('Compact badge card for the "Badges Earned" listing on event pages: the badge image, a link to the badge page, and the tools this badge unlocks.'),
+            'weight'      => 0,
             'visible'     => FALSE,
           ],
         ],

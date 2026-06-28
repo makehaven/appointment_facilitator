@@ -1,0 +1,45 @@
+/**
+ * Compact badge card for the "Badges Earned" listing on event info pages.
+ *
+ * Rendered by the mh_badge_event_card pseudo-field (event_badge view mode).
+ * Loads cross-theme (front-end Barrio + admin Gin), so design tokens carry
+ * literal fallbacks for contexts where the MakeHaven tokens aren't present.
+ */
+.mh-badge-event-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mh-space-xs, 0.5rem);
+  margin: var(--mh-space-2xs, 0.25rem) 0;
+}
+
+.mh-badge-event-card__image {
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.mh-badge-event-card__image img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: var(--mh-radius-sm, 0.25rem);
+}
+
+.mh-badge-event-card__body {
+  min-width: 0;
+}
+
+.mh-badge-event-card__name {
+  display: block;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.mh-badge-event-card__unlocks {
+  margin-top: var(--mh-space-3xs, 0.125rem);
+  font-size: 0.85em;
+  color: #555;
+}
+
+.mh-badge-event-card__unlocks-label {
+  font-style: italic;
+}
