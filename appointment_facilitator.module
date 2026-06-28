@@ -422,6 +422,23 @@ function _appointment_facilitator_badge_checkout_options(TermInterface $term, st
     return [];
   }
 
+  // Quiz-only badges (checkout_requirement "no") auto-issue when the quiz is
+  // passed — there is no facilitator checkout for them. Embedding the schedule
+  // grid here just renders the facilitator_schedules view's "No Volunteers
+  // Currently Assigned" empty text and misleads members (reported on the Metal
+  // Shop tool page, /i/9534). Mirror the badge-term-page logic (which hides the
+  // whole checkout group for "no") and show no checkout options.
+  $checkout = '';
+  if (
+    $term->hasField('field_badge_checkout_requirement')
+    && !$term->get('field_badge_checkout_requirement')->isEmpty()
+  ) {
+    $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
+  }
+  if ($checkout === 'no') {
+    return [];
+  }
+
   $tid = (int) $term->id();
   $children = [];
 
