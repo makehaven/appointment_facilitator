@@ -457,27 +457,10 @@ function _appointment_facilitator_badge_checkout_options(TermInterface $term, st
     $term->hasField('field_badge_issuer_on_request')
     && !$term->get('field_badge_issuer_on_request')->isEmpty()
   ) {
-    $children['on_request'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['mh-badge-on-request']],
-      'title' => [
-        '#markup' => '<h4 class="mh-badge-on-request__title">'
-          . Html::escape((string) t('Available by request'))
-          . '</h4>',
-      ],
-      // Names only, not linked — these are members who agreed to be contacted
-      // for a checkout, not a directory of profile links.
-      'people' => $term->get('field_badge_issuer_on_request')->view([
-        'label' => 'hidden',
-        'type' => 'entity_reference_label',
-        'settings' => ['link' => FALSE],
-      ]),
-      'hint' => [
-        '#markup' => '<p class="mh-badge-on-request__hint">'
-          . Html::escape((string) t('Ask in the space or on Slack to arrange a checkout.'))
-          . '</p>',
-      ],
-    ];
+    $on_request = _appointment_facilitator_badge_on_request_embed($term);
+    if ($on_request) {
+      $children['on_request'] = $on_request;
+    }
   }
 
   return [
@@ -487,6 +470,82 @@ function _appointment_facilitator_badge_checkout_options(TermInterface $term, st
     // it is not otherwise attached on the embedded view mode.
     '#attached' => ['library' => ['appointment_facilitator/badge_schedule_grid']],
     'children' => $children,
+  ];
+}
+
+/**
+ * Builds the "Available by request" block for a badge tool-page embed.
+ *
+ * When appointment_on_request is installed, renders "Request session" buttons
+ * (the same propose flow the badge term page offers) for badgers who have
+ * actually opted in — scheduled times above remain the primary path. Without
+ * that module, falls back to the legacy names-only list with the Slack hint.
+ * Returns [] when on-request rendering is delegated to appointment_on_request
+ * but no listed badger is currently opted in.
+ */
+function _appointment_facilitator_badge_on_request_embed(TermInterface $term): array {
+  if (\Drupal::hasService('appointment_on_request.badger_service')) {
+    /** @var \Drupal\appointment_on_request\Service\OnRequestBadgerService $svc */
+    $svc = \Drupal::service('appointment_on_request.badger_service');
+    $badgers = $svc->getBadgersForBadge($term);
+    if (!$badgers) {
+      return [];
+    }
+
+    $buttons = [];
+    foreach ($badgers as $badger) {
+      $buttons[] = [
+        '#type' => 'link',
+        '#title' => t('Request session with @name', ['@name' => $badger->getDisplayName()]),
+        '#url' => Url::fromRoute('appointment_on_request.propose', ['badge_term' => $term->id()], [
+          'query' => ['badger_uid' => $badger->id()],
+        ]),
+        '#attributes' => ['class' => ['btn', 'btn-outline-primary', 'on-request-badger-btn']],
+      ];
+    }
+
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mh-badge-on-request']],
+      'title' => [
+        '#markup' => '<h4 class="mh-badge-on-request__title">'
+          . Html::escape((string) t('Available by request'))
+          . '</h4>',
+      ],
+      'buttons' => [
+        '#theme' => 'item_list',
+        '#items' => $buttons,
+        '#attributes' => ['class' => ['badge-sessions-on-request']],
+      ],
+      'hint' => [
+        '#markup' => '<p class="mh-badge-on-request__hint">'
+          . Html::escape((string) t('Scheduled times above are the fastest path — request a session if none of them work for you.'))
+          . '</p>',
+      ],
+      '#attached' => ['library' => ['appointment_on_request/on_request_buttons']],
+    ];
+  }
+
+  return [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-on-request']],
+    'title' => [
+      '#markup' => '<h4 class="mh-badge-on-request__title">'
+        . Html::escape((string) t('Available by request'))
+        . '</h4>',
+    ],
+    // Names only, not linked — these are members who agreed to be contacted
+    // for a checkout, not a directory of profile links.
+    'people' => $term->get('field_badge_issuer_on_request')->view([
+      'label' => 'hidden',
+      'type' => 'entity_reference_label',
+      'settings' => ['link' => FALSE],
+    ]),
+    'hint' => [
+      '#markup' => '<p class="mh-badge-on-request__hint">'
+        . Html::escape((string) t('Ask in the space or on Slack to arrange a checkout.'))
+        . '</p>',
+    ],
   ];
 }
 
@@ -1002,11 +1061,24 @@ function _appointment_facilitator_replace_checkout_group_with_schedule(array &$e
   }
 
   // The plain entity_reference_label list of facilitator usernames is
-  // redundant with the calendar grid we're about to render below.
+  // redundant with the calendar grid we're about to render below. Exception:
+  // when appointment_on_request has replaced field_badge_issuer_on_request
+  // with its "Request session" buttons (recognizable by its wrapper class),
+  // keep them — on-request badgers have no standing hours, so hiding this
+  // element erased them from the badge page entirely. Scheduled times stay
+  // the primary path: the buttons are weighted to render below the grid.
+  $on_request_buttons_key = NULL;
   foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $key) {
-    if (isset($element[$key])) {
-      $element[$key]['#access'] = FALSE;
+    if (!isset($element[$key])) {
+      continue;
     }
+    $classes = $element[$key]['#attributes']['class'] ?? [];
+    if ($key === 'field_badge_issuer_on_request' && in_array('badge-sessions-on-request', $classes, TRUE)) {
+      $on_request_buttons_key = $key;
+      $element[$key]['#weight'] = -40;
+      continue;
+    }
+    $element[$key]['#access'] = FALSE;
   }
 
   // The legacy EVA renders one card per slot per facilitator — visually
@@ -1029,6 +1101,10 @@ function _appointment_facilitator_replace_checkout_group_with_schedule(array &$e
   $element['#attributes']['class'][] = 'appointment-facilitator-has-schedule-grid';
 
   if ($tool_offline) {
+    // No booking paths while the tool is down — request buttons included.
+    if ($on_request_buttons_key !== NULL) {
+      $element[$on_request_buttons_key]['#access'] = FALSE;
+    }
     $element['appointment_facilitator_schedule_table'] = [
       '#weight' => -50,
       '#type' => 'container',
@@ -1041,6 +1117,13 @@ function _appointment_facilitator_replace_checkout_group_with_schedule(array &$e
   }
 
   $is_gated = _appointment_facilitator_checkout_group_gate_blocked($term);
+
+  // Gated members see the grid as a locked preview; offering a live
+  // "Request session" path alongside would contradict that framing.
+  if ($is_gated && $on_request_buttons_key !== NULL) {
+    $element[$on_request_buttons_key]['#access'] = FALSE;
+    $on_request_buttons_key = NULL;
+  }
 
   try {
     /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
@@ -1055,18 +1138,23 @@ function _appointment_facilitator_replace_checkout_group_with_schedule(array &$e
   if (empty($table)) {
     // Either the badge has no rostered facilitators, or every rostered
     // facilitator currently has no published hours / is on break this week.
-    // Either way, point members to /facilitator/schedules where they'll see
-    // the full roster (greyed entries included) so they can decide who to
-    // ping on Slack.
+    // When on-request badgers exist their "Request session" buttons render
+    // right below this notice, so point at those; otherwise point members
+    // to /facilitator/schedules where they'll see the full roster (greyed
+    // entries included) so they can decide who to ping on Slack.
+    if ($on_request_buttons_key !== NULL) {
+      $empty_message = t('No facilitator has published checkout times in the next two weeks, but this badge has facilitators available by request — use a request button below to propose a time.');
+    }
+    else {
+      $empty_message = t('No facilitator has published checkout times in the next two weeks. See the <a href="@url">facilitator schedule</a> for who is normally on the schedule (including anyone on break), then ping them on Slack #facilitator-hours.',
+        ['@url' => '/facilitator/schedules']);
+    }
     $element['appointment_facilitator_schedule_table'] = [
       '#weight' => -50,
       '#type' => 'container',
       '#attributes' => ['class' => ['appointment-facilitator-schedule-empty', 'alert', 'alert-info']],
       'message' => [
-        '#markup' => '<p>'
-          . t('No facilitator has published checkout times in the next two weeks. See the <a href="@url">facilitator schedule</a> for who is normally on the schedule (including anyone on break), then ping them on Slack #facilitator-hours.',
-            ['@url' => '/facilitator/schedules'])
-          . '</p>',
+        '#markup' => '<p>' . $empty_message . '</p>',
       ],
     ];
     return;
@@ -2745,9 +2833,14 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
     // Keep group_checkout in the build so the pre_render_alter can inject
     // the calendar-grid schedule. Members exploring a badge they haven't
     // committed to yet still benefit from seeing real facilitator times.
+    // field_badge_issuer_on_request is NOT hidden here: this hook runs after
+    // appointment_on_request's hook_taxonomy_term_view, so unsetting the key
+    // would destroy its "Request session" buttons — on-request badgers have
+    // no standing hours and would vanish from the page entirely. The
+    // checkout-group pre_render alter decides that element's final
+    // visibility (raw field hidden, buttons kept below the grid).
     _appointment_facilitator_hide_badge_page_components($build, [
       'group_contact_badger',
-      'field_badge_issuer_on_request',
       'facilitator_schedules_facilitator_profile_badger_list',
       'event_upcoming_badging_badge_events',
     ]);
