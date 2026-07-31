@@ -103,6 +103,12 @@ facilitator_schedules_on_break:
     theme:
       css/facilitator-schedules-on-break.css: {}
 
+facilitator_schedules_more_times:
+  version: 1.x
+  css:
+    theme:
+      css/facilitator-schedules-more-times.css: {}
+
 badge_video_timestamps:
   version: 1.x
   js:

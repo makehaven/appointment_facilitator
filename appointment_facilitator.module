@@ -5817,7 +5817,46 @@ function appointment_facilitator_preprocess_views_bootstrap_cards(array &$variab
     }
   }
 
+  // Collect each facilitator's later slots inside the page's two-week window.
+  // The page query keeps only the next upcoming slot per facilitator (see
+  // _appointment_facilitator_limit_schedule_to_next_slot()), so the remaining
+  // times are listed inside that single card instead of as duplicate cards.
+  $more_times = [];
+  if ($on_break_display) {
+    $now = \Drupal::time()->getRequestTime();
+    $window_min = $now - (2 * 60 * 60);
+    $window_max = strtotime('+2 weeks', $now);
+    foreach ($variables['rows'] as $id => $row) {
+      $entity = $view->result[$id]->_entity ?? NULL;
+      if (!$entity || $entity->getEntityTypeId() !== 'profile' || !$entity->hasField('field_coordinator_hours')) {
+        continue;
+      }
+      $slots = [];
+      foreach ($entity->get('field_coordinator_hours')->getValue() as $value) {
+        $start = (int) ($value['value'] ?? 0);
+        if ($start > $window_min && $start < $window_max) {
+          // Keyed by start-end so literal duplicate values collapse.
+          $slots[$start . '-' . (int) ($value['end_value'] ?? 0)] = [
+            'start' => $start,
+            'end' => (int) ($value['end_value'] ?? 0),
+          ];
+        }
+      }
+      if (count($slots) < 2) {
+        continue;
+      }
+      $slots = array_values($slots);
+      usort($slots, fn(array $a, array $b) => $a['start'] <=> $b['start']);
+      // The earliest slot is the one the card already shows.
+      array_shift($slots);
+      $more_times[$id] = $slots;
+    }
+  }
+
+  $has_more_times = FALSE;
   foreach ($variables['rows'] as $id => &$row) {
+    $request_url = NULL;
+
     // 1. Card body — strip dual divs and inject single CTA.
     $content = isset($row['content']) ? (string) $row['content'] : '';
     if ($content !== '' && (str_contains($content, 'appointment-login') || str_contains($content, 'appointment-button'))) {
@@ -5843,6 +5882,15 @@ function appointment_facilitator_preprocess_views_bootstrap_cards(array &$variab
       $row['content'] = Markup::create(trim($cleaned) . $cta_html);
     }
 
+    // 1b. Later slots — listed under the card's main time.
+    if (!empty($more_times[$id])) {
+      $row['content'] = Markup::create(
+        (string) ($row['content'] ?? '')
+        . _appointment_facilitator_render_more_times($more_times[$id], $logged_in ? $request_url : NULL)
+      );
+      $has_more_times = TRUE;
+    }
+
     // 2. Card image — inject initials avatar when the field rendered empty.
     $image = isset($row['image']) ? (string) $row['image'] : '';
     if ($image === '' || (trim(strip_tags($image)) === '' && stripos($image, '<img') === FALSE)) {
@@ -5856,6 +5904,73 @@ function appointment_facilitator_preprocess_views_bootstrap_cards(array &$variab
       );
     }
   }
+  unset($row);
+
+  if ($has_more_times) {
+    $variables['#attached']['library'][] = 'appointment_facilitator/facilitator_schedules_more_times';
+  }
+}
+
+/**
+ * Renders the "Also available" list appended below a card's main time.
+ *
+ * @param array $slots
+ *   Later slots as ['start' => ts, 'end' => ts], chronological.
+ * @param string|null $request_url
+ *   The card's request-appointment URL, used as the template for per-slot
+ *   links (its date/start_time/title params are swapped per slot). NULL
+ *   renders plain-text times (anonymous users get no request links).
+ *
+ * @return string
+ *   HTML for the list.
+ */
+function _appointment_facilitator_render_more_times(array $slots, ?string $request_url): string {
+  $formatter = \Drupal::service('date.formatter');
+  $items = '';
+  foreach ($slots as $slot) {
+    $label = $formatter->format($slot['start'], 'custom', 'D M j, g:ia');
+    if (!empty($slot['end'])) {
+      $label .= '–' . $formatter->format($slot['end'], 'custom', 'g:ia');
+    }
+    $label_html = htmlspecialchars($label, ENT_QUOTES, 'UTF-8');
+    $slot_url = $request_url !== NULL ? _appointment_facilitator_retarget_request_url($request_url, $slot['start']) : NULL;
+    if ($slot_url !== NULL) {
+      $items .= '<li><a href="' . htmlspecialchars($slot_url, ENT_QUOTES, 'UTF-8')
+        . '" target="_blank" rel="noopener noreferrer">' . $label_html . '</a></li>';
+    }
+    else {
+      $items .= '<li>' . $label_html . '</li>';
+    }
+  }
+  return '<div class="apfac-more-times"><span class="apfac-more-times__label">'
+    . t('Also available:') . '</span><ul>' . $items . '</ul></div>';
+}
+
+/**
+ * Rewrites a request-appointment URL's slot params to a different start time.
+ *
+ * @return string|null
+ *   The retargeted URL, or NULL if the input URL could not be parsed.
+ */
+function _appointment_facilitator_retarget_request_url(string $request_url, int $start): ?string {
+  $parts = parse_url($request_url);
+  if ($parts === FALSE || empty($parts['path'])) {
+    return NULL;
+  }
+  parse_str($parts['query'] ?? '', $query);
+  $formatter = \Drupal::service('date.formatter');
+  $date = $formatter->format($start, 'custom', 'Y-m-d');
+  if (isset($query['date'])) {
+    // Keep the title's "<name> <date>" suffix in sync with the new date.
+    if (isset($query['edit']['title']['widget'][0]['value']) && is_string($query['edit']['title']['widget'][0]['value'])) {
+      $query['edit']['title']['widget'][0]['value'] = str_replace((string) $query['date'], $date, $query['edit']['title']['widget'][0]['value']);
+    }
+    $query['date'] = $date;
+  }
+  if (isset($query['start_time'])) {
+    $query['start_time'] = $formatter->format($start, 'custom', 'g:iA');
+  }
+  return $parts['path'] . '?' . http_build_query($query);
 }
 
 /**
@@ -5965,6 +6080,11 @@ function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
  * Implements hook_views_query_alter().
  */
 function appointment_facilitator_views_query_alter(ViewExecutable $view, QueryPluginBase $query): void {
+  if ($view->id() === 'facilitator_schedules' && $view->current_display === 'facilitator_schedule') {
+    _appointment_facilitator_limit_schedule_to_next_slot($query);
+    return;
+  }
+
   if ($view->id() !== 'badge_approval' || $view->current_display !== 'badge_approval') {
     return;
   }
@@ -5983,6 +6103,45 @@ function appointment_facilitator_views_query_alter(ViewExecutable $view, QueryPl
 
   $query->addWhere(0, 'node__field_badge_requested.field_badge_requested_target_id', $issuer_tids, 'IN');
   $view->appointment_facilitator_default_issuer_filter = TRUE;
+}
+
+/**
+ * Constrains the schedule page to each facilitator's next upcoming slot.
+ *
+ * The facilitator_schedules page renders one card per field_coordinator_hours
+ * value inside its two-week window, so a facilitator holding hours in both
+ * weeks appears twice. Keeping only the earliest slot that still satisfies the
+ * view's own "now - 2 hours" lower bound yields one card per facilitator,
+ * showing their next upcoming time (and its Request Appointment prepopulation
+ * tokens stay correct, since they come from the surviving row).
+ */
+function _appointment_facilitator_limit_schedule_to_next_slot(QueryPluginBase $query): void {
+  if (!$query instanceof \Drupal\views\Plugin\views\query\Sql) {
+    return;
+  }
+  $alias = NULL;
+  foreach ($query->getTableQueue() as $queue_alias => $info) {
+    if (($info['table'] ?? '') === 'profile__field_coordinator_hours') {
+      $alias = $queue_alias;
+      break;
+    }
+  }
+  if ($alias === NULL) {
+    return;
+  }
+  // Same lower bound as the display's date filter ('now - 2 hours').
+  $threshold = \Drupal::time()->getRequestTime() - (2 * 60 * 60);
+  $query->addWhereExpression(
+    0,
+    "$alias.field_coordinator_hours_value = (SELECT MIN(h.field_coordinator_hours_value) FROM {profile__field_coordinator_hours} h WHERE h.entity_id = $alias.entity_id AND h.deleted = 0 AND h.field_coordinator_hours_value > :apfac_next_slot_threshold)",
+    [':apfac_next_slot_threshold' => $threshold]
+  );
+  // Some profiles carry literal duplicate hours values (same start stored at
+  // two deltas); both would tie for MIN above, so keep only the lowest delta.
+  $query->addWhereExpression(
+    0,
+    "$alias.delta = (SELECT MIN(h2.delta) FROM {profile__field_coordinator_hours} h2 WHERE h2.entity_id = $alias.entity_id AND h2.deleted = 0 AND h2.field_coordinator_hours_value = $alias.field_coordinator_hours_value)"
+  );
 }
 
 /**
