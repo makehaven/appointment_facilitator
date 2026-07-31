@@ -1,0 +1,29 @@
+/**
+ * "Also available" slot list on /facilitator/schedules cards.
+ *
+ * The page shows one card per facilitator (their next upcoming time, bold);
+ * this list carries their remaining times inside the same card, visually
+ * subordinate to the main slot.
+ */
+
+.apfac-more-times {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+}
+
+.apfac-more-times__label {
+  font-weight: 600;
+  color: var(--mh-color-neutral-800, #444);
+}
+
+.apfac-more-times ul {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+}
+
+.apfac-more-times li {
+  list-style: none;
+  margin: 0 0 0.15rem;
+  padding: 0;
+}
