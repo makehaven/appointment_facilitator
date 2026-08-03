@@ -59,6 +59,31 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  // Members arriving from the schedules page get slots pre-selected below;
+  // without an explanation the greyed remainder reads as "no other times"
+  // (ledger #43638). Shown after prefill, removed on first manual slot edit.
+  function showPrefillHint(form) {
+    if (form.querySelector('#slot-prefill-hint')) {
+      return;
+    }
+    var wrapper = form.querySelector('#edit-field-appointment-slot-wrapper');
+    if (!wrapper || !wrapper.parentNode) {
+      return;
+    }
+    var div = document.createElement('div');
+    div.id = 'slot-prefill-hint';
+    div.style.cssText = 'margin-bottom:10px; color:#055160; background:#cff4fc; border:1px solid #b6effb; border-radius:4px; padding:8px 12px;';
+    div.textContent = Drupal.t('We pre-selected the earliest available time for you. Want a different time? Click any open slot below to move your booking.');
+    wrapper.parentNode.insertBefore(div, wrapper);
+  }
+
+  function removePrefillHint(form) {
+    var hint = form.querySelector('#slot-prefill-hint');
+    if (hint) {
+      hint.remove();
+    }
+  }
+
   function autoSelectSlots(form, settings) {
     if (form.dataset.appointmentSlotPrefillTouched === 'true') {
       return;
@@ -108,6 +133,7 @@
     finally {
       form.dataset.appointmentSlotPrefillApplying = 'false';
     }
+    showPrefillHint(form);
   }
 
   function scheduleAutoSelect(form, settings) {
@@ -146,12 +172,17 @@
             }
 
             if (target.name === 'field_appointment_purpose' || target.name.indexOf('field_appointment_badges') === 0) {
+              var purpose = form.querySelector('input[name="field_appointment_purpose"]:checked');
+              if (!purpose || purpose.value !== 'checkout') {
+                removePrefillHint(form);
+              }
               scheduleAutoSelect(form, settings);
               return;
             }
 
             if (target.name.indexOf('field_appointment_slot') === 0) {
               form.dataset.appointmentSlotPrefillTouched = 'true';
+              removePrefillHint(form);
             }
           });
         }
