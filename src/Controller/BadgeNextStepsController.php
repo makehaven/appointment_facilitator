@@ -1277,7 +1277,7 @@ class BadgeNextStepsController extends ControllerBase {
                 'aria-disabled' => 'true',
                 'tabindex' => '-1',
                 'role' => 'button',
-                'title' => (string) $this->t('Booking unlocks after you finish the prerequisites and pass the quiz above.'),
+                'title' => (string) $this->t('Booking unlocks after your prerequisite badges are pending or earned and you pass the quiz above.'),
               ],
             ];
           }

@@ -6,6 +6,7 @@ use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityStorageException;
 use Drupal\Core\Entity\Display\EntityViewDisplayInterface;
 use Drupal\Core\Field\FieldDefinitionInterface;
 use Drupal\Core\Field\FieldItemListInterface;
@@ -604,7 +605,7 @@ function _appointment_facilitator_badge_eligibility_text(string $state, ?TermInt
       return [$label, 'progress', '→'];
 
     case 'prereqs_missing':
-      return [t('Open badge page — earn prerequisite badges first'), 'blocked', '⚠'];
+      return [t('Open badge page — get prerequisite badges pending first'), 'blocked', '⚠'];
 
     case 'docs_required':
       return [t('Open badge page — submit training documentation'), 'blocked', '⚠'];
@@ -2882,7 +2883,7 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
       '#attributes' => ['class' => ['messages', 'messages--warning']],
       '#weight' => -190,
       'message' => [
-        '#markup' => '<p>' . t('This badge has prerequisites that must be completed before quiz and checkout scheduling are available.') . '</p>',
+        '#markup' => '<p>' . t('Get the prerequisite badges pending or earned before taking this quiz and scheduling checkout. Prerequisites must be approved before this badge can be awarded.') . '</p>',
       ],
     ];
   }
@@ -3572,11 +3573,33 @@ function appointment_facilitator_page_attachments(array &$attachments): void {
  * This avoids intermittent AJAX parser failures on large/repeated responses.
  */
 function appointment_facilitator_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  $form_object = $form_state->getFormObject();
+  $entity = is_object($form_object) && method_exists($form_object, 'getEntity') ? $form_object->getEntity() : NULL;
+  if ($entity instanceof NodeInterface && $entity->bundle() === 'badge_request') {
+    $form['#validate'][] = 'appointment_facilitator_validate_badge_prerequisites';
+  }
+
   if (!isset($form['field_coordinator_hours']) || !is_array($form['field_coordinator_hours'])) {
     return;
   }
 
   _appointment_facilitator_force_non_ajax_manage_instances($form['field_coordinator_hours']);
+}
+
+/**
+ * Gives normal and inline badge editors a field error before storage rejects it.
+ */
+function appointment_facilitator_validate_badge_prerequisites(array &$form, FormStateInterface $form_state): void {
+  $node = clone $form_state->getFormObject()->getEntity();
+  foreach (['field_badge_status', 'field_badge_requested', 'field_member_to_badge', 'status'] as $field) {
+    if ($form_state->hasValue($field)) {
+      $node->set($field, $form_state->getValue($field));
+    }
+  }
+  $violation = \Drupal::service('appointment_facilitator.badge_gate')->badgeRequestViolation($node);
+  if ($violation !== NULL) {
+    $form_state->setErrorByName('field_badge_status', $violation);
+  }
 }
 
 /**
@@ -4079,6 +4102,20 @@ function _appointment_facilitator_sync_parent_field_from_rule(\Drupal\smart_date
  * Implements hook_entity_presave().
  */
 function appointment_facilitator_entity_presave(EntityInterface $entity): void {
+  if ($entity instanceof NodeInterface && $entity->bundle() === 'appointment') {
+    $violation = \Drupal::service('appointment_facilitator.badge_gate')->appointmentPrerequisiteViolation($entity);
+    if ($violation !== NULL) {
+      throw new EntityStorageException($violation);
+    }
+  }
+
+  if ($entity instanceof NodeInterface && $entity->bundle() === 'badge_request') {
+    $violation = \Drupal::service('appointment_facilitator.badge_gate')->badgeRequestViolation($entity);
+    if ($violation !== NULL) {
+      throw new EntityStorageException($violation);
+    }
+  }
+
   _appointment_facilitator_sync_profile_schedule_before_save($entity);
 
   if (!$entity instanceof NodeInterface || $entity->bundle() !== 'badge_request' || !$entity->hasField('field_badge_status')) {
@@ -4661,6 +4698,7 @@ function _appointment_facilitator_load_pending_badge_term_ids(int $member_uid): 
   $query = \Drupal::entityQuery('node')
     ->accessCheck(FALSE)
     ->condition('type', 'badge_request')
+    ->condition('status', 1)
     ->condition('field_member_to_badge.target_id', $member_uid)
     ->condition('field_badge_status.value', 'pending');
 
@@ -4678,7 +4716,10 @@ function _appointment_facilitator_load_pending_badge_term_ids(int $member_uid): 
     foreach ($request->get('field_badge_requested')->getValue() as $item) {
       $tid = isset($item['target_id']) ? (int) $item['target_id'] : 0;
       if ($tid > 0) {
-        $ids[] = $tid;
+        $badge = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->load($tid);
+        if ($badge && \Drupal::service('appointment_facilitator.badge_gate')->evaluatePrerequisites($member_uid, $badge, TRUE)['allowed']) {
+          $ids[] = $tid;
+        }
       }
     }
   }

@@ -133,3 +133,19 @@ One-time backfill (Drush):
 drush appointment-facilitator:backfill-arrivals --start=2025-01-01 --end=2025-03-31
 ```
 Use `--force` to overwrite existing arrival status values.
+
+## Two-stage badge prerequisites
+
+Configured prerequisite badges must be published and pending or earned before
+an advanced badge request or checkout appointment is available. Only earned
+prerequisites (active, or legacy blank status) permit final activation. A
+facilitator can approve both in one visit by approving prerequisites first.
+Class checkout retains its completion record while the badge awaits prerequisites.
+
+The shared `appointment_facilitator.badge_gate` checks requests and appointments
+through `evaluate()` / `evaluatePrerequisites(..., TRUE)` and awards through
+`evaluatePrerequisites()` with the default strict mode. Badge node presave also
+enforces transitions, including automated/API saves; callers must handle a
+blocked award before saving. Ordinary edits to existing earned or legacy blank
+badges remain valid; there is no retrospective revocation. Renewals and changing
+a badge's member or badge identity are new awards and are checked.

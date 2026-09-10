@@ -433,7 +433,9 @@ TWIG,
         return [
           'progress',
           $this->t('Next step: schedule a facilitator checkout.'),
-          $this->t("You've passed the quiz. Pick an upcoming session below or contact a facilitator."),
+          !empty($resolved['gate']['prerequisites_pending'])
+            ? $this->t("You've passed the quiz. You can check out this badge and its prerequisites in the same visit. Your facilitator must approve the prerequisites first.")
+            : $this->t("You've passed the quiz. Pick an upcoming session below or contact a facilitator."),
           NULL,
         ];
 
@@ -457,7 +459,7 @@ TWIG,
         $body = $this->renderPrereqsWithState($term, (int) $this->currentUser->id());
         return [
           'blocked',
-          $this->t('You need to earn prerequisites first.'),
+          $this->t('Get prerequisite badges pending or earned first.'),
           $body,
           NULL,
         ];

@@ -7,6 +7,7 @@ use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\taxonomy\TermInterface;
+use Drupal\node\NodeInterface;
 
 /**
  * Evaluates badge prerequisite gates for a member.
@@ -80,7 +81,7 @@ class BadgePrerequisiteGate {
   }
 
   /**
-   * Evaluates whether a member can progress on a badge.
+   * Evaluates whether a member can request a badge and book a checkout.
    *
    * @return array
    *   Keys:
@@ -102,6 +103,8 @@ class BadgePrerequisiteGate {
    *   - prerequisites_required: int[]
    *   - prerequisites_missing: int[]
    *   - prerequisites_missing_labels: string[]
+   *   - prerequisites_pending: int[] — allowed for preparation, not activation
+   *   - prerequisites_pending_labels: string[]
    *   - reasons: string[]
    */
   public function evaluate(int $memberUid, TermInterface $badge): array {
@@ -117,6 +120,8 @@ class BadgePrerequisiteGate {
       'prerequisites_required' => [],
       'prerequisites_missing' => [],
       'prerequisites_missing_labels' => [],
+      'prerequisites_pending' => [],
+      'prerequisites_pending_labels' => [],
       'reasons' => [],
     ];
 
@@ -152,22 +157,121 @@ class BadgePrerequisiteGate {
       }
     }
 
-    $prerequisites = $this->extractPrerequisiteBadgeIds($badge);
-    $result['prerequisites_required'] = $prerequisites;
-    foreach ($prerequisites as $prereq_tid) {
-      if (!$this->memberHasActiveOrBlankBadge($memberUid, $prereq_tid)) {
-        $result['allowed'] = FALSE;
-        $result['prerequisites_missing'][] = $prereq_tid;
+    $prerequisites = $this->evaluatePrerequisites($memberUid, $badge, TRUE);
+    $result['allowed'] = $result['allowed'] && $prerequisites['allowed'];
+    $result['reasons'] = array_merge($result['reasons'], $prerequisites['reasons']);
+    foreach ($prerequisites as $key => $value) {
+      if (str_starts_with($key, 'prerequisites_')) {
+        $result[$key] = $value;
       }
     }
 
-    if ($result['prerequisites_missing']) {
-      $labels = $this->loadBadgeLabels($result['prerequisites_missing']);
-      $result['prerequisites_missing_labels'] = $labels;
-      $result['reasons'][] = 'Missing active prerequisite badge(s): ' . implode(', ', $labels) . '.';
-    }
-
     return $result;
+  }
+
+  /**
+   * Checks badge prerequisites independently of training documentation.
+   *
+   * Pending prerequisites allow requests and appointments. Only earned
+   * prerequisites (including legacy blank statuses) allow activation.
+   */
+  public function evaluatePrerequisites(int $memberUid, TermInterface $badge, bool $allowPending = FALSE): array {
+    $required = $this->extractPrerequisiteBadgeIds($badge);
+    $missing = [];
+    $pending = [];
+    foreach ($required as $tid) {
+      if ($this->memberHasActiveOrBlankBadge($memberUid, $tid)) {
+        continue;
+      }
+      if ($this->memberHasBadgeStatus($memberUid, $tid, ['pending'])) {
+        $pending[] = $tid;
+        if ($allowPending) {
+          continue;
+        }
+      }
+      $missing[] = $tid;
+    }
+    $labels = $this->loadBadgeLabels($missing);
+    return [
+      'allowed' => !$missing,
+      'prerequisites_required' => $required,
+      'prerequisites_missing' => $missing,
+      'prerequisites_missing_labels' => $labels,
+      'prerequisites_pending' => $pending,
+      'prerequisites_pending_labels' => $this->loadBadgeLabels($pending),
+      'reasons' => $missing ? [($allowPending
+        ? 'First get these prerequisite badges pending or earned: '
+        : 'First approve these prerequisite badges: ') . implode(', ', $labels) . '.',
+      ] : [],
+    ];
+  }
+
+  /**
+   * Checks new checkout bookings while preserving existing sessions.
+   */
+  public function appointmentPrerequisiteViolation(NodeInterface $node): ?string {
+    if ($node->bundle() !== 'appointment' || !$node->hasField('field_appointment_purpose')
+      || $node->get('field_appointment_purpose')->value !== 'checkout'
+      || !$node->hasField('field_appointment_badges')) {
+      return NULL;
+    }
+    $original = $node->isNew() ? NULL : $this->entityTypeManager->getStorage('node')->loadUnchanged($node->id());
+    if ($original instanceof NodeInterface
+      && (int) $original->getOwnerId() === (int) $node->getOwnerId()
+      && $original->get('field_appointment_purpose')->value === 'checkout'
+      && $original->get('field_appointment_badges')->getValue() === $node->get('field_appointment_badges')->getValue()) {
+      return NULL;
+    }
+    $uid = (int) $node->getOwnerId();
+    foreach ($node->get('field_appointment_badges')->getValue() as $item) {
+      $tid = (int) ($item['target_id'] ?? 0);
+      if ($this->memberHasActiveOrBlankBadge($uid, $tid)) {
+        continue;
+      }
+      $badge = $this->entityTypeManager->getStorage('taxonomy_term')->load($tid);
+      if ($badge instanceof TermInterface) {
+        $gate = $this->evaluatePrerequisites($uid, $badge, TRUE);
+        if (!$gate['allowed']) {
+          return $badge->label() . ': ' . implode(' ', $gate['reasons']);
+        }
+      }
+    }
+    return NULL;
+  }
+
+  /**
+   * Returns an error for a new request/award, without auditing old awards.
+   *
+   * Both form validation and presave use this, including API/automated saves.
+   * Changing the member, badge, or publication state is a new grant, even if
+   * the status string is unchanged. Ordinary edits to earned badges are exempt.
+   */
+  public function badgeRequestViolation(NodeInterface $node): ?string {
+    if ($node->bundle() !== 'badge_request' || !$node->hasField('field_badge_status')
+      || !$node->isPublished()) {
+      return NULL;
+    }
+    $status = strtolower(trim((string) $node->get('field_badge_status')->value));
+    if (!in_array($status, ['', 'active', 'pending'], TRUE)) {
+      return NULL;
+    }
+    $original = $node->isNew() ? NULL : $this->entityTypeManager->getStorage('node')->loadUnchanged($node->id());
+    if ($original instanceof NodeInterface && $original->isPublished()
+      && $original->get('field_badge_requested')->getValue() === $node->get('field_badge_requested')->getValue()
+      && $original->get('field_member_to_badge')->getValue() === $node->get('field_member_to_badge')->getValue()) {
+      $old = strtolower(trim((string) $original->get('field_badge_status')->value));
+      if (($status === 'pending' && $old === 'pending')
+        || (in_array($status, ['', 'active'], TRUE) && in_array($old, ['', 'active'], TRUE))) {
+        return NULL;
+      }
+    }
+    $badge = $this->entityTypeManager->getStorage('taxonomy_term')->load((int) $node->get('field_badge_requested')->target_id);
+    if (!$badge instanceof TermInterface) {
+      return NULL;
+    }
+    $uid = (int) $node->get('field_member_to_badge')->target_id;
+    $gate = $this->evaluatePrerequisites($uid, $badge, $status === 'pending');
+    return $gate['allowed'] ? NULL : $badge->label() . ': ' . implode(' ', $gate['reasons']);
   }
 
   /**
@@ -336,6 +440,13 @@ class BadgePrerequisiteGate {
    * Returns TRUE when member has badge_request with active or blank status.
    */
   public function memberHasActiveOrBlankBadge(int $memberUid, int $badgeTid): bool {
+    return $this->memberHasBadgeStatus($memberUid, $badgeTid, ['', 'active']);
+  }
+
+  /**
+   * Checks published badge records using the supplied qualifying statuses.
+   */
+  protected function memberHasBadgeStatus(int $memberUid, int $badgeTid, array $statuses): bool {
     if ($memberUid <= 0 || $badgeTid <= 0) {
       return FALSE;
     }
@@ -359,7 +470,7 @@ class BadgePrerequisiteGate {
       if ($request->hasField('field_badge_status') && !$request->get('field_badge_status')->isEmpty()) {
         $status = strtolower(trim((string) $request->get('field_badge_status')->value));
       }
-      if ($status === '' || $status === 'active') {
+      if (in_array($status, $statuses, TRUE)) {
         return TRUE;
       }
     }
