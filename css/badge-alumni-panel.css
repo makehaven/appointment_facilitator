@@ -1,0 +1,31 @@
+/* ── "Facilitators are still here for you" panel (tool-page embed) ──
+   Shown in place of the checkout options once the member holds the badge.
+   Module-owned so it renders the same under barrio and Gin. */
+
+.mh-badge-alumni {
+  margin: 0.75rem 0 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-left: 6px solid var(--mh-color-success, #2e7d32);
+  border-radius: var(--mh-radius-md, 0.75rem);
+  background: var(--mh-color-surface-muted, #f4faf4);
+}
+
+.mh-badge-alumni__title {
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.mh-badge-alumni__lead {
+  margin: 0 0 0.85rem;
+  color: var(--mh-color-neutral-700, #374151);
+}
+
+.mh-badge-alumni__lead strong {
+  color: var(--mh-color-neutral-900, #111827);
+}
+
+.mh-badge-alumni .mh-badge-on-request {
+  margin-top: 0.75rem;
+}

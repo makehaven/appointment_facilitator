@@ -1,6 +1,8 @@
 <?php
 
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
+use Drupal\appointment_facilitator\Badge\VideoChapters;
+use Drupal\appointment_facilitator\Render\ScheduleLinkPurpose;
 use Drupal\Component\Utility\Html;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
@@ -98,6 +100,10 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
     if ($display) {
       _appointment_facilitator_attach_badge_status_pseudo_fields($build, $entity, $display);
       _appointment_facilitator_attach_badge_event_card_pseudo_field($build, $entity, $display);
+    }
+
+    if ($view_mode === 'embedded' && isset($build['field_badge_video'])) {
+      _appointment_facilitator_replace_embedded_badge_video($build, $entity);
     }
 
     if ($view_mode === 'full') {
@@ -420,7 +426,10 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
  * suspended/expired) — they don't need checkout options.
  */
 function _appointment_facilitator_badge_checkout_options(TermInterface $term, string $state): array {
-  if (in_array($state, ['active', 'suspended', 'expired'], TRUE)) {
+  if ($state === 'active') {
+    return _appointment_facilitator_badge_alumni_options($term);
+  }
+  if (in_array($state, ['suspended', 'expired'], TRUE)) {
     return [];
   }
 
@@ -471,6 +480,153 @@ function _appointment_facilitator_badge_checkout_options(TermInterface $term, st
     // it is not otherwise attached on the embedded view mode.
     '#attached' => ['library' => ['appointment_facilitator/badge_schedule_grid']],
     'children' => $children,
+  ];
+}
+
+/**
+ * Builds the post-badge "facilitators are still here for you" panel.
+ *
+ * Once a member held the badge the tool-page embed dropped every scheduling
+ * option, so the only remaining route to a facilitator was the badge page
+ * (another click in, and framed as a checkout). Facilitators are meant to help
+ * with projects and give advice, not only run checkouts (JR, 2026-09-12), so
+ * the embed now says so and shows the same facilitator schedule grid with the
+ * booking links pre-set to the "project advice" purpose via
+ * ScheduleLinkPurpose::postRender().
+ *
+ * Returns [] for quiz-only badges and for badges with no facilitators at all —
+ * the schedule view's empty text would only mislead there.
+ */
+function _appointment_facilitator_badge_alumni_options(TermInterface $term): array {
+  $checkout = '';
+  if (
+    $term->hasField('field_badge_checkout_requirement')
+    && !$term->get('field_badge_checkout_requirement')->isEmpty()
+  ) {
+    $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
+  }
+  if ($checkout === 'no') {
+    return [];
+  }
+
+  $has_roster = $term->hasField('field_badge_issuer') && !$term->get('field_badge_issuer')->isEmpty();
+  $has_on_request = $term->hasField('field_badge_issuer_on_request') && !$term->get('field_badge_issuer_on_request')->isEmpty();
+  if (!$has_roster && !$has_on_request) {
+    return [];
+  }
+
+  $intro_title = Html::escape((string) t('Facilitators are still here for you'));
+  $intro_lead = t('You are badged, so no further checkout is needed — but the facilitators below are glad to book time for <strong>project-specific advice, a refresher, or help planning a build</strong>. Pick a time that suits you; the appointment purpose is pre-set to project advice.');
+
+  $children = [];
+  $children['intro'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-alumni__intro']],
+    'title' => ['#markup' => '<h4 class="mh-badge-alumni__title">' . $intro_title . '</h4>'],
+    'lead' => ['#markup' => '<p class="mh-badge-alumni__lead">' . $intro_lead . '</p>'],
+  ];
+
+  if ($has_roster) {
+    $children['schedule'] = [
+      '#type' => 'view',
+      '#name' => 'facilitator_schedules',
+      '#display_id' => 'facilitator_schedule_tool_eva',
+      '#arguments' => [(int) $term->id()],
+    ];
+  }
+
+  if ($has_on_request) {
+    $on_request = _appointment_facilitator_badge_on_request_embed($term);
+    if ($on_request) {
+      $children['on_request'] = $on_request;
+    }
+  }
+
+  return [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['mh-badge-checkout-options', 'mh-badge-alumni']],
+    '#attached' => [
+      'library' => [
+        'appointment_facilitator/badge_schedule_grid',
+        'appointment_facilitator/badge_alumni_panel',
+      ],
+    ],
+    // Rewrite the grid's "Request Appointment" links to carry
+    // ?purpose=project (read back by the appointment form alter).
+    '#post_render' => [[ScheduleLinkPurpose::class, 'postRender']],
+    '#mh_schedule_purpose' => 'project',
+    'children' => $children,
+  ];
+}
+
+/**
+ * Swaps the tool-page embed's video thumbnail for a lightbox player.
+ *
+ * The badges.embedded display renders field_badge_video as a thumbnail that
+ * links to the badge page, so a member revisiting a tool to review the
+ * training had to leave the tool page and scroll. The thumbnail now opens the
+ * video in a dialog on the spot, with the badge's timestamp links
+ * (field_badge_video_timestamps) rendered as chapter buttons under the player.
+ * The badge page keeps its inline player and "I watched this" attestation for
+ * first-time learners; the dialog links there for the checklist and quiz.
+ */
+function _appointment_facilitator_replace_embedded_badge_video(array &$build, TermInterface $term): void {
+  if (!$term->hasField('field_badge_video') || $term->get('field_badge_video')->isEmpty()) {
+    return;
+  }
+
+  $ids = [];
+  foreach ($term->get('field_badge_video') as $item) {
+    $id = trim((string) ($item->video_id ?? ''));
+    if ($id === '' && !empty($item->input)) {
+      $id = (string) (VideoChapters::videoId((string) $item->input) ?? '');
+    }
+    if ($id !== '' && !in_array($id, $ids, TRUE)) {
+      $ids[] = $id;
+    }
+  }
+  if (!$ids) {
+    return;
+  }
+
+  $links = [];
+  if ($term->hasField('field_badge_video_timestamps')) {
+    foreach ($term->get('field_badge_video_timestamps') as $link) {
+      $links[] = ['uri' => (string) $link->uri, 'title' => (string) $link->title];
+    }
+  }
+  $chapters = VideoChapters::group($links, $ids);
+
+  $privacy = (bool) \Drupal::config('youtube.settings')->get('youtube_privacy');
+  $host = $privacy ? 'https://www.youtube-nocookie.com' : 'https://www.youtube.com';
+  $videos = [];
+  foreach ($ids as $id) {
+    $videos[] = [
+      'id' => $id,
+      'thumbnail' => 'https://img.youtube.com/vi/' . $id . '/hqdefault.jpg',
+      'embed_src' => $host . '/embed/' . $id . '?enablejsapi=1&rel=0&modestbranding=1&playsinline=1',
+      'chapters' => $chapters[$id] ?? [],
+    ];
+  }
+
+  $badge_url = '';
+  try {
+    $badge_url = $term->toUrl()->toString();
+  }
+  catch (\Throwable) {
+    // Unsaved term — the footer link is simply omitted by the template.
+  }
+
+  $weight = $build['field_badge_video']['#weight'] ?? 4;
+  $build['field_badge_video'] = [
+    '#theme' => 'badge_video_lightbox',
+    '#videos' => $videos,
+    '#badge_label' => $term->label(),
+    '#badge_url' => $badge_url,
+    '#button_label' => t('Watch the training video'),
+    '#weight' => $weight,
+    '#attached' => ['library' => ['appointment_facilitator/badge_video_lightbox']],
+    '#cache' => ['tags' => $term->getCacheTags()],
   ];
 }
 
@@ -3805,6 +3961,17 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     // Pre-select facilitator from scheduler links. Supports both current
     // and legacy query keys.
     $request = \Drupal::request();
+    // Pre-select the purpose when a scheduler link asks for one. The tool
+    // page's post-badge panel sends members here with ?purpose=project so the
+    // form does not default to "Badge Checkout" for a badge they already hold.
+    $purpose = trim((string) $request->query->get('purpose', ''));
+    if ($purpose !== '' && isset($form['field_appointment_purpose']['widget'])) {
+      $purpose_options = $form['field_appointment_purpose']['widget']['#options'] ?? [];
+      if (isset($purpose_options[$purpose])) {
+        $form['field_appointment_purpose']['widget']['#default_value'] = $purpose;
+      }
+    }
+
     $host_uid = (int) $request->query->get('host-uid', $request->query->get('host', 0));
     if ($host_uid > 0 && isset($form['field_appointment_host'])) {
       $host_user = \Drupal::entityTypeManager()->getStorage('user')->load($host_uid);
@@ -6355,6 +6522,14 @@ function appointment_facilitator_theme(): array {
         'primary_cta'   => [],
         'secondary_cta' => [],
         'help_link'     => [],
+      ],
+    ],
+    'badge_video_lightbox' => [
+      'variables' => [
+        'videos'       => [],
+        'badge_label'  => '',
+        'badge_url'    => '',
+        'button_label' => '',
       ],
     ],
   ];

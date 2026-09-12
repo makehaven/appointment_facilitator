@@ -1,0 +1,45 @@
+{#
+/**
+ * @file
+ * Tool-page badge embed: training video thumbnail that opens in a lightbox.
+ *
+ * Available variables:
+ * - videos: list of {id, thumbnail, embed_src, chapters: [{seconds, label, title}]}.
+ * - badge_label: the badge name.
+ * - badge_url: the full badge page (checklist, documentation, quiz).
+ * - button_label: text under the thumbnail.
+ */
+#}
+<div class="mh-badge-video" data-mh-badge-video>
+  {% for video in videos %}
+    <button type="button" class="mh-badge-video__thumb" data-mh-video-open="{{ video.id }}" aria-haspopup="dialog" aria-controls="mh-video-{{ video.id }}">
+      <span class="mh-badge-video__poster">
+        <img src="{{ video.thumbnail }}" alt="" loading="lazy" width="480" height="360">
+        <span class="mh-badge-video__play" aria-hidden="true"></span>
+      </span>
+      <span class="mh-badge-video__label">{{ button_label }}{% if video.chapters|length %} <span class="mh-badge-video__count">· {{ '@count chapters'|t({'@count': video.chapters|length}) }}</span>{% endif %}</span>
+    </button>
+    <dialog class="mh-badge-video__dialog" id="mh-video-{{ video.id }}" data-mh-video-id="{{ video.id }}" aria-label="{{ 'Training video: @badge'|t({'@badge': badge_label}) }}">
+      <div class="mh-badge-video__panel">
+        <div class="mh-badge-video__head">
+          <h3 class="mh-badge-video__title">{{ badge_label }}</h3>
+          <button type="button" class="mh-badge-video__close" data-mh-video-close aria-label="{{ 'Close'|t }}">&times;</button>
+        </div>
+        <div class="mh-badge-video__frame">
+          <iframe data-src="{{ video.embed_src }}" title="{{ 'Training video: @badge'|t({'@badge': badge_label}) }}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+        </div>
+        {% if video.chapters|length %}
+          <h4 class="mh-badge-video__chapters-title">{{ 'Jump to'|t }}</h4>
+          <ol class="mh-badge-video__chapters">
+            {% for chapter in video.chapters %}
+              <li><button type="button" class="mh-badge-video__chapter" data-mh-video-seek="{{ chapter.seconds }}"><span class="mh-badge-video__time">{{ chapter.label }}</span><span class="mh-badge-video__chapter-title">{{ chapter.title }}</span></button></li>
+            {% endfor %}
+          </ol>
+        {% endif %}
+        <p class="mh-badge-video__foot">
+          {% trans %}Need the checklist, documentation or quiz? <a href="{{ badge_url }}">Open the full badge page</a>.{% endtrans %}
+        </p>
+      </div>
+    </dialog>
+  {% endfor %}
+</div>

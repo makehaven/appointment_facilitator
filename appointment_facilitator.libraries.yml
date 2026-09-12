@@ -151,3 +151,20 @@ badge_members_page:
   css:
     theme:
       css/badge-members-page.css: {}
+
+badge_video_lightbox:
+  version: 1.x
+  css:
+    theme:
+      css/badge-video-lightbox.css: {}
+  js:
+    js/badge-video-lightbox.js: {}
+  dependencies:
+    - core/drupal
+    - core/once
+
+badge_alumni_panel:
+  version: 1.x
+  css:
+    theme:
+      css/badge-alumni-panel.css: {}

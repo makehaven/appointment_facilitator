@@ -1,0 +1,239 @@
+/* ── Badge training video: thumbnail + lightbox (tool-page embed) ──
+   Module-owned so it looks the same under the barrio front-end theme and the
+   Gin admin theme members are served. Uses the site tokens where they exist
+   and falls back to the brand values elsewhere. */
+
+.mh-badge-video {
+  margin: 0.75rem 0 0.5rem;
+}
+
+.mh-badge-video__thumb {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  width: min(100%, 320px);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.mh-badge-video__poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--mh-radius-md, 0.6rem);
+  background: #111;
+  box-shadow: var(--mh-shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.12));
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mh-badge-video__poster img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.15s ease;
+}
+
+.mh-badge-video__play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  background: var(--mh-color-brand-primary, #8b1919);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.mh-badge-video__play::after {
+  content: "";
+  position: absolute;
+  left: 55%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-style: solid;
+  border-width: 0.65rem 0 0.65rem 1.1rem;
+  border-color: transparent transparent transparent #fff;
+}
+
+.mh-badge-video__thumb:hover .mh-badge-video__poster,
+.mh-badge-video__thumb:focus-visible .mh-badge-video__poster {
+  transform: translateY(-1px);
+  box-shadow: var(--mh-shadow-md, 0 6px 18px rgba(0, 0, 0, 0.18));
+}
+
+.mh-badge-video__thumb:hover img {
+  opacity: 0.85;
+}
+
+.mh-badge-video__thumb:focus-visible {
+  outline: 3px solid var(--mh-color-brand-primary, #8b1919);
+  outline-offset: 3px;
+  border-radius: var(--mh-radius-md, 0.6rem);
+}
+
+.mh-badge-video__label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--mh-color-neutral-800, #1f2937);
+}
+
+.mh-badge-video__count {
+  font-weight: 400;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+/* Dialog ------------------------------------------------------------- */
+
+.mh-badge-video__dialog {
+  width: min(960px, 96vw);
+  max-width: none;
+  max-height: 94vh;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mh-radius-lg, 0.9rem);
+  background: var(--mh-color-surface, #fff);
+  color: var(--mh-color-neutral-900, #111827);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.mh-badge-video__dialog::backdrop {
+  background: rgba(10, 10, 12, 0.78);
+}
+
+html.mh-badge-video-open {
+  overflow: hidden;
+}
+
+.mh-badge-video__panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 94vh;
+  overflow: auto;
+}
+
+.mh-badge-video__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--mh-color-border, #e5e7eb);
+}
+
+.mh-badge-video__title {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.mh-badge-video__close {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mh-color-surface-muted, #f3f4f6);
+  color: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mh-badge-video__close:hover,
+.mh-badge-video__close:focus-visible {
+  background: var(--mh-color-neutral-200, #e5e7eb);
+}
+
+.mh-badge-video__frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.mh-badge-video__frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.mh-badge-video__chapters-title {
+  margin: 1rem 1.1rem 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+.mh-badge-video__chapters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.35rem 0.75rem;
+  margin: 0 1.1rem 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.mh-badge-video__chapter {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: var(--mh-radius-sm, 0.4rem);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mh-badge-video__chapter:hover,
+.mh-badge-video__chapter:focus-visible {
+  background: var(--mh-color-surface-muted, #f3f4f6);
+  border-color: var(--mh-color-border, #e5e7eb);
+}
+
+.mh-badge-video__chapter.is-active {
+  background: var(--mh-color-brand-primary-muted, #f7e6e6);
+  border-color: var(--mh-color-brand-primary, #8b1919);
+}
+
+.mh-badge-video__time {
+  flex: 0 0 auto;
+  min-width: 3.4rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--mh-color-brand-primary, #8b1919);
+}
+
+.mh-badge-video__foot {
+  margin: 0.5rem 1.1rem 1rem;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+@media (max-width: 640px) {
+  .mh-badge-video__dialog {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .mh-badge-video__chapters {
+    grid-template-columns: 1fr;
+  }
+}
