@@ -149,3 +149,18 @@ enforces transitions, including automated/API saves; callers must handle a
 blocked award before saving. Ordinary edits to existing earned or legacy blank
 badges remain valid; there is no retrospective revocation. Renewals and changing
 a badge's member or badge identity are new awards and are checked.
+
+## Tool page facilitator dialog
+
+Every published tool (`item` node) whose required badges have a facilitator
+roster renders a compact "Talk to a facilitator" card (pseudo-field
+`mh_tool_facilitators`, placeable in the `item` view display). Its button opens
+a native `<dialog>` with the 15-day schedule grid for the union of those
+badges' facilitators plus any by-request badgers. The grid lives outside the
+badge card on purpose: facilitators are for project advice and refreshers as
+much as for checkouts. Slot links pre-set the appointment purpose to `project`
+when the viewer already holds every badge the tool needs, otherwise
+`checkout`; the "See facilitator schedule" link inside a badge card opens the
+same dialog with the checkout purpose. Anonymous viewers get "Sign in to
+schedule" links that return to the pre-filled booking form. An explicit
+`?purpose=` on the appointment form always wins over `from-badges-complete`.

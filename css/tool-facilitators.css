@@ -1,0 +1,205 @@
+/* ── Tool page: "Talk to a facilitator" card + schedule dialog ──
+   Module-owned so it renders the same under the barrio front-end theme
+   (anonymous, public) and the Gin admin theme members are served. Site
+   tokens where they exist, brand fallbacks elsewhere. */
+
+.mh-tool-facilitators {
+  margin: var(--mh-space-lg, 1.5rem) 0;
+}
+
+.mh-tool-facilitators__card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-left: 6px solid var(--mh-color-brand-primary, #8b1919);
+  border-radius: var(--mh-radius-lg, 0.9rem);
+  background: var(--mh-color-surface, #fff);
+}
+
+.mh-tool-facilitators__body {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.mh-tool-facilitators__title {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.mh-tool-facilitators__lead {
+  margin: 0 0 0.35rem;
+  color: var(--mh-color-neutral-700, #374151);
+}
+
+.mh-tool-facilitators__summary {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+/* Opener: primary button on the card, inline text-link in a badge card. */
+.mh-tool-facilitators__open {
+  flex: 0 0 auto;
+  display: inline-block;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  background: var(--mh-color-brand-primary, #8b1919);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mh-tool-facilitators__open:hover,
+.mh-tool-facilitators__open:focus-visible {
+  background: var(--mh-color-brand-primary-dark, #6e1414);
+  color: #fff;
+  text-decoration: none;
+}
+
+.mh-tool-facilitators__open:focus-visible {
+  outline: 3px solid var(--mh-color-brand-primary, #8b1919);
+  outline-offset: 3px;
+}
+
+.mh-tool-facilitators__open--inline {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.85rem;
+  vertical-align: baseline;
+}
+
+.mh-badge-checkout-options--compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-700, #374151);
+}
+
+/* Dialog ------------------------------------------------------------- */
+
+.mh-tool-facilitators__dialog {
+  width: min(1000px, 96vw);
+  max-width: none;
+  max-height: 94vh;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mh-radius-lg, 0.9rem);
+  background: var(--mh-color-surface, #fff);
+  color: var(--mh-color-neutral-900, #111827);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.mh-tool-facilitators__dialog::backdrop {
+  background: rgba(10, 10, 12, 0.72);
+}
+
+html.mh-tool-facilitators-open {
+  overflow: hidden;
+}
+
+.mh-tool-facilitators__panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 94vh;
+  overflow: auto;
+}
+
+.mh-tool-facilitators__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--mh-color-border, #e5e7eb);
+  background: var(--mh-color-surface, #fff);
+}
+
+.mh-tool-facilitators__dialog-title {
+  margin: 0 0 0.2rem;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.mh-tool-facilitators__dialog-tool {
+  font-weight: 400;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+.mh-tool-facilitators__dialog-lead {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-700, #374151);
+}
+
+.mh-tool-facilitators__close {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mh-color-surface-muted, #f3f4f6);
+  color: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mh-tool-facilitators__close:hover,
+.mh-tool-facilitators__close:focus-visible {
+  background: var(--mh-color-neutral-200, #e5e7eb);
+}
+
+.mh-tool-facilitators__schedule {
+  padding: 0.75rem 1.1rem 0;
+}
+
+.mh-tool-facilitators__schedule .calendly-availability-week-schedule {
+  margin: 0;
+}
+
+.mh-tool-facilitators__empty {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.mh-tool-facilitators__on-request {
+  padding: 0 1.1rem;
+}
+
+.mh-tool-facilitators__on-request .mh-badge-on-request {
+  margin-top: 0.5rem;
+}
+
+.mh-tool-facilitators__foot {
+  margin: 0.75rem 1.1rem 1rem;
+  font-size: 0.9rem;
+  color: var(--mh-color-neutral-600, #4b5563);
+}
+
+@media (max-width: 640px) {
+  .mh-tool-facilitators__dialog {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  .mh-tool-facilitators__open {
+    width: 100%;
+    text-align: center;
+  }
+
+  .mh-tool-facilitators__open--inline {
+    width: auto;
+  }
+}

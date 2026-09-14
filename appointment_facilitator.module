@@ -2,7 +2,6 @@
 
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
 use Drupal\appointment_facilitator\Badge\VideoChapters;
-use Drupal\appointment_facilitator\Render\ScheduleLinkPurpose;
 use Drupal\Component\Utility\Html;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
 use Drupal\Core\Access\AccessResult;
@@ -415,89 +414,28 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
 /**
  * Builds the "how to get checked out" options for a badge term embed.
  *
- * Renders the scheduled Build & Badge classes (the facilitator_schedules tool
- * EVA) and any by-request badgers (field_badge_issuer_on_request) so they show
- * on tool-page badge embeds again. The 2026-05-10 badging-UX simplification
- * moved both off the badges.embedded display, and members reported (2026-06-23
- * /i/25299, 2026-06-24 /badges/gerber-cnc) that the class list and by-request
- * badgers disappeared from tool pages.
+ * Renders one compact line under the eligibility marker: a "See facilitator
+ * schedule" button that opens the tool page's facilitator dialog (see
+ * _appointment_facilitator_tool_facilitators_panel()), falling back to the
+ * badge page when no dialog is on the page. The full schedule grid used to
+ * render inline here (restored 2026-06-25 after members reported the class
+ * list and by-request badgers had vanished from tool pages), but it took the
+ * whole page and framed facilitators as a badge-only thing (JR, 2026-09-14),
+ * so the schedule now lives once per tool, outside the badge card.
  *
- * Returns an empty array when the member already holds the badge (or it is
- * suspended/expired) — they don't need checkout options.
+ * Returns an empty array when the member already holds the badge (the tool
+ * page's own facilitator card covers advice bookings), when it is
+ * suspended/expired, and for quiz-only badges (no facilitator checkout).
  */
 function _appointment_facilitator_badge_checkout_options(TermInterface $term, string $state): array {
-  if ($state === 'active') {
-    return _appointment_facilitator_badge_alumni_options($term);
-  }
-  if (in_array($state, ['suspended', 'expired'], TRUE)) {
+  if (in_array($state, ['active', 'suspended', 'expired'], TRUE)) {
     return [];
   }
 
   // Quiz-only badges (checkout_requirement "no") auto-issue when the quiz is
-  // passed — there is no facilitator checkout for them. Embedding the schedule
-  // grid here just renders the facilitator_schedules view's "No Volunteers
-  // Currently Assigned" empty text and misleads members (reported on the Metal
-  // Shop tool page, /i/9534). Mirror the badge-term-page logic (which hides the
-  // whole checkout group for "no") and show no checkout options.
-  $checkout = '';
-  if (
-    $term->hasField('field_badge_checkout_requirement')
-    && !$term->get('field_badge_checkout_requirement')->isEmpty()
-  ) {
-    $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
-  }
-  if ($checkout === 'no') {
-    return [];
-  }
-
-  $tid = (int) $term->id();
-  $children = [];
-
-  // Scheduled Build & Badge classes / facilitator checkout slots for this badge.
-  // The view prints its own empty text when nothing is scheduled.
-  $children['schedule'] = [
-    '#type' => 'view',
-    '#name' => 'facilitator_schedules',
-    '#display_id' => 'facilitator_schedule_tool_eva',
-    '#arguments' => [$tid],
-  ];
-
-  // By-request badgers — experienced members willing to come in on request.
-  if (
-    $term->hasField('field_badge_issuer_on_request')
-    && !$term->get('field_badge_issuer_on_request')->isEmpty()
-  ) {
-    $on_request = _appointment_facilitator_badge_on_request_embed($term);
-    if ($on_request) {
-      $children['on_request'] = $on_request;
-    }
-  }
-
-  return [
-    '#type' => 'container',
-    '#attributes' => ['class' => ['mh-badge-checkout-options']],
-    // Reuse the schedule-grid styling already shipped for the full badge page;
-    // it is not otherwise attached on the embedded view mode.
-    '#attached' => ['library' => ['appointment_facilitator/badge_schedule_grid']],
-    'children' => $children,
-  ];
-}
-
-/**
- * Builds the post-badge "facilitators are still here for you" panel.
- *
- * Once a member held the badge the tool-page embed dropped every scheduling
- * option, so the only remaining route to a facilitator was the badge page
- * (another click in, and framed as a checkout). Facilitators are meant to help
- * with projects and give advice, not only run checkouts (JR, 2026-09-12), so
- * the embed now says so and shows the same facilitator schedule grid with the
- * booking links pre-set to the "project advice" purpose via
- * ScheduleLinkPurpose::postRender().
- *
- * Returns [] for quiz-only badges and for badges with no facilitators at all —
- * the schedule view's empty text would only mislead there.
- */
-function _appointment_facilitator_badge_alumni_options(TermInterface $term): array {
+  // passed — there is no facilitator checkout for them (reported on the Metal
+  // Shop tool page, /i/9534). Mirror the badge-term-page logic and show no
+  // checkout options.
   $checkout = '';
   if (
     $term->hasField('field_badge_checkout_requirement')
@@ -515,48 +453,216 @@ function _appointment_facilitator_badge_alumni_options(TermInterface $term): arr
     return [];
   }
 
-  $intro_title = Html::escape((string) t('Facilitators are still here for you'));
-  $intro_lead = t('You are badged, so no further checkout is needed — but the facilitators below are glad to book time for <strong>project-specific advice, a refresher, or help planning a build</strong>. Pick a time that suits you; the appointment purpose is pre-set to project advice.');
-
-  $children = [];
-  $children['intro'] = [
-    '#type' => 'container',
-    '#attributes' => ['class' => ['mh-badge-alumni__intro']],
-    'title' => ['#markup' => '<h4 class="mh-badge-alumni__title">' . $intro_title . '</h4>'],
-    'lead' => ['#markup' => '<p class="mh-badge-alumni__lead">' . $intro_lead . '</p>'],
-  ];
-
-  if ($has_roster) {
-    $children['schedule'] = [
-      '#type' => 'view',
-      '#name' => 'facilitator_schedules',
-      '#display_id' => 'facilitator_schedule_tool_eva',
-      '#arguments' => [(int) $term->id()],
-    ];
+  $badge_url = '';
+  try {
+    $badge_url = $term->toUrl()->toString();
   }
-
-  if ($has_on_request) {
-    $on_request = _appointment_facilitator_badge_on_request_embed($term);
-    if ($on_request) {
-      $children['on_request'] = $on_request;
-    }
+  catch (\Throwable) {
+    // Unsaved term — fall back to the schedules page below.
+  }
+  if ($badge_url === '') {
+    $badge_url = Url::fromUserInput('/facilitator/schedules')->toString();
   }
 
   return [
     '#type' => 'container',
-    '#attributes' => ['class' => ['mh-badge-checkout-options', 'mh-badge-alumni']],
-    '#attached' => [
-      'library' => [
-        'appointment_facilitator/badge_schedule_grid',
-        'appointment_facilitator/badge_alumni_panel',
+    '#attributes' => ['class' => ['mh-badge-checkout-options', 'mh-badge-checkout-options--compact']],
+    '#attached' => ['library' => ['appointment_facilitator/tool_facilitators']],
+    'text' => [
+      '#markup' => '<span class="mh-badge-checkout-options__text">'
+        . Html::escape((string) t('Checkouts are booked with a facilitator.'))
+        . '</span> ',
+    ],
+    'open' => [
+      '#type' => 'html_tag',
+      '#tag' => 'a',
+      '#value' => Html::escape((string) t('See facilitator schedule')),
+      '#attributes' => [
+        'href' => $badge_url,
+        'class' => ['mh-tool-facilitators__open', 'mh-tool-facilitators__open--inline'],
+        'data-mh-facilitators-open' => '',
+        'data-mh-facilitators-purpose' => 'checkout',
       ],
     ],
-    // Rewrite the grid's "Request Appointment" links to carry
-    // ?purpose=project (read back by the appointment form alter).
-    '#post_render' => [[ScheduleLinkPurpose::class, 'postRender']],
-    '#mh_schedule_purpose' => 'project',
-    'children' => $children,
   ];
+}
+
+/**
+ * Builds the tool page's "Talk to a facilitator" card and schedule dialog.
+ *
+ * Facilitators run badge checkouts, but they are also there for project
+ * advice, refreshers and build planning — for members who already hold the
+ * badge as much as for those working towards it. The 2026-09-12 version put a
+ * "Facilitators are still here for you" panel with the full schedule grid
+ * inside the badge card, which made it read as a badge-only thing and took
+ * the whole page (JR, 2026-09-14). This renders instead, once per tool and
+ * outside the "Requirements for Use" fieldset: a compact card (who / how many
+ * upcoming times) with a button that opens a native <dialog> holding the
+ * 15-day schedule grid for the union of the tool's badge rosters plus the
+ * by-request badgers. Slot links pre-set the appointment purpose to "project"
+ * when the viewer already holds every badge the tool requires, otherwise
+ * "checkout"; a badge card's own "See facilitator schedule" link opens the
+ * same dialog with the checkout purpose.
+ *
+ * Returns [] when the tool requires no badge with a facilitator roster.
+ */
+function _appointment_facilitator_tool_facilitators_panel(NodeInterface $tool): array {
+  if (!$tool->hasField('field_member_badges') || $tool->get('field_member_badges')->isEmpty()) {
+    return [];
+  }
+
+  /** @var \Drupal\taxonomy\TermInterface[] $terms */
+  $terms = [];
+  foreach ($tool->get('field_member_badges')->referencedEntities() as $term) {
+    if ($term instanceof TermInterface && $term->bundle() === 'badges') {
+      $terms[(int) $term->id()] = $term;
+    }
+  }
+  if (!$terms) {
+    return [];
+  }
+
+  $has_roster = FALSE;
+  $on_request_terms = [];
+  foreach ($terms as $term) {
+    if ($term->hasField('field_badge_issuer') && !$term->get('field_badge_issuer')->isEmpty()) {
+      $has_roster = TRUE;
+    }
+    if ($term->hasField('field_badge_issuer_on_request') && !$term->get('field_badge_issuer_on_request')->isEmpty()) {
+      $has_roster = TRUE;
+      $on_request_terms[] = $term;
+    }
+  }
+  if (!$has_roster) {
+    return [];
+  }
+
+  $cache = new CacheableMetadata();
+  $cache->addCacheContexts(['user']);
+  $cache->addCacheTags($tool->getCacheTags());
+  foreach ($terms as $term) {
+    $cache->addCacheTags($term->getCacheTags());
+  }
+  // The grid is a rolling 15-day window over facilitator hours; keep it fresh
+  // the way the schedules page is (profile saves invalidate, time passes).
+  $cache->addCacheTags(['profile_list']);
+  $cache->setCacheMaxAge(3600);
+
+  // Purpose: "project" only when the viewer already holds every badge the tool
+  // needs; anyone still working towards one is booking a checkout.
+  $purpose = 'checkout';
+  $account = \Drupal::currentUser();
+  if ($account->isAuthenticated() && \Drupal::hasService('appointment_facilitator.badge_user_status')) {
+    /** @var \Drupal\appointment_facilitator\Service\BadgeUserStatusResolver $resolver */
+    $resolver = \Drupal::service('appointment_facilitator.badge_user_status');
+    $all_active = TRUE;
+    foreach ($terms as $term) {
+      $resolved = $resolver->resolve((int) $account->id(), $term);
+      $cache->addCacheTags($resolved['cache_tags'] ?? []);
+      if (($resolved['state'] ?? '') !== 'active') {
+        $all_active = FALSE;
+      }
+    }
+    if ($all_active) {
+      $purpose = 'project';
+    }
+  }
+
+  try {
+    /** @var \Drupal\appointment_facilitator\Controller\BadgeNextStepsController $controller */
+    $controller = \Drupal::classResolver()->getInstanceFromDefinition(BadgeNextStepsController::class);
+  }
+  catch (\Throwable) {
+    return [];
+  }
+
+  $offline = FALSE;
+  foreach ($terms as $term) {
+    if ($controller->isBadgeToolOffline($term)) {
+      $offline = TRUE;
+      break;
+    }
+  }
+
+  $facilitators = $offline ? [] : $controller->getFacilitatorsForTerms(array_values($terms));
+  $slot_count = 0;
+  $next_ts = NULL;
+  foreach ($facilitators as $entry) {
+    $slot_count += count($entry['slots'] ?? []);
+    $ts = (int) ($entry['soonest_ts'] ?? 0);
+    if ($ts > 0 && ($next_ts === NULL || $ts < $next_ts)) {
+      $next_ts = $ts;
+    }
+  }
+
+  if ($offline) {
+    $schedule = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mh-tool-facilitators__empty', 'alert', 'alert-warning']],
+      'message' => ['#markup' => '<p>' . t('This tool is currently offline for maintenance. Booking is paused until it returns. Check Slack #facilitator-hours for an update.') . '</p>'],
+    ];
+  }
+  elseif ($facilitators) {
+    $schedule = $controller->buildScheduleTableForTool($facilitators, $purpose);
+  }
+  else {
+    $schedule = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['mh-tool-facilitators__empty']],
+      'message' => ['#markup' => '<p>' . t('No facilitator times are posted for the next two weeks. Check the <a href="@url">full schedule</a> or ask in Slack.', ['@url' => Url::fromUserInput('/facilitator/schedules')->toString()]) . '</p>'],
+    ];
+  }
+
+  $on_request = [];
+  foreach ($on_request_terms as $term) {
+    $block = _appointment_facilitator_badge_on_request_embed($term);
+    if ($block) {
+      $on_request['badge_' . $term->id()] = $block;
+    }
+  }
+
+  $summary = '';
+  if ($offline) {
+    $summary = (string) t('Booking paused while the tool is offline.');
+  }
+  elseif ($facilitators) {
+    $summary = (string) \Drupal::translation()->formatPlural(
+      count($facilitators),
+      '1 facilitator, @slots upcoming times in the next two weeks',
+      '@count facilitators, @slots upcoming times in the next two weeks',
+      ['@slots' => $slot_count]
+    );
+    if ($next_ts) {
+      $summary .= ' · ' . t('Next: @when', ['@when' => \Drupal::service('date.formatter')->format($next_ts, 'custom', 'D M j, g:ia')]);
+    }
+  }
+  else {
+    $summary = (string) t('No times posted for the next two weeks.');
+  }
+
+  $lead = $purpose === 'project'
+    ? t('You hold the badge, but facilitators are still here for you — book time for project-specific advice, a refresher, or help planning a build.')
+    : t('Facilitators run badge checkouts and are also glad to help with project-specific advice, a refresher, or planning a build.');
+
+  $build = [
+    '#theme' => 'tool_facilitators',
+    '#tool_label' => $tool->label(),
+    '#lead' => $lead,
+    '#summary' => $summary,
+    '#purpose' => $purpose,
+    '#schedule' => $schedule,
+    '#on_request' => $on_request,
+    '#schedules_url' => Url::fromUserInput('/facilitator/schedules')->toString(),
+    '#attached' => [
+      'library' => [
+        'appointment_facilitator/tool_facilitators',
+        'appointment_facilitator/badge_schedule_grid',
+        'calendly_availability/calendly_availability',
+      ],
+    ],
+  ];
+  $cache->applyTo($build);
+  return $build;
 }
 
 /**
@@ -2170,6 +2276,16 @@ function _appointment_facilitator_attach_badge_event_card_pseudo_field(array &$b
 function appointment_facilitator_entity_extra_field_info(): array {
   return [
     'node' => [
+      'item' => [
+        'display' => [
+          'mh_tool_facilitators' => [
+            'label'       => t('Facilitators (schedule dialog)'),
+            'description' => t('Compact "Talk to a facilitator" card with a button that opens the facilitator schedule for every badge this tool requires.'),
+            'weight'      => 8,
+            'visible'     => TRUE,
+          ],
+        ],
+      ],
       'appointment' => [
         'display' => [
           'appointment_faces' => [
@@ -2231,6 +2347,14 @@ function appointment_facilitator_entity_extra_field_info(): array {
  */
 function appointment_facilitator_node_view(array &$build, NodeInterface $entity, EntityViewDisplayInterface $display, $view_mode): void {
   _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
+
+  if ($entity->bundle() === 'item' && ($component = $display->getComponent('mh_tool_facilitators'))) {
+    $panel = _appointment_facilitator_tool_facilitators_panel($entity);
+    if ($panel) {
+      $panel['#weight'] = $component['weight'] ?? 8;
+      $build['mh_tool_facilitators'] = $panel;
+    }
+  }
 }
 
 /**
@@ -3965,10 +4089,12 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     // page's post-badge panel sends members here with ?purpose=project so the
     // form does not default to "Badge Checkout" for a badge they already hold.
     $purpose = trim((string) $request->query->get('purpose', ''));
+    $explicit_purpose = FALSE;
     if ($purpose !== '' && isset($form['field_appointment_purpose']['widget'])) {
       $purpose_options = $form['field_appointment_purpose']['widget']['#options'] ?? [];
       if (isset($purpose_options[$purpose])) {
         $form['field_appointment_purpose']['widget']['#default_value'] = $purpose;
+        $explicit_purpose = TRUE;
       }
     }
 
@@ -4016,10 +4142,13 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     }
 
     // Pre-select purpose as "Badge Checkout" when entering from the
-    // badge-completion flow.
+    // badge-completion flow. An explicit, valid ?purpose= (set above) wins:
+    // a slot link may carry from-badges-complete for badge pre-selection
+    // while asking for a non-checkout purpose.
     $from_badges_complete = (bool) $request->query->get('from-badges-complete', 0);
     $purpose_hint = (string) $request->query->get('purpose', '');
     if ($entity->hasField('field_appointment_purpose')
+      && !$explicit_purpose
       && ($from_badges_complete || $purpose_hint === 'checkout')
       && $entity->get('field_appointment_purpose')->isEmpty()) {
       $entity->set('field_appointment_purpose', 'checkout');
@@ -6530,6 +6659,17 @@ function appointment_facilitator_theme(): array {
         'badge_label'  => '',
         'badge_url'    => '',
         'button_label' => '',
+      ],
+    ],
+    'tool_facilitators' => [
+      'variables' => [
+        'tool_label'    => '',
+        'lead'          => '',
+        'summary'       => '',
+        'purpose'       => 'checkout',
+        'schedule'      => [],
+        'on_request'    => [],
+        'schedules_url' => '',
       ],
     ],
   ];

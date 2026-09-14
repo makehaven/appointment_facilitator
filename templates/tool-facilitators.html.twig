@@ -1,0 +1,47 @@
+{#
+/**
+ * @file
+ * Tool page: compact "Talk to a facilitator" card + schedule dialog.
+ *
+ * Available variables:
+ * - tool_label: the tool's title.
+ * - lead: one-sentence explanation (differs when the viewer holds the badge).
+ * - summary: facilitator / upcoming-times count line.
+ * - purpose: appointment purpose the schedule links pre-set (checkout|project).
+ * - schedule: render array — the 15-day schedule grid, or an empty-state note.
+ * - on_request: render arrays of by-request badger buttons, keyed per badge.
+ * - schedules_url: the full /facilitator/schedules page (no-JS fallback).
+ */
+#}
+<section class="mh-tool-facilitators" data-mh-tool-facilitators data-mh-facilitators-purpose="{{ purpose }}">
+  <div class="mh-tool-facilitators__card">
+    <div class="mh-tool-facilitators__body">
+      <h3 class="mh-tool-facilitators__title">{{ 'Talk to a facilitator'|t }}</h3>
+      <p class="mh-tool-facilitators__lead">{{ lead }}</p>
+      {% if summary %}<p class="mh-tool-facilitators__summary">{{ summary }}</p>{% endif %}
+    </div>
+    <a href="{{ schedules_url }}" class="mh-tool-facilitators__open" data-mh-facilitators-open data-mh-facilitators-purpose="{{ purpose }}" aria-haspopup="dialog" aria-controls="mh-tool-facilitators-dialog">{{ 'See facilitator schedule'|t }}</a>
+  </div>
+  <dialog class="mh-tool-facilitators__dialog" id="mh-tool-facilitators-dialog" data-mh-facilitators-dialog aria-label="{{ 'Facilitator schedule: @tool'|t({'@tool': tool_label}) }}">
+    <div class="mh-tool-facilitators__panel">
+      <div class="mh-tool-facilitators__head">
+        <div>
+          <h3 class="mh-tool-facilitators__dialog-title">{{ 'Facilitator schedule'|t }} <span class="mh-tool-facilitators__dialog-tool">· {{ tool_label }}</span></h3>
+          <p class="mh-tool-facilitators__dialog-lead" data-mh-facilitators-lead>{{ lead }}</p>
+        </div>
+        <button type="button" class="mh-tool-facilitators__close" data-mh-facilitators-close aria-label="{{ 'Close'|t }}">&times;</button>
+      </div>
+      <div class="mh-tool-facilitators__schedule">
+        {{ schedule }}
+      </div>
+      {% if on_request|length %}
+        <div class="mh-tool-facilitators__on-request">
+          {{ on_request }}
+        </div>
+      {% endif %}
+      <p class="mh-tool-facilitators__foot">
+        {% trans %}Every facilitator, every tool: <a href="{{ schedules_url }}">the full facilitator schedule</a>.{% endtrans %}
+      </p>
+    </div>
+  </dialog>
+</section>

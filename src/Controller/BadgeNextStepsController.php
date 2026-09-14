@@ -648,6 +648,69 @@ class BadgeNextStepsController extends ControllerBase {
   }
 
   /**
+   * Returns the facilitators with upcoming availability for a set of badges.
+   *
+   * Used by the tool page, where one facilitator dialog covers every badge the
+   * tool requires. Entries are deduped by user; the first badge a facilitator
+   * was found under is recorded as 'badge_tid' so the booking link can carry
+   * it. Sorted by soonest upcoming slot.
+   *
+   * @param \Drupal\taxonomy\TermInterface[] $terms
+   *   Badge terms.
+   *
+   * @return array
+   *   Entries of ['user', 'availability', 'soonest_ts', 'slots', 'badge_tid'].
+   */
+  public function getFacilitatorsForTerms(array $terms): array {
+    $union = [];
+    foreach ($terms as $term) {
+      if (!$term instanceof TermInterface) {
+        continue;
+      }
+      foreach ($this->getFacilitatorsForBadge($term) as $entry) {
+        $uid = (int) $entry['user']->id();
+        if (isset($union[$uid])) {
+          continue;
+        }
+        $entry['badge_tid'] = (int) $term->id();
+        $union[$uid] = $entry;
+      }
+    }
+    $union = array_values($union);
+    usort($union, fn($a, $b) => $a['soonest_ts'] <=> $b['soonest_ts']);
+    return $union;
+  }
+
+  /**
+   * Builds the schedule grid for a tool page's facilitator dialog.
+   *
+   * @param array $facilitators
+   *   Output of getFacilitatorsForTerms().
+   * @param string $purpose
+   *   Appointment purpose the slot links pre-set: 'checkout' (default) or,
+   *   for members who already hold every badge the tool needs, 'project'.
+   */
+  public function buildScheduleTableForTool(array $facilitators, string $purpose = 'checkout'): array {
+    if (!$facilitators) {
+      return [];
+    }
+    return $this->buildFacilitatorScheduleTable($facilitators, 0, FALSE, $purpose);
+  }
+
+  /**
+   * Whether every tool a badge belongs to is offline (public wrapper).
+   *
+   * @param \Drupal\taxonomy\TermInterface $term
+   *   The badge term.
+   *
+   * @return bool
+   *   TRUE when no published tool carrying the badge is usable.
+   */
+  public function isBadgeToolOffline(TermInterface $term): bool {
+    return $this->isBadgeOffline($term);
+  }
+
+  /**
    * Builds only the schedule-table portion for a badge term.
    *
    * This is used by other pages (e.g. quiz result pages) that want the
@@ -1136,7 +1199,11 @@ class BadgeNextStepsController extends ControllerBase {
    * preview-only viewers cannot click through to a booking form they don't
    * have permission to submit.
    */
-  protected function buildFacilitatorScheduleTable(array $facilitators, int $badge_tid, bool $is_gated = FALSE): array {
+  protected function buildFacilitatorScheduleTable(array $facilitators, int $badge_tid, bool $is_gated = FALSE, string $purpose = 'checkout'): array {
+    $slot_event_label = $purpose === 'checkout'
+      ? $this->t('Facilitator badge checkout')
+      : $this->t('Facilitator session');
+    $anonymous = $this->currentUser()->isAnonymous();
     $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
     $timezone = new \DateTimeZone($timezone_name);
 
@@ -1201,7 +1268,7 @@ class BadgeNextStepsController extends ControllerBase {
           'ts' => $slot_ts,
           'label' => $this->dateFormatter->format($slot_ts, 'custom', 'g:ia'),
           'host' => $user->getDisplayName(),
-          'url' => $this->buildScheduleUrl($user->id(), $badge_tid, $slot_ts),
+          'url' => $this->buildScheduleUrl($user->id(), (int) ($facilitator['badge_tid'] ?? $badge_tid), $slot_ts, $purpose),
         ];
       }
     }
@@ -1281,6 +1348,18 @@ class BadgeNextStepsController extends ControllerBase {
               ],
             ];
           }
+          elseif ($anonymous) {
+            // Booking needs an account: send visitors through login and back
+            // to the pre-filled appointment form.
+            $action = [
+              '#type' => 'link',
+              '#title' => $this->t('Sign in to schedule @time', ['@time' => $slot['label']]),
+              '#url' => Url::fromRoute('user.login', [], [
+                'query' => ['destination' => $slot['url']->toString()],
+              ]),
+              '#attributes' => ['class' => ['btn', 'btn-outline-primary', 'btn-sm']],
+            ];
+          }
           else {
             $action = [
               '#type' => 'link',
@@ -1293,7 +1372,7 @@ class BadgeNextStepsController extends ControllerBase {
             '#type' => 'container',
             '#attributes' => ['class' => ['calendly-slot-entry']],
             'event' => [
-              '#markup' => '<div class="calendly-slot-event-name"><small>' . $this->t('Facilitator badge checkout') . '</small></div>',
+              '#markup' => '<div class="calendly-slot-event-name"><small>' . $slot_event_label . '</small></div>',
             ],
             'link' => $action,
             'details' => [
@@ -1317,15 +1396,25 @@ class BadgeNextStepsController extends ControllerBase {
 
   /**
    * Builds the appointment add form URL for a host/badge slot.
+   *
+   * For the checkout purpose the link also carries the badge and the
+   * from-badges-complete flag so the form pre-selects the badge being checked
+   * out. Any other purpose (e.g. "project" advice from a tool page) sends only
+   * host + slot, so the form does not frame the booking as a checkout.
    */
-  protected function buildScheduleUrl(int $host_uid, int $badge_tid, int $slot_ts): Url {
+  protected function buildScheduleUrl(int $host_uid, int $badge_tid, int $slot_ts, string $purpose = 'checkout'): Url {
     $query = [
       'host-uid' => $host_uid,
       'host' => $host_uid,
-      'badge' => $badge_tid,
-      'purpose' => 'checkout',
-      'from-badges-complete' => 1,
     ];
+    if ($purpose === 'checkout') {
+      $query['badge'] = $badge_tid;
+      $query['purpose'] = 'checkout';
+      $query['from-badges-complete'] = 1;
+    }
+    elseif ($purpose !== '' && preg_match('/^[a-z_]+$/', $purpose)) {
+      $query['purpose'] = $purpose;
+    }
 
     if ($slot_ts > 0) {
       $timezone_name = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();

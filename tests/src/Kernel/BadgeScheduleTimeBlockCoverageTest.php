@@ -162,4 +162,110 @@ class BadgeScheduleTimeBlockCoverageTest extends KernelTestBase {
     $this->assertStringContainsString('Evening', $html);
   }
 
+  /**
+   * Tool-page grid: purpose drives the slot link query and the slot label.
+   *
+   * A member who already holds every badge a tool needs books "project"
+   * advice — the link must carry purpose=project and neither the badge nor
+   * the from-badges-complete flag (which the appointment form would otherwise
+   * read as a checkout). The default checkout purpose keeps all three.
+   */
+  public function testToolScheduleLinksFollowPurpose(): void {
+    $now = \Drupal::time()->getRequestTime();
+    $slot_ts = (new \DateTimeImmutable('@' . $now))
+      ->setTimezone(new \DateTimeZone('UTC'))
+      ->modify('+3 days')
+      ->setTime(15, 0)
+      ->getTimestamp();
+
+    $user = User::create([
+      'name' => 'advice_facilitator',
+      'mail' => 'advice-facilitator@example.com',
+      'status' => 1,
+    ]);
+    $user->addRole('facilitator');
+    $user->save();
+
+    Profile::create([
+      'type' => 'coordinator',
+      'uid' => $user->id(),
+      'status' => 1,
+      'field_coordinator_hours' => [
+        ['value' => $slot_ts, 'end_value' => $slot_ts + 3600, 'duration' => 60],
+      ],
+    ])->save();
+
+    $term = Term::create([
+      'vid' => 'badges',
+      'name' => 'Drill Press Badge',
+      'field_badge_issuer' => [$user->id()],
+    ]);
+    $term->save();
+
+    // Slot links are built for a signed-in viewer; anonymous viewers get a
+    // login link wrapping the same URL, which needs the node.add route.
+    $this->container->get('current_user')->setAccount($user);
+
+    $controller = BadgeNextStepsController::create($this->container);
+    $facilitators = $controller->getFacilitatorsForTerms([$term]);
+    $this->assertCount(1, $facilitators);
+    $this->assertSame((int) $term->id(), $facilitators[0]['badge_tid']);
+
+    $project = $this->collectSlotQueries($controller->buildScheduleTableForTool($facilitators, 'project'));
+    $this->assertCount(1, $project);
+    $this->assertSame('project', $project[0]['purpose']);
+    $this->assertArrayNotHasKey('badge', $project[0]);
+    $this->assertArrayNotHasKey('from-badges-complete', $project[0]);
+    $this->assertSame((string) $slot_ts, $project[0]['start_time']);
+
+    $checkout = $this->collectSlotQueries($controller->buildScheduleTableForTool($facilitators, 'checkout'));
+    $this->assertCount(1, $checkout);
+    $this->assertSame('checkout', $checkout[0]['purpose']);
+    $this->assertSame((int) $term->id(), $checkout[0]['badge']);
+    $this->assertSame(1, $checkout[0]['from-badges-complete']);
+
+    $this->assertSame(1, $this->countMarkup($controller->buildScheduleTableForTool($facilitators, 'project'), 'Facilitator session'));
+    $this->assertSame(1, $this->countMarkup($controller->buildScheduleTableForTool($facilitators, 'checkout'), 'Facilitator badge checkout'));
+  }
+
+  /**
+   * Collects the query options of every slot link in a schedule build.
+   */
+  private function collectSlotQueries(array $element): array {
+    $found = [];
+    $walk = function ($item) use (&$walk, &$found) {
+      if (!is_array($item)) {
+        return;
+      }
+      if (($item['#type'] ?? '') === 'link' && isset($item['#url'])) {
+        $found[] = $item['#url']->getOption('query') ?? [];
+      }
+      foreach ($item as $child) {
+        $walk($child);
+      }
+    };
+    $walk($element);
+    return $found;
+  }
+
+  /**
+   * Counts #markup strings containing a needle anywhere in a build.
+   */
+  private function countMarkup(array $element, string $needle): int {
+    $count = 0;
+    $walk = function ($item) use (&$walk, &$count, $needle) {
+      if (!is_array($item)) {
+        return;
+      }
+      if (isset($item['#markup']) && str_contains((string) $item['#markup'], $needle)) {
+        $count++;
+      }
+      foreach ($item as $child) {
+        $walk($child);
+      }
+    };
+    $walk($element);
+    return $count;
+  }
+
 }
