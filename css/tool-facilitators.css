@@ -42,8 +42,14 @@
   color: var(--mh-color-neutral-600, #4b5563);
 }
 
-/* Opener: primary button on the card, inline text-link in a badge card. */
-.mh-tool-facilitators__open {
+/* Opener: a pill button. Written as `a.…` with every link state spelled out
+   so the themes' a:visited / a:focus / a:active rules (dark text + underline)
+   cannot restyle it once it has been clicked. */
+a.mh-tool-facilitators__open,
+a.mh-tool-facilitators__open:link,
+a.mh-tool-facilitators__open:visited,
+a.mh-tool-facilitators__open:focus,
+a.mh-tool-facilitators__open:active {
   flex: 0 0 auto;
   display: inline-block;
   padding: 0.6rem 1.1rem;
@@ -55,8 +61,8 @@
   white-space: nowrap;
 }
 
-.mh-tool-facilitators__open:hover,
-.mh-tool-facilitators__open:focus-visible {
+a.mh-tool-facilitators__open:hover,
+a.mh-tool-facilitators__open:focus-visible {
   background: var(--mh-color-brand-primary-dark, #6e1414);
   color: #fff;
   text-decoration: none;
@@ -67,21 +73,6 @@
   outline-offset: 3px;
 }
 
-.mh-tool-facilitators__open--inline {
-  padding: 0.25rem 0.75rem;
-  font-size: 0.85rem;
-  vertical-align: baseline;
-}
-
-.mh-badge-checkout-options--compact {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem 0.6rem;
-  margin-top: 0.6rem;
-  font-size: 0.9rem;
-  color: var(--mh-color-neutral-700, #374151);
-}
 
 /* Dialog ------------------------------------------------------------- */
 
@@ -197,9 +188,5 @@ html.mh-tool-facilitators-open {
   .mh-tool-facilitators__open {
     width: 100%;
     text-align: center;
-  }
-
-  .mh-tool-facilitators__open--inline {
-    width: auto;
   }
 }

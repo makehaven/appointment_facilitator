@@ -64,15 +64,8 @@
   border-color: #5a6268;
 }
 
-/* Tool-page badge embed: "how to get checked out" options folded under the
-   eligibility marker (Build & Badge classes + by-request badgers). Restored
-   2026-06-25 after the 2026-05-10 embedded-display simplification dropped them. */
-.mh-badge-eligibility-wrap {
-  display: block;
-}
-.mh-badge-checkout-options {
-  margin-top: 0.75rem;
-}
+/* "Available by request" badgers (badge page and the tool-page facilitator
+   dialog). */
 .mh-badge-on-request {
   margin-top: 0.75rem;
   padding-top: 0.5rem;

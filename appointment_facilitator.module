@@ -383,108 +383,13 @@ function _appointment_facilitator_attach_badge_status_pseudo_fields(array &$buil
       ];
     }
 
-    // On the tool-page embed, fold the "how to get checked out" options
-    // (scheduled Build & Badge classes + by-request badgers) below the marker.
-    // Both were dropped from the badges.embedded display in the 2026-05-10
-    // badging-UX simplification; members reported the class list and the
-    // by-request badgers vanished from tool pages. The compact "card" view mode
-    // also carries this pseudo-field, so we render the options only on the
-    // embedded view mode to keep cards tidy.
-    $options = ($display->getMode() === 'embedded')
-      ? _appointment_facilitator_badge_checkout_options($term, $state)
-      : [];
-
-    $weight = $component['weight'] ?? -9;
-    if ($options) {
-      $build['mh_badge_user_eligibility'] = [
-        '#type' => 'container',
-        '#weight' => $weight,
-        '#attributes' => ['class' => ['mh-badge-eligibility-wrap']],
-        'marker' => $marker,
-        'options' => $options,
-      ];
-    }
-    else {
-      $marker['#weight'] = $weight;
-      $build['mh_badge_user_eligibility'] = $marker;
-    }
+    // The badge card carries no scheduling options: the tool page's own
+    // "Talk to a facilitator" card (mh_tool_facilitators) covers checkout and
+    // advice bookings once per tool, and the badge page has the full grid
+    // (JR, 2026-09-14).
+    $marker['#weight'] = $component['weight'] ?? -9;
+    $build['mh_badge_user_eligibility'] = $marker;
   }
-}
-
-/**
- * Builds the "how to get checked out" options for a badge term embed.
- *
- * Renders one compact line under the eligibility marker: a "See facilitator
- * schedule" button that opens the tool page's facilitator dialog (see
- * _appointment_facilitator_tool_facilitators_panel()), falling back to the
- * badge page when no dialog is on the page. The full schedule grid used to
- * render inline here (restored 2026-06-25 after members reported the class
- * list and by-request badgers had vanished from tool pages), but it took the
- * whole page and framed facilitators as a badge-only thing (JR, 2026-09-14),
- * so the schedule now lives once per tool, outside the badge card.
- *
- * Returns an empty array when the member already holds the badge (the tool
- * page's own facilitator card covers advice bookings), when it is
- * suspended/expired, and for quiz-only badges (no facilitator checkout).
- */
-function _appointment_facilitator_badge_checkout_options(TermInterface $term, string $state): array {
-  if (in_array($state, ['active', 'suspended', 'expired'], TRUE)) {
-    return [];
-  }
-
-  // Quiz-only badges (checkout_requirement "no") auto-issue when the quiz is
-  // passed — there is no facilitator checkout for them (reported on the Metal
-  // Shop tool page, /i/9534). Mirror the badge-term-page logic and show no
-  // checkout options.
-  $checkout = '';
-  if (
-    $term->hasField('field_badge_checkout_requirement')
-    && !$term->get('field_badge_checkout_requirement')->isEmpty()
-  ) {
-    $checkout = strtolower(trim((string) $term->get('field_badge_checkout_requirement')->value));
-  }
-  if ($checkout === 'no') {
-    return [];
-  }
-
-  $has_roster = $term->hasField('field_badge_issuer') && !$term->get('field_badge_issuer')->isEmpty();
-  $has_on_request = $term->hasField('field_badge_issuer_on_request') && !$term->get('field_badge_issuer_on_request')->isEmpty();
-  if (!$has_roster && !$has_on_request) {
-    return [];
-  }
-
-  $badge_url = '';
-  try {
-    $badge_url = $term->toUrl()->toString();
-  }
-  catch (\Throwable) {
-    // Unsaved term — fall back to the schedules page below.
-  }
-  if ($badge_url === '') {
-    $badge_url = Url::fromUserInput('/facilitator/schedules')->toString();
-  }
-
-  return [
-    '#type' => 'container',
-    '#attributes' => ['class' => ['mh-badge-checkout-options', 'mh-badge-checkout-options--compact']],
-    '#attached' => ['library' => ['appointment_facilitator/tool_facilitators']],
-    'text' => [
-      '#markup' => '<span class="mh-badge-checkout-options__text">'
-        . Html::escape((string) t('Checkouts are booked with a facilitator.'))
-        . '</span> ',
-    ],
-    'open' => [
-      '#type' => 'html_tag',
-      '#tag' => 'a',
-      '#value' => Html::escape((string) t('See facilitator schedule')),
-      '#attributes' => [
-        'href' => $badge_url,
-        'class' => ['mh-tool-facilitators__open', 'mh-tool-facilitators__open--inline'],
-        'data-mh-facilitators-open' => '',
-        'data-mh-facilitators-purpose' => 'checkout',
-      ],
-    ],
-  ];
 }
 
 /**
