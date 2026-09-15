@@ -6,6 +6,7 @@ use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\Core\Controller\ControllerBase;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Url;
+use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\Component\Utility\Html;
 use Drupal\node\NodeInterface;
 use Drupal\taxonomy\TermInterface;
@@ -24,6 +25,11 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *  4. Request a paid private session (fallback link to /private-class-inquiry).
  */
 class BadgeNextStepsController extends ControllerBase {
+
+  /**
+   * The appointment form offers at most this many 30-minute slots per shift.
+   */
+  const MAX_FORM_SLOTS = 6;
 
   public function __construct(
     protected readonly DateFormatterInterface $dateFormatter,
@@ -1131,6 +1137,13 @@ class BadgeNextStepsController extends ControllerBase {
     $window_start = $now - (2 * 60 * 60);
     $window_end   = $now + (14 * 24 * 60 * 60);
 
+    // How many consecutive 30-minute slots this badge's checkout needs — the
+    // same figure the appointment form enforces on submit.
+    $required_slots = 1;
+    if (function_exists('_appointment_facilitator_total_checkout_minutes_for_badges')) {
+      $required_slots = max(1, (int) ceil(_appointment_facilitator_total_checkout_minutes_for_badges([(int) $term->id()]) / 30));
+    }
+
     $available = [];
     foreach ($users as $user) {
       // Match the legacy facilitator card list behavior: only users with the
@@ -1156,26 +1169,35 @@ class BadgeNextStepsController extends ControllerBase {
         continue;
       }
 
-      // Find the soonest slot within the availability window.
-      $soonest_ts = NULL;
+      // Find the shifts within the availability window.
       $slot_rows = [];
       foreach ($profile->get('field_coordinator_hours') as $item) {
         $slot_ts = (int) ($item->value ?? 0);
         if ($slot_ts >= $window_start && $slot_ts <= $window_end) {
-          if ($soonest_ts === NULL || $slot_ts < $soonest_ts) {
-            $soonest_ts = $slot_ts;
-          }
           $slot_rows[] = [
             'start' => $slot_ts,
             'end' => (int) ($item->end_value ?? 0),
           ];
         }
       }
-      if ($soonest_ts === NULL) {
+      if (!$slot_rows) {
+        continue;
+      }
+
+      // Drop shifts that cannot take this booking any more. The grid button
+      // is labelled with the shift's start time, and members read that as
+      // the time they are booking; when the early slots are already taken the
+      // form silently moves the pre-selection to the first free pair, which
+      // is how a member clicking "6:00pm" ended up booked at 8:00pm without
+      // noticing (2026-09-11). A shift with no free run long enough for this
+      // badge's checkout is not an offer, so it is not shown.
+      $slot_rows = $this->filterBookableShifts((int) $user->id(), $slot_rows, $required_slots, $window_start, $window_end);
+      if (!$slot_rows) {
         continue;
       }
 
       usort($slot_rows, fn($a, $b) => $a['start'] <=> $b['start']);
+      $soonest_ts = $slot_rows[0]['start'];
 
       $available[] = [
         'user' => $user,
@@ -1189,6 +1211,124 @@ class BadgeNextStepsController extends ControllerBase {
     usort($available, fn($a, $b) => $a['soonest_ts'] <=> $b['soonest_ts']);
 
     return $available;
+  }
+
+  /**
+   * Keeps only the shifts that still have room for a booking.
+   *
+   * A shift is bookable when, among the 30-minute slots the appointment form
+   * offers for it, there is a run of at least $required_slots consecutive
+   * slots not overlapped by any live appointment with the same host. When the
+   * appointment content type is not available (some kernel tests, or the
+   * fields missing) every shift is kept, so the grid degrades to its previous
+   * behaviour rather than hiding everyone.
+   *
+   * @param int $host_uid
+   *   The facilitator.
+   * @param array $shifts
+   *   Rows of ['start' => ts, 'end' => ts].
+   * @param int $required_slots
+   *   Consecutive free 30-minute slots the booking needs (>= 1).
+   * @param int $window_start
+   *   Earliest shift start under consideration, used to bound the query.
+   * @param int $window_end
+   *   Latest shift start under consideration.
+   *
+   * @return array
+   *   The bookable subset of $shifts, in the original order.
+   */
+  protected function filterBookableShifts(int $host_uid, array $shifts, int $required_slots, int $window_start, int $window_end): array {
+    if (!$shifts) {
+      return [];
+    }
+    $bookings = $this->loadHostBookings($host_uid, $window_start, $window_end + self::MAX_FORM_SLOTS * 1800);
+    if ($bookings === NULL) {
+      return $shifts;
+    }
+    $required_slots = max(1, $required_slots);
+
+    $kept = [];
+    foreach ($shifts as $shift) {
+      $start = (int) ($shift['start'] ?? 0);
+      $end = (int) ($shift['end'] ?? 0);
+      if ($start <= 0) {
+        continue;
+      }
+      if ($end <= $start) {
+        // No posted end: the form still offers its full set of slots.
+        $end = $start + self::MAX_FORM_SLOTS * 1800;
+      }
+      $run = 0;
+      $best = 0;
+      $slot_start = $start;
+      for ($i = 0; $i < self::MAX_FORM_SLOTS && $slot_start + 1800 <= $end; $i++, $slot_start += 1800) {
+        $slot_end = $slot_start + 1800;
+        $free = TRUE;
+        foreach ($bookings as $booking) {
+          if ($booking['start'] < $slot_end && $booking['end'] > $slot_start) {
+            $free = FALSE;
+            break;
+          }
+        }
+        $run = $free ? $run + 1 : 0;
+        $best = max($best, $run);
+      }
+      if ($best >= $required_slots) {
+        $kept[] = $shift;
+      }
+    }
+    return $kept;
+  }
+
+  /**
+   * Loads the live appointments a host has between two timestamps.
+   *
+   * @return array|null
+   *   Rows of ['start' => ts, 'end' => ts] for published, non-cancelled
+   *   appointments hosted by $host_uid whose time range touches [$from, $to];
+   *   NULL when the appointment fields are not available, so callers can
+   *   tell "no bookings" from "cannot check".
+   */
+  protected function loadHostBookings(int $host_uid, int $from, int $to): ?array {
+    if ($host_uid <= 0 || !$this->entityTypeManager()->hasDefinition('node')) {
+      return NULL;
+    }
+    try {
+      if (!FieldStorageConfig::loadByName('node', 'field_appointment_timerange') || !FieldStorageConfig::loadByName('node', 'field_appointment_host')) {
+        return NULL;
+      }
+      $ids = $this->entityTypeManager()->getStorage('node')->getQuery()
+        ->accessCheck(FALSE)
+        ->condition('type', 'appointment')
+        ->condition('status', 1)
+        ->condition('field_appointment_host.target_id', $host_uid)
+        ->condition('field_appointment_timerange.value', $to, '<=')
+        ->condition('field_appointment_timerange.end_value', $from, '>=')
+        ->execute();
+    }
+    catch (\Throwable $e) {
+      return NULL;
+    }
+    if (!$ids) {
+      return [];
+    }
+
+    $rows = [];
+    foreach ($this->entityTypeManager()->getStorage('node')->loadMultiple($ids) as $node) {
+      if ($node->hasField('field_appointment_status') && (string) $node->get('field_appointment_status')->value === 'canceled') {
+        continue;
+      }
+      $item = $node->get('field_appointment_timerange')->first();
+      if (!$item) {
+        continue;
+      }
+      $start = (int) $item->value;
+      $end = (int) ($item->end_value ?: $start + 1800);
+      if ($start > 0 && $end > $start) {
+        $rows[] = ['start' => $start, 'end' => $end];
+      }
+    }
+    return $rows;
   }
 
   /**
