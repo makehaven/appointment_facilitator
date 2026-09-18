@@ -1904,6 +1904,37 @@ function _appointment_facilitator_collect_tool_manuals(TermInterface $term): arr
  * decides where to attach it — currently the page-title preprocess
  * injects it into title_prefix so it sits above the hero image.
  */
+/**
+ * Returns the item_status term ids that mean the tool is no longer here.
+ *
+ * Resolved by name rather than hardcoded, because the tid differs between
+ * environments and a wrong id here would silently hide nothing (or everything).
+ * Statically cached: this runs on every badge page render.
+ */
+function _appointment_facilitator_gone_status_ids(): array {
+  $ids = &drupal_static(__FUNCTION__);
+  if ($ids !== NULL) {
+    return $ids;
+  }
+  $ids = [];
+  try {
+    $terms = \Drupal::entityTypeManager()->getStorage('taxonomy_term')->loadByProperties([
+      'vid' => 'item_status',
+      'name' => 'Gone',
+    ]);
+    foreach ($terms as $term) {
+      $ids[] = (int) $term->id();
+    }
+  }
+  catch (\Throwable $e) {
+    // A badge page that cannot resolve the vocabulary should still render every
+    // tool rather than fail — showing a retired tool is a smaller fault than a
+    // broken page.
+    $ids = [];
+  }
+  return $ids;
+}
+
 function _appointment_facilitator_build_related_tools(TermInterface $term): array {
   $query = \Drupal::entityQuery('node')
     ->accessCheck(FALSE)
@@ -1915,6 +1946,20 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
     ->condition('field_member_badges.target_id', (int) $term->id())
     ->condition('field_additional_badges.target_id', (int) $term->id());
   $query->condition($badge_group);
+
+  // Tools we no longer have are not decision context, they are noise: the vinyl
+  // badge listed the current Roland plus two cutters that left the building, and
+  // the Prusa badge buried its steps under a list of printers including ones
+  // marked gone. Staff reported both (feedback sids 20362, 20364). "Gone" is the
+  // only status in item_status that means it is not here; Storage and the
+  // maintenance states are still the space's equipment and still belong.
+  $gone = _appointment_facilitator_gone_status_ids();
+  if ($gone) {
+    $present = $query->orConditionGroup()
+      ->notExists('field_item_status')
+      ->condition('field_item_status.target_id', $gone, 'NOT IN');
+    $query->condition($present);
+  }
 
   $nids = $query->execute();
   if (!$nids) {
