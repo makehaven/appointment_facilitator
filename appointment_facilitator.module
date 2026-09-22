@@ -3335,6 +3335,14 @@ function _appointment_facilitator_is_badge_request_issuer(NodeInterface $node, A
     return FALSE;
   }
 
+  // Door access is a staff decision, not a tool checkout: anyone who may
+  // administer users is its issuer by definition. Without this, the education
+  // manager approving an instructor's door badge was told "you are not
+  // currently listed as a badge issuer for Door" (2026-09-22).
+  if (strcasecmp((string) $badge->label(), 'Door') === 0 && $account->hasPermission('administer users')) {
+    return TRUE;
+  }
+
   foreach (['field_badge_issuer', 'field_badge_issuer_on_request'] as $field_name) {
     if (!$badge->hasField($field_name) || $badge->get($field_name)->isEmpty()) {
       continue;
