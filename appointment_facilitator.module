@@ -4206,7 +4206,21 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
     }
   }
 
+  // The badges the appointment already carries (the ?badge= prefill on add,
+  // the saved value on edit). The slot-count JS falls back to these when the
+  // badge checkboxes are not on the page, so it asks for the same number of
+  // slots the server-side coverage check will demand (ledger #45782).
+  $default_badge_tids = [];
+  if ($entity->hasField('field_appointment_badges')) {
+    foreach ($entity->get('field_appointment_badges')->getValue() as $item) {
+      if (!empty($item['target_id'])) {
+        $default_badge_tids[] = (string) $item['target_id'];
+      }
+    }
+  }
+
   $form['#attached']['drupalSettings']['appointmentFacilitator'] = [
+    'defaultBadgeTids' => $default_badge_tids,
     'pendingBadgeTids' => array_values($pending_tids),
     'pendingBadgeData' => $pending_badge_data,
     'allBadgeUrls' => $all_badge_urls,
