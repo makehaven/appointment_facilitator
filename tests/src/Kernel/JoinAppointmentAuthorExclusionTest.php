@@ -56,6 +56,7 @@ class JoinAppointmentAuthorExclusionTest extends KernelTestBase {
 
     $this->ensureEntityReferenceField('node', 'appointment', 'field_appointment_attendees', 'user');
     $this->ensureEntityReferenceField('node', 'appointment', 'field_appointment_host', 'user');
+    $this->ensurePurposeField();
   }
 
   /**
@@ -137,6 +138,8 @@ class JoinAppointmentAuthorExclusionTest extends KernelTestBase {
     $appointment = Node::create([
       'type' => 'appointment',
       'title' => 'Non-author join form test',
+      // Checkout sessions are open to joiners by default (ledger #42473).
+      'field_appointment_purpose' => 'checkout',
       'status' => 1,
       'uid' => $author->id(),
       'field_appointment_host' => ['target_id' => $host->id()],
@@ -178,6 +181,33 @@ class JoinAppointmentAuthorExclusionTest extends KernelTestBase {
         'bundle' => $bundle,
         'label' => $field_name,
         'settings' => ['handler' => 'default:' . $target_type],
+      ])->save();
+    }
+  }
+
+  /**
+   * Ensures the list_string purpose field exists on appointment nodes.
+   */
+  protected function ensurePurposeField(): void {
+    if (!FieldStorageConfig::loadByName('node', 'field_appointment_purpose')) {
+      FieldStorageConfig::create([
+        'field_name' => 'field_appointment_purpose',
+        'entity_type' => 'node',
+        'type' => 'list_string',
+        'settings' => [
+          'allowed_values' => [
+            'checkout' => 'Badge Checkout',
+            'informational' => 'General Informational / Advice (no badge)',
+          ],
+        ],
+      ])->save();
+    }
+    if (!FieldConfig::loadByName('node', 'appointment', 'field_appointment_purpose')) {
+      FieldConfig::create([
+        'field_name' => 'field_appointment_purpose',
+        'entity_type' => 'node',
+        'bundle' => 'appointment',
+        'label' => 'Purpose',
       ])->save();
     }
   }

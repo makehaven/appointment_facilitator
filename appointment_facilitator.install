@@ -735,9 +735,10 @@ function appointment_facilitator_update_9022(): string {
       'field_name'   => 'field_appointment_open_to_join',
       'entity_type'  => 'node',
       'bundle'       => 'appointment',
-      'label'        => 'Allow others to join',
+      'label'        => 'Open to other members joining',
       'required'     => FALSE,
-      'default_value' => [['value' => 1]],
+      // No default: an empty value follows the purpose (checkout open, other
+      // purposes closed) — see appointment_facilitator_is_open_to_join().
     ])->save();
   }
 

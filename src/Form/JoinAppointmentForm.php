@@ -89,9 +89,7 @@ class JoinAppointmentForm extends FormBase {
     }
 
     // Respect the appointment creator's preference.
-    $open_to_join = !$node->hasField('field_appointment_open_to_join')
-      || $node->get('field_appointment_open_to_join')->isEmpty()
-      || (bool) $node->get('field_appointment_open_to_join')->value;
+    $open_to_join = appointment_facilitator_is_open_to_join($node);
     if (!$open_to_join) {
       return [];
     }
@@ -454,9 +452,7 @@ class JoinAppointmentForm extends FormBase {
       return;
     }
 
-    $open_to_join = !$node->hasField('field_appointment_open_to_join')
-      || $node->get('field_appointment_open_to_join')->isEmpty()
-      || (bool) $node->get('field_appointment_open_to_join')->value;
+    $open_to_join = appointment_facilitator_is_open_to_join($node);
     if (!$open_to_join) {
       $this->messenger()->addError($this->t('This appointment is not open to additional attendees.'));
       $form_state->setRedirect('entity.node.canonical', ['node' => $node->id()]);

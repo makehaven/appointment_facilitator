@@ -1001,6 +1001,11 @@ class BadgeNextStepsController extends ControllerBase {
       if ($capacity <= 1) {
         continue;
       }
+      // Non-checkout sessions are closed to tag-alongs unless the booker
+      // opted in (ledger #42473); the join form would refuse them anyway.
+      if (!appointment_facilitator_is_open_to_join($node)) {
+        continue;
+      }
       $attendee_values = $node->get('field_appointment_attendees')->getValue();
       // Skip sessions the user already joined — no point listing them.
       $already_joined = FALSE;

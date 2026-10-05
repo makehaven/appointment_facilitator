@@ -63,6 +63,7 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
     $this->ensureEntityReferenceField('node', 'appointment', 'field_appointment_badges', 'taxonomy_term');
     $this->ensureEntityReferenceField('node', 'appointment', 'field_appointment_host', 'user');
     $this->ensureIntegerField('taxonomy_term', 'badges', 'field_badge_capacity');
+    $this->ensurePurposeField();
   }
 
   /**
@@ -144,6 +145,8 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
     $appointment = Node::create([
       'type' => 'appointment',
       'title' => 'Open capacity appointment',
+      // Checkout sessions are open to joiners by default (ledger #42473).
+      'field_appointment_purpose' => 'checkout',
       'status' => 1,
       'field_appointment_host' => ['target_id' => $host->id()],
       'field_appointment_badges' => [['target_id' => $badge->id()]],
@@ -224,6 +227,33 @@ class AppointmentsJoinLinkVisibilityTest extends KernelTestBase {
         'entity_type' => $entity_type,
         'bundle' => $bundle,
         'label' => $field_name,
+      ])->save();
+    }
+  }
+
+  /**
+   * Ensures the list_string purpose field exists on appointment nodes.
+   */
+  protected function ensurePurposeField(): void {
+    if (!FieldStorageConfig::loadByName('node', 'field_appointment_purpose')) {
+      FieldStorageConfig::create([
+        'field_name' => 'field_appointment_purpose',
+        'entity_type' => 'node',
+        'type' => 'list_string',
+        'settings' => [
+          'allowed_values' => [
+            'checkout' => 'Badge Checkout',
+            'informational' => 'General Informational / Advice (no badge)',
+          ],
+        ],
+      ])->save();
+    }
+    if (!FieldConfig::loadByName('node', 'appointment', 'field_appointment_purpose')) {
+      FieldConfig::create([
+        'field_name' => 'field_appointment_purpose',
+        'entity_type' => 'node',
+        'bundle' => 'appointment',
+        'label' => 'Purpose',
       ])->save();
     }
   }

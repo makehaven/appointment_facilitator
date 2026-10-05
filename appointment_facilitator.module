@@ -25,6 +25,39 @@ use Drupal\views\Plugin\views\query\QueryPluginBase;
 use Drupal\views\ViewExecutable;
 
 /**
+ * Whether an appointment's purpose makes it open to joiners by default.
+ *
+ * Tag-alongs are open by default only on badge checkouts, where the join form
+ * still requires the joiner to have one of the session's badges pending.
+ * Every other purpose (informational, project, other, or no purpose at all)
+ * is closed unless the booker opted in. Decision: ledger #42473, after two
+ * unbadged members tagged along to a non-badging session hoping to get
+ * badged.
+ */
+function appointment_facilitator_open_to_join_default(NodeInterface $node): bool {
+  return $node->hasField('field_appointment_purpose')
+    && !$node->get('field_appointment_purpose')->isEmpty()
+    && (string) $node->get('field_appointment_purpose')->value === 'checkout';
+}
+
+/**
+ * Whether other members may join this appointment.
+ *
+ * An explicit field_appointment_open_to_join value (the booker's choice) wins.
+ * An empty value — or a site where the field does not exist — falls back to
+ * the purpose default, so programmatic creates (on-request, API) and
+ * appointments saved before the booker could choose follow the same rule.
+ * Capacity, pending-badge and experience gates are separate and still apply.
+ */
+function appointment_facilitator_is_open_to_join(NodeInterface $node): bool {
+  if ($node->hasField('field_appointment_open_to_join')
+    && !$node->get('field_appointment_open_to_join')->isEmpty()) {
+    return (bool) $node->get('field_appointment_open_to_join')->value;
+  }
+  return appointment_facilitator_open_to_join_default($node);
+}
+
+/**
  * Compute effective capacity for an appointment node.
  *
  * Capacity is the minimum of the capacities defined on the appointment's
@@ -4122,21 +4155,39 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
 
     _appointment_facilitator_prefill_slot_defaults($form, $entity);
 
-    // "Keep this session one-on-one" checkbox — only when joining is enabled site-wide.
+    // Who else may join — only when joining is enabled site-wide. The choice
+    // is framed by purpose (ledger #42473): badge checkouts are open by
+    // default, so the booker may keep theirs one-on-one; every other purpose
+    // is closed by default, so the booker may open it up. #states shows the
+    // checkbox that matches the selected purpose; the entity builder decides
+    // from the submitted purpose, so the rule holds with JavaScript off.
     $joiner_cap = (int) (\Drupal::config('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
     if ($joiner_cap > 0 && $entity->hasField('field_appointment_open_to_join')) {
-      $current_open = $entity->isNew()
-        ? TRUE
-        : (bool) $entity->get('field_appointment_open_to_join')->value;
+      $current_open = appointment_facilitator_is_open_to_join($entity);
+      $checkout_selected = [
+        ':input[name="field_appointment_purpose"]' => ['value' => 'checkout'],
+      ];
 
       $form['field_appointment_open_to_join_widget'] = [
         '#type'          => 'checkbox',
         '#title'         => t('Keep this session one-on-one'),
-        '#description'   => t('Leave unchecked to allow compatible members to join when appropriate. Check this to keep the session private to the original attendee and facilitator.'),
-        '#default_value' => !$current_open,
+        '#description'   => t('Leave unchecked to allow members who have this badge pending to join your checkout. Check this to keep the session private to you and the facilitator.'),
+        '#default_value' => appointment_facilitator_open_to_join_default($entity) ? !$current_open : FALSE,
         '#weight'        => 4,
+        '#states'        => ['visible' => $checkout_selected],
       ];
-      $form['#submit'][] = '_appointment_facilitator_save_open_to_join_field';
+      $form['field_appointment_open_to_join_opt_in'] = [
+        '#type'          => 'checkbox',
+        '#title'         => t('Let other members join this session'),
+        '#description'   => t('Leave unchecked to keep the session to you and the facilitator. This session does not issue badges, so anyone who joins will not get a badge from it.'),
+        '#default_value' => appointment_facilitator_open_to_join_default($entity) ? FALSE : $current_open,
+        '#weight'        => 4,
+        '#states'        => ['invisible' => $checkout_selected],
+      ];
+      // An entity builder, not a #submit handler: the node form's Save button
+      // carries its own #submit (::submitForm, ::save), so form-level #submit
+      // handlers never run for it, and anything set after ::save is lost.
+      $form['#entity_builders'][] = '_appointment_facilitator_build_open_to_join_field';
     }
 
     // Experience level — shown on all appointments. Defaults to beginner.
@@ -4890,13 +4941,29 @@ function _appointment_facilitator_count_selected_slots($slot_value): int {
 }
 
 /**
- * Submit handler: saves the one-on-one checkbox to field_appointment_open_to_join.
+ * Entity builder: stores the booker's join choice on the appointment.
+ *
+ * Runs after the widgets' values (including the purpose) are copied onto the
+ * node, so the submitted purpose decides which checkbox applies — the one the
+ * member could see. Only a choice that departs from the purpose default is
+ * stored; a default choice leaves the field empty so
+ * appointment_facilitator_is_open_to_join() keeps following the purpose if a
+ * facilitator later corrects it (e.g. informational -> checkout).
  */
-function _appointment_facilitator_save_open_to_join_field(array &$form, FormStateInterface $form_state): void {
-  $one_on_one = (bool) $form_state->getValue('field_appointment_open_to_join_widget');
-  $node  = $form_state->getFormObject()->getEntity();
-  if ($node instanceof NodeInterface && $node->hasField('field_appointment_open_to_join')) {
-    $node->set('field_appointment_open_to_join', $one_on_one ? 0 : 1);
+function _appointment_facilitator_build_open_to_join_field(string $entity_type_id, NodeInterface $node, array &$form, FormStateInterface $form_state): void {
+  if (!$node->hasField('field_appointment_open_to_join')) {
+    return;
+  }
+  $default_open = appointment_facilitator_open_to_join_default($node);
+  $chosen_open = $default_open
+    ? !$form_state->getValue('field_appointment_open_to_join_widget')
+    : (bool) $form_state->getValue('field_appointment_open_to_join_opt_in');
+
+  if ($chosen_open === $default_open) {
+    $node->set('field_appointment_open_to_join', NULL);
+  }
+  else {
+    $node->set('field_appointment_open_to_join', $chosen_open ? 1 : 0);
   }
 }
 
@@ -6161,9 +6228,7 @@ function appointment_facilitator_preprocess_views_view_fields(array &$variables)
   $host_uid = (int) ($node->hasField('field_appointment_host') && !$node->get('field_appointment_host')->isEmpty()
     ? $node->get('field_appointment_host')->target_id
     : 0);
-  $open_to_join = !$node->hasField('field_appointment_open_to_join')
-    || $node->get('field_appointment_open_to_join')->isEmpty()
-    || (bool) $node->get('field_appointment_open_to_join')->value;
+  $open_to_join = appointment_facilitator_is_open_to_join($node);
   if (!$open_to_join) {
     return;
   }

@@ -350,9 +350,7 @@ class AppointmentDashboardController extends ControllerBase {
     $join_url = '';
     if (!$is_past) {
       $joiner_cap  = (int) (\Drupal::config('appointment_facilitator.settings')->get('system_wide_joiner_cap') ?? 0);
-      $open_to_join = !$node->hasField('field_appointment_open_to_join')
-        || $node->get('field_appointment_open_to_join')->isEmpty()
-        || (bool) $node->get('field_appointment_open_to_join')->value;
+      $open_to_join = appointment_facilitator_is_open_to_join($node);
       if ($joiner_cap > 0 && $open_to_join) {
         $current_uid = (int) $this->currentUser()->id();
         $is_already_in = ($current_uid === $host_entity_uid)

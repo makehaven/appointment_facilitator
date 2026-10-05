@@ -118,6 +118,20 @@ $status = _appointment_facilitator_classify_arrival($start, $end, $scan, $grace_
 // Returns: 'on_time', 'late_grace', 'late', or 'missed'
 ```
 
+### Who may join an appointment (tag-alongs)
+
+`appointment_facilitator_is_open_to_join($node)` is the single rule; every Join
+surface (JoinAppointmentForm build + submit, /appointments row CTA, dashboard
+cards, badge next-steps "join a session" list) calls it. An explicit
+`field_appointment_open_to_join` value wins; empty follows the purpose: badge
+checkouts are open (joiner still needs the badge pending), every other purpose
+is closed (ledger #42473). The booking form shows "Keep this session
+one-on-one" for checkouts and "Let other members join this session" for other
+purposes (`#states`); `_appointment_facilitator_build_open_to_join_field()`
+is an `#entity_builders` callback (form-level `#submit` never runs for the node
+Save button) and stores only choices that depart from the purpose default.
+The field itself is site config (`config/field.*.field_appointment_open_to_join.yml`).
+
 ### Statistics Aggregation
 
 `AppointmentStats::summarize()` accepts options:
