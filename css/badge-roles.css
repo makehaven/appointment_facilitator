@@ -124,3 +124,18 @@
   background: #f6fbff;
   color: var(--mh-color-neutral-800, #303030);
 }
+
+.badge-related-tools__library {
+  color: var(--mh-color-neutral-600, #616161);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badge-related-tools__card--no-image {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.badge-related-tools__card--no-image .badge-related-tools__image {
+  display: none;
+}
