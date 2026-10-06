@@ -2006,10 +2006,35 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
     return [];
   }
 
+  // Required tools first: they are what the badge actually gates. A tool
+  // that lists the badge only under Optional Badges can be used without it,
+  // and the card has to say so (staff, 2026-10-06: members read every badge
+  // as a gate, e.g. Soldering Fundamentals).
+  $tid = (int) $term->id();
+  $is_required = static function (NodeInterface $tool) use ($tid): bool {
+    if (!$tool->hasField('field_member_badges')) {
+      return FALSE;
+    }
+    foreach ($tool->get('field_member_badges') as $item) {
+      if ((int) $item->target_id === $tid) {
+        return TRUE;
+      }
+    }
+    return FALSE;
+  };
+  uasort($tools, static function (NodeInterface $a, NodeInterface $b) use ($is_required): int {
+    return [(int) !$is_required($a), $a->label()] <=> [(int) !$is_required($b), $b->label()];
+  });
+
   $cards = [];
+  $required_count = 0;
   foreach ($tools as $tool) {
     if (!$tool instanceof NodeInterface || !$tool->access('view')) {
       continue;
+    }
+    $role = $is_required($tool) ? 'required' : 'optional';
+    if ($role === 'required') {
+      $required_count++;
     }
 
     $summary = '';
@@ -2037,7 +2062,7 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
     $card = [
       '#type' => 'container',
       '#attributes' => [
-        'class' => ['badge-related-tools__card'],
+        'class' => ['badge-related-tools__card', 'badge-related-tools__card--' . $role],
       ],
       'image' => [
         '#type' => 'container',
@@ -2051,6 +2076,7 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
         '#attributes' => [
           'class' => ['badge-related-tools__content'],
         ],
+        'role' => _appointment_facilitator_badge_role_tag($role),
         'title' => [
           '#type' => 'inline_template',
           '#template' => '<h3 class="badge-related-tools__title h5">{{ link }}</h3>',
@@ -2082,7 +2108,10 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
   $render = [
     '#type' => 'container',
     '#attached' => [
-      'library' => ['appointment_facilitator/badge_related_tools'],
+      'library' => [
+        'appointment_facilitator/badge_related_tools',
+        'appointment_facilitator/badge_roles',
+      ],
     ],
     '#attributes' => [
       'class' => ['badge-related-tools'],
@@ -2095,6 +2124,18 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
         'class' => ['h4'],
       ],
     ],
+  ];
+  if ($required_count === 0) {
+    $render['note'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => t('This badge is optional. You can use these tools without it; earning it shows you have learned the skill.'),
+      '#attributes' => [
+        'class' => ['badge-related-tools__note', 'mh-badge-role-note', 'mh-badge-role-note--optional'],
+      ],
+    ];
+  }
+  $render += [
     'cards' => [
       '#type' => 'container',
       '#attributes' => [
@@ -2113,6 +2154,68 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
   $cacheability->applyTo($render);
 
   return $render;
+}
+
+/**
+ * Returns the "Required" / "Optional" tag shown beside a badge.
+ *
+ * Colour alone never carries the meaning: the word is always there, and the
+ * glyph differs (lock / star) for anyone who cannot tell maroon from blue.
+ */
+function _appointment_facilitator_badge_role_tag(string $role): array {
+  $label = $role === 'required' ? t('Required') : t('Optional');
+  return [
+    '#type' => 'inline_template',
+    '#template' => '<span class="mh-badge-role-tag mh-badge-role-tag--{{ role }}"><span class="mh-badge-role-tag__glyph" aria-hidden="true">{{ glyph }}</span>{{ label }}</span>',
+    '#context' => [
+      'role' => $role,
+      'glyph' => $role === 'required' ? '🔒' : '★',
+      'label' => $label,
+    ],
+  ];
+}
+
+/**
+ * Labels the Required and Optional badge fields on a tool's page.
+ *
+ * Both fields render as plain labelled lists, and the optional one sat far
+ * below the requirements with no word on what "optional" means, so members
+ * read every badge as a gate. Each gets a coloured tag and one line saying
+ * whether the tool can be used without it.
+ */
+function _appointment_facilitator_mark_tool_badge_roles(array &$build, NodeInterface $tool): void {
+  $has_required = $tool->hasField('field_member_badges') && !$tool->get('field_member_badges')->isEmpty();
+
+  if (!empty($build['field_member_badges']) && $has_required) {
+    $build['field_member_badges']['#label_display'] = 'hidden';
+    $build['field_member_badges']['#prefix'] = '<div class="mh-badge-role mh-badge-role--required">'
+      . _appointment_facilitator_badge_role_header('required', (string) t('You need this badge before using this tool.'));
+    $build['field_member_badges']['#suffix'] = '</div>';
+    $build['field_member_badges']['#attached']['library'][] = 'appointment_facilitator/badge_roles';
+  }
+
+  if (!empty($build['field_additional_badges'])) {
+    $note = $has_required
+      ? t('Not required to use this tool. Earn it to show you have learned the skill.')
+      : t('No badge is required to use this tool. Earn this one to show you have learned the skill.');
+    $build['field_additional_badges']['#label_display'] = 'hidden';
+    $build['field_additional_badges']['#prefix'] = '<div class="mh-badge-role mh-badge-role--optional">'
+      . _appointment_facilitator_badge_role_header('optional', (string) $note);
+    $build['field_additional_badges']['#suffix'] = '</div>';
+    $build['field_additional_badges']['#attached']['library'][] = 'appointment_facilitator/badge_roles';
+  }
+}
+
+/**
+ * Builds the header markup (tag + explanation) for a badge-role block.
+ */
+function _appointment_facilitator_badge_role_header(string $role, string $note): string {
+  $tag = _appointment_facilitator_badge_role_tag($role);
+  $heading = $role === 'required' ? t('Required badge') : t('Optional badges');
+  return '<div class="mh-badge-role__head">'
+    . '<span class="mh-badge-role__heading">' . Html::escape((string) $heading) . '</span>'
+    . (string) \Drupal::service('renderer')->renderInIsolation($tag)
+    . '</div><p class="mh-badge-role__note">' . Html::escape($note) . '</p>';
 }
 
 /**
@@ -2331,6 +2434,10 @@ function appointment_facilitator_entity_extra_field_info(): array {
  */
 function appointment_facilitator_node_view(array &$build, NodeInterface $entity, EntityViewDisplayInterface $display, $view_mode): void {
   _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
+
+  if ($entity->bundle() === 'item' && $view_mode === 'full') {
+    _appointment_facilitator_mark_tool_badge_roles($build, $entity);
+  }
 
   if ($entity->bundle() === 'item' && ($component = $display->getComponent('mh_tool_facilitators'))) {
     $panel = _appointment_facilitator_tool_facilitators_panel($entity);

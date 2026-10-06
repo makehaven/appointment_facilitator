@@ -46,6 +46,12 @@ badge_related_tools:
     theme:
       css/badge-related-tools.css: {}
 
+badge_roles:
+  version: 1.x
+  css:
+    theme:
+      css/badge-roles.css: {}
+
 badge_event_card:
   version: 1.x
   css:

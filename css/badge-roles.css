@@ -1,0 +1,126 @@
+/**
+ * Required vs optional badges.
+ *
+ * Required = brand maroon with a lock; optional = brand blue with a star.
+ * Green is deliberately not used: the status pills already mean "you have
+ * this badge" in green, and an optional badge must not read as earned.
+ * The word is always printed, so colour is never the only signal.
+ */
+
+.mh-badge-role-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.1em 0.6em;
+  border: 1px solid currentColor;
+  border-radius: var(--mh-radius-pill, 999px);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.mh-badge-role-tag__glyph {
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+.mh-badge-role-tag--required {
+  color: var(--mh-color-brand-primary, #8b1919);
+  background: #fbeeee;
+}
+
+.mh-badge-role-tag--optional {
+  color: #1d5f8a;
+  background: #eaf5fd;
+}
+
+/* Tool page blocks. */
+.mh-badge-role {
+  margin: 0 0 var(--mh-space-lg, 1.5rem);
+  padding: var(--mh-space-sm, 0.75rem) var(--mh-space-md, 1rem);
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-left-width: 5px;
+  border-radius: var(--mh-radius-md, 0.5rem);
+  background: var(--mh-color-surface, #fff);
+}
+
+.mh-badge-role--required {
+  border-left-color: var(--mh-color-brand-primary, #8b1919);
+}
+
+.mh-badge-role--optional {
+  border-left-color: var(--mh-color-brand-secondary, #78c0f3);
+  background: #f6fbff;
+}
+
+.mh-badge-role__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mh-space-xs, 0.5rem);
+}
+
+.mh-badge-role__heading {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.mh-badge-role__note {
+  margin: 0.25rem 0 var(--mh-space-xs, 0.5rem);
+  color: var(--mh-color-neutral-700, #4a4a4a);
+  font-size: 0.92rem;
+}
+
+/* Optional badges render as a plain link list; make them chips. */
+.mh-badge-role--optional .field__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mh-space-xs, 0.5rem);
+}
+
+.mh-badge-role--optional .field__item a {
+  display: inline-block;
+  padding: 0.3em 0.85em;
+  border: 1px solid #9ccfee;
+  border-radius: var(--mh-radius-pill, 999px);
+  background: var(--mh-color-surface, #fff);
+  color: #1d5f8a;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mh-badge-role--optional .field__item a::before {
+  content: "★ ";
+  font-size: 0.85em;
+}
+
+.mh-badge-role--optional .field__item a:hover,
+.mh-badge-role--optional .field__item a:focus {
+  background: #eaf5fd;
+  text-decoration: underline;
+}
+
+/* Badge page: associated-tool cards. */
+.badge-related-tools__card--required {
+  border-left: 4px solid var(--mh-color-brand-primary, #8b1919);
+}
+
+.badge-related-tools__card--optional {
+  border-left: 4px solid var(--mh-color-brand-secondary, #78c0f3);
+}
+
+.badge-related-tools__card .mh-badge-role-tag {
+  align-self: flex-start;
+  font-size: 0.68rem;
+}
+
+.mh-badge-role-note--optional {
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid var(--mh-color-brand-secondary, #78c0f3);
+  border-radius: var(--mh-radius-sm, 0.25rem);
+  background: #f6fbff;
+  color: var(--mh-color-neutral-800, #303030);
+}
