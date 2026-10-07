@@ -86,7 +86,7 @@ class FirstBadgeNextStepBlock extends BlockBase implements ContainerFactoryPlugi
       '#headline' => $this->t('Ready to earn your first badge?'),
       '#intro' => $this->t('Badges unlock the tools at MakeHaven. Here\'s the typical path:'),
       '#steps' => [
-        $this->t('Pick a badge for something you want to use.'),
+        $this->t('Pick a tool you want to use; its page shows the badge it needs.'),
         $this->t('Watch the video and review requirements on the badge page.'),
         $this->t('Pass the short online quiz (100% to pass — you can retake).'),
         $this->t('Schedule a quick checkout with a facilitator (most badges).'),
@@ -96,9 +96,11 @@ class FirstBadgeNextStepBlock extends BlockBase implements ContainerFactoryPlugi
         'url' => Url::fromUserInput('/badges/complete')->toString(),
         'description' => $this->t('Picks foundational badges from your areas of interest.'),
       ],
+      // Tools, not the badge list: staff found members lost on /badges,
+      // which does not make clear which tool a badge is for (2026-10-06).
       '#secondary_cta' => [
-        'title' => $this->t('Browse all badges'),
-        'url' => Url::fromUserInput('/badges')->toString(),
+        'title' => $this->t('Browse tools'),
+        'url' => Url::fromUserInput('/rooms/zones/equipment')->toString(),
       ],
       '#help_link' => [
         'title' => $this->t('Ask a question'),
