@@ -457,6 +457,46 @@ function appointment_facilitator_requirements($phase) {
     ];
   }
 
+  // An optional badge must gate nothing. Flag any tool or library item that
+  // lists one as its required badge, so the two never silently disagree.
+  if (\Drupal\field\Entity\FieldConfig::loadByName('taxonomy_term', $badges, 'field_badge_optional')) {
+    $optional = \Drupal::entityQuery('taxonomy_term')
+      ->accessCheck(FALSE)
+      ->condition('vid', $badges)
+      ->condition('field_badge_optional', 1)
+      ->execute();
+    // Entity queries key results by revision ID; look terms up by term ID.
+    $optional = array_flip(array_map('intval', array_values($optional)));
+    $conflicts = [];
+    if ($optional) {
+      foreach (['field_member_badges', 'field_library_item_required_badg'] as $field) {
+        $storage_defs = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions('node');
+        if (empty($storage_defs[$field])) {
+          continue;
+        }
+        $nids = \Drupal::entityQuery('node')
+          ->accessCheck(FALSE)
+          ->condition('status', 1)
+          ->condition($field, array_keys($optional), 'IN')
+          ->execute();
+        foreach (\Drupal\node\Entity\Node::loadMultiple($nids) as $node) {
+          foreach ($node->get($field)->referencedEntities() as $term) {
+            if (isset($optional[(int) $term->id()])) {
+              $conflicts[] = $node->label() . ' (node ' . $node->id() . ') requires ' . $term->label();
+            }
+          }
+        }
+      }
+    }
+    $requirements['appointment_facilitator_optional_badges'] = [
+      'title' => t('Badges: optional badges that a tool requires'),
+      'value' => $conflicts
+        ? t('@n conflict(s): @list. Untick "Optional badge" or remove it as the required badge.', ['@n' => count($conflicts), '@list' => implode('; ', $conflicts)])
+        : t('None. @n badge(s) are marked optional.', ['@n' => count($optional)]),
+      'severity' => $conflicts ? REQUIREMENT_WARNING : REQUIREMENT_OK,
+    ];
+  }
+
   // Check badges capacity field.
   $has_badges = (bool) \Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary')->load($badges);
   if ($has_badges && !\Drupal\field\Entity\FieldConfig::loadByName('taxonomy_term', $badges, 'field_badge_capacity')) {

@@ -110,3 +110,17 @@
     height: 60px;
   }
 }
+
+/* Phones: the page-title region is one flex row, which squeezed the badge
+   title into a sliver beside the tools. Stack them: title first, then tools. */
+@media (max-width: 767px) {
+  .block-page-title-block > .content:has(> .badge-related-tools) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .block-page-title-block > .content > .badge-related-tools {
+    order: 2;
+    width: 100%;
+  }
+}

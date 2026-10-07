@@ -135,6 +135,12 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       _appointment_facilitator_attach_badge_event_card_pseudo_field($build, $entity, $display);
     }
 
+    if (_appointment_facilitator_badge_is_optional($entity)) {
+      // Same blue tag as tool pages, on every listing of the badge.
+      $build['mh_badge_optional_tag'] = _appointment_facilitator_badge_role_tag('optional') + ['#weight' => -100];
+      $build['#attached']['library'][] = 'appointment_facilitator/badge_roles';
+    }
+
     if ($view_mode === 'embedded' && isset($build['field_badge_video'])) {
       _appointment_facilitator_replace_embedded_badge_video($build, $entity);
     }
@@ -1018,6 +1024,31 @@ function appointment_facilitator_preprocess_page_title(array &$variables): void 
   // image and title so members can see what hardware this unlocks
   // before they read anything else.
   $tools_render = _appointment_facilitator_build_related_tools($term);
+
+  // An optional badge says so first. It rides inside the related-tools block
+  // (the page-title region is one flex row, so a sibling would become its own
+  // narrow column); a badge with no tools at all gets the block for it alone.
+  if (_appointment_facilitator_badge_is_optional($term)) {
+    if (empty($tools_render)) {
+      $tools_render = [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['badge-related-tools']],
+        '#attached' => ['library' => ['appointment_facilitator/badge_related_tools']],
+        '#cache' => ['tags' => $term->getCacheTags()],
+      ];
+    }
+    $tools_render['optional_banner'] = [
+      '#type' => 'inline_template',
+      '#template' => '<div class="mh-badge-optional-banner">{{ tag }}<p>{{ text }}</p></div>',
+      '#context' => [
+        'tag' => _appointment_facilitator_badge_role_tag('optional'),
+        'text' => t('You do not need this badge to use any tool. It is a record that you learned the skill.'),
+      ],
+      '#weight' => -100,
+    ];
+    $tools_render['#attached']['library'][] = 'appointment_facilitator/badge_roles';
+  }
+
   if (!empty($tools_render)) {
     $variables['title_prefix']['badge_related_tools'] = $tools_render + ['#weight' => -200];
   }
@@ -2145,7 +2176,10 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
       ],
     ],
   ];
-  if ($required_count === 0) {
+  if (_appointment_facilitator_badge_is_optional($term)) {
+    $render['title']['#value'] = t('Related tools');
+  }
+  if ($required_count === 0 && !_appointment_facilitator_badge_is_optional($term)) {
     $render['note'] = [
       '#type' => 'html_tag',
       '#tag' => 'p',
@@ -2174,6 +2208,19 @@ function _appointment_facilitator_build_related_tools(TermInterface $term): arra
   $cacheability->applyTo($render);
 
   return $render;
+}
+
+/**
+ * Whether a badge is an optional badge: it gates no tool, area or role.
+ *
+ * An explicit tick on the badge (field_badge_optional), not inferred from
+ * tool links: Badger and Instructor Orientation gate roles and are linked to
+ * no tool, so "no tool requires it" would call them optional (JR, 2026-10-06).
+ */
+function _appointment_facilitator_badge_is_optional(TermInterface $badge): bool {
+  return $badge->hasField('field_badge_optional')
+    && !$badge->get('field_badge_optional')->isEmpty()
+    && (bool) $badge->get('field_badge_optional')->value;
 }
 
 /**
