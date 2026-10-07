@@ -19,6 +19,7 @@ use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
 use Drupal\node\Entity\Node;
 use Drupal\node\NodeInterface;
+use Drupal\user\UserInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\taxonomy\TermInterface;
 use Drupal\views\Plugin\views\query\QueryPluginBase;
@@ -4695,6 +4696,30 @@ function _appointment_facilitator_sync_parent_field_from_rule(\Drupal\smart_date
   $entity->set($field_name, $values);
   $entity->save();
   return TRUE;
+}
+
+/**
+ * Implements hook_user_presave().
+ *
+ * Facilitating rides on membership: when an account loses the member role
+ * (cancellation, lapse), drop the facilitator role in the same save, so a
+ * former member does not keep appearing on badge schedules and checkout
+ * pickers (feedback #43639). Only the transition is acted on; accounts that
+ * already hold facilitator without member are left for staff to review.
+ */
+function appointment_facilitator_user_presave(UserInterface $account): void {
+  if ($account->isNew() || !$account->hasRole('facilitator') || $account->hasRole('member')) {
+    return;
+  }
+  $original = $account->original ?? NULL;
+  if (!$original instanceof UserInterface || !$original->hasRole('member')) {
+    return;
+  }
+  $account->removeRole('facilitator');
+  \Drupal::logger('appointment_facilitator')->notice('Removed facilitator role from @name (uid @uid) because the member role was removed.', [
+    '@name' => $account->getAccountName(),
+    '@uid' => $account->id(),
+  ]);
 }
 
 /**
