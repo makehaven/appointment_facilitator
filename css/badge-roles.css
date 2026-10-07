@@ -157,3 +157,49 @@
   margin: 0;
   color: var(--mh-color-neutral-800, #303030);
 }
+
+/* /badges list: send tool-seekers to the equipment list first. */
+.mh-badges-tool-first {
+  margin: 0 0 var(--mh-space-lg, 1.5rem);
+  padding: var(--mh-space-sm, 0.75rem) var(--mh-space-md, 1rem);
+  border-left: 5px solid var(--mh-color-brand-primary, #8b1919);
+  border-radius: var(--mh-radius-md, 0.5rem);
+  background: var(--mh-color-surface-muted, #f8f9fa);
+}
+
+.mh-badges-tool-first a {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Tool page: the prerequisite path, in order. */
+.mh-badge-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 var(--mh-space-sm, 0.75rem);
+  font-size: 0.92rem;
+}
+
+.mh-badge-path__label {
+  font-weight: 700;
+}
+
+.mh-badge-path__step {
+  padding: 0.15em 0.7em;
+  border: 1px solid var(--mh-color-brand-primary, #8b1919);
+  border-radius: var(--mh-radius-pill, 999px);
+  color: var(--mh-color-brand-primary, #8b1919);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.mh-badge-path__step--held {
+  border-color: var(--mh-color-success, #1f8c5b);
+  color: var(--mh-color-success, #1f8c5b);
+}
+
+.mh-badge-path__arrow {
+  color: var(--mh-color-neutral-500, #7c7c7c);
+}

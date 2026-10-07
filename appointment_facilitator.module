@@ -858,6 +858,23 @@ function _appointment_facilitator_clean_checklist_item(string $text, string $bad
  */
 function appointment_facilitator_preprocess_views_view(array &$variables): void {
   $view = $variables['view'] ?? NULL;
+  if ($view && $view->id() === 'badges' && $view->current_display === 'page_1') {
+    // Members who want a tool land here and cannot tell this list from the
+    // equipment list (staff, 2026-10-06). Point them at the tool first.
+    $variables['header']['mh_tool_first'] = [
+      '#type' => 'inline_template',
+      '#template' => '<div class="mh-badges-tool-first"><strong>{{ lead }}</strong> {{ text }} <a href="{{ url }}">{{ link }}</a></div>',
+      '#context' => [
+        'lead' => t('Looking for a tool?'),
+        'text' => t('Start from the equipment list: every tool shows the badge it needs.'),
+        'url' => '/equipment',
+        'link' => t('Browse equipment →'),
+      ],
+      '#attached' => ['library' => ['appointment_facilitator/badge_roles']],
+      '#weight' => -100,
+    ];
+    return;
+  }
   if (!$view || $view->id() !== 'event_upcoming_badging') {
     return;
   }
@@ -2255,10 +2272,21 @@ function _appointment_facilitator_mark_tool_badge_roles(array &$build, NodeInter
 
   if (!empty($build['field_member_badges']) && $has_required) {
     $build['field_member_badges']['#label_display'] = 'hidden';
+    $path = '';
+    foreach ($tool->get('field_member_badges')->referencedEntities() as $badge) {
+      if ($badge instanceof TermInterface) {
+        $path .= _appointment_facilitator_badge_path_markup($badge);
+      }
+    }
     $build['field_member_badges']['#prefix'] = '<div class="mh-badge-role mh-badge-role--required">'
-      . _appointment_facilitator_badge_role_header('required', (string) t('You need this badge before using this tool.'));
+      . _appointment_facilitator_badge_role_header('required', (string) t('You need this badge before using this tool.'))
+      . $path;
     $build['field_member_badges']['#suffix'] = '</div>';
     $build['field_member_badges']['#attached']['library'][] = 'appointment_facilitator/badge_roles';
+    // The path marks the badges the viewer holds.
+    $build['field_member_badges']['#cache']['contexts'][] = 'user';
+    $build['field_member_badges']['#cache']['tags'][] = 'node_list:badge_request';
+    $build['field_member_badges']['#cache']['tags'][] = 'taxonomy_term_list:badges';
   }
 
   if (!empty($build['field_additional_badges'])) {
@@ -2271,6 +2299,74 @@ function _appointment_facilitator_mark_tool_badge_roles(array &$build, NodeInter
     $build['field_additional_badges']['#suffix'] = '</div>';
     $build['field_additional_badges']['#attached']['library'][] = 'appointment_facilitator/badge_roles';
   }
+}
+
+/**
+ * Lists a badge's prerequisite chain, in the order to earn them.
+ *
+ * Prerequisites (field_badge_prerequisite) were only visible on the badge
+ * page, so a member at the camera could not see that Media Room comes first
+ * (staff 2026-08-25, JR 2026-10-06). Returns '' when there is none.
+ */
+function _appointment_facilitator_badge_path_markup(TermInterface $badge): string {
+  $chain = [];
+  $seen = [(int) $badge->id() => TRUE];
+  $walk = static function (TermInterface $term, int $depth) use (&$walk, &$chain, &$seen): void {
+    if ($depth > 4 || !$term->hasField('field_badge_prerequisite')) {
+      return;
+    }
+    foreach ($term->get('field_badge_prerequisite')->referencedEntities() as $pre) {
+      if (!$pre instanceof TermInterface || isset($seen[(int) $pre->id()])) {
+        continue;
+      }
+      $seen[(int) $pre->id()] = TRUE;
+      // Earn the prerequisite's own prerequisites first.
+      $walk($pre, $depth + 1);
+      $chain[] = $pre;
+    }
+  };
+  $walk($badge, 0);
+  if (!$chain) {
+    return '';
+  }
+  $chain[] = $badge;
+
+  $uid = (int) \Drupal::currentUser()->id();
+  $steps = [];
+  foreach ($chain as $term) {
+    $held = $uid > 0 && _appointment_facilitator_user_holds_badge($uid, (int) $term->id());
+    $steps[] = '<a class="mh-badge-path__step' . ($held ? ' mh-badge-path__step--held' : '') . '" href="'
+      . Html::escape($term->toUrl()->toString()) . '">'
+      . ($held ? '<span aria-hidden="true">✓ </span>' : '')
+      . Html::escape($term->label())
+      . ($held ? '<span class="visually-hidden"> ' . Html::escape((string) t('(you have this)')) . '</span>' : '')
+      . '</a>';
+  }
+  return '<p class="mh-badge-path"><span class="mh-badge-path__label">' . Html::escape((string) t('Earn in this order:')) . '</span> '
+    . implode(' <span class="mh-badge-path__arrow" aria-hidden="true">→</span> ', $steps) . '</p>';
+}
+
+/**
+ * Whether a member holds a badge: an active badge_request naming them.
+ *
+ * Same rule as the door and tool-power check (AccessStatusEvaluator).
+ */
+function _appointment_facilitator_user_holds_badge(int $uid, int $tid): bool {
+  $holds = &drupal_static(__FUNCTION__, []);
+  $key = $uid . ':' . $tid;
+  if (!isset($holds[$key])) {
+    $query = \Drupal::entityQuery('node')
+      ->accessCheck(FALSE)
+      ->condition('type', 'badge_request')
+      ->condition('field_badge_requested', $tid)
+      ->condition('field_badge_status', 'active')
+      ->range(0, 1);
+    $who = $query->orConditionGroup()
+      ->condition('field_member_to_badge', $uid)
+      ->condition('field_member_badge_reference', $uid);
+    $holds[$key] = (bool) $query->condition($who)->execute();
+  }
+  return $holds[$key];
 }
 
 /**
