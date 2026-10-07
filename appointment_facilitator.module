@@ -2427,6 +2427,15 @@ function _appointment_facilitator_unlocked_tool_links(TermInterface $term): arra
     ->condition('field_member_badges.target_id', (int) $term->id())
     ->condition('field_additional_badges.target_id', (int) $term->id());
   $query->condition($badge_group);
+  // A badge does not unlock a tool that is no longer here (feedback #43220:
+  // the Planer card listed two retired planers).
+  $gone = _appointment_facilitator_gone_status_ids();
+  if ($gone) {
+    $present = $query->orConditionGroup()
+      ->notExists('field_item_status')
+      ->condition('field_item_status.target_id', $gone, 'NOT IN');
+    $query->condition($present);
+  }
   $nids = $query->execute();
   if (!$nids) {
     return [];
