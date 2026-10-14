@@ -5,6 +5,7 @@ namespace Drupal\appointment_facilitator\Controller;
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\appointment_facilitator\Service\AppointmentSlackService;
+use Drupal\appointment_facilitator\Service\BadgeUserStatusResolver;
 use Drupal\asset_status\Service\AssetAvailability;
 use Drupal\Component\Utility\Html;
 use Drupal\Core\Controller\ControllerBase;
@@ -37,6 +38,7 @@ class FacilitatorDashboardController extends ControllerBase {
     protected readonly BadgePrerequisiteGate $badgeGate,
     protected readonly AppointmentSlackService $slackService,
     protected readonly AssetAvailability $assetAvailability,
+    protected readonly BadgeUserStatusResolver $badgeStatusResolver,
   ) {}
 
   /**
@@ -52,6 +54,7 @@ class FacilitatorDashboardController extends ControllerBase {
       $container->get('appointment_facilitator.badge_gate'),
       $container->get('appointment_facilitator.slack'),
       $container->get('asset_status.availability'),
+      $container->get('appointment_facilitator.badge_user_status'),
     );
   }
 
@@ -384,7 +387,7 @@ class FacilitatorDashboardController extends ControllerBase {
   protected function buildQuickActions(): array {
     $actions = [];
     $uid = (int) $this->currentUser()->id();
-    $actions[] = $this->linkItem($this->t('Edit my coordinator hours'), Url::fromUri('internal:/user/' . $uid . '/coordinator'));
+    $actions[] = $this->linkItem($this->t('Edit my facilitator hours'), Url::fromUri('internal:/user/' . $uid . '/coordinator'));
     if ($this->currentUser()->hasPermission('reschedule smart date recur instances')) {
       $rrule_id = $this->resolveActiveCoordinatorRuleId($uid);
       if ($rrule_id) {
@@ -1191,11 +1194,24 @@ class FacilitatorDashboardController extends ControllerBase {
 
     $links = [];
     foreach ($appointment->get('field_appointment_badges')->referencedEntities() as $term) {
-      $gate = $this->badgeGate->evaluate($member_uid, $term);
-      $status_text = $gate['allowed']
-        ? (string) $this->t('approved')
-        : (string) $this->t('blocked');
-      $status_detail = $this->buildFacilitatorGateDetail($gate);
+      // Label with the member's real badge status. This used to print
+      // "approved" whenever the prerequisite gate let the member proceed,
+      // which read as "badge issued" for badges still pending (45261).
+      $resolved = $this->badgeStatusResolver->resolve($member_uid, $term);
+      $state = $resolved['state'] ?? '';
+      $gate = $resolved['gate'] ?: $this->badgeGate->evaluate($member_uid, $term);
+      $status_text = match ($state) {
+        BadgeUserStatusResolver::STATE_ACTIVE => (string) $this->t('badge active'),
+        BadgeUserStatusResolver::STATE_PENDING => (string) $this->t('pending'),
+        BadgeUserStatusResolver::STATE_QUIZ_NEEDED => (string) $this->t('quiz not passed'),
+        BadgeUserStatusResolver::STATE_SUSPENDED => (string) $this->t('suspended'),
+        BadgeUserStatusResolver::STATE_EXPIRED => (string) $this->t('expired'),
+        default => (string) $this->t('blocked'),
+      };
+      $status_detail = $state === BadgeUserStatusResolver::STATE_ACTIVE ? '' : $this->buildFacilitatorGateDetail($gate);
+      if ($status_detail !== '' && $state !== BadgeUserStatusResolver::STATE_PREREQS_MISSING) {
+        $status_detail = (string) $this->t('blocked, @detail', ['@detail' => $status_detail]);
+      }
       $url = Url::fromUri('internal:/badge/user/' . $member_uid . '?badgeid=' . $term->id());
       $links[] = [
         '#type' => 'link',

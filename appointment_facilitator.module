@@ -156,6 +156,7 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
       _appointment_facilitator_enforce_badge_page_flow($build, $entity);
       _appointment_facilitator_format_badge_checklist($build, $entity);
       _appointment_facilitator_attach_video_watched_form($build, $entity);
+      _appointment_facilitator_attach_tool_manuals($build, $entity);
       // Popularity stats now live in the pre_content region via
       // BadgePopularityStatsBlock — the inline render below is suppressed
       // to avoid duplicating them on the page.
@@ -1231,34 +1232,12 @@ TWIG,
   if ($group->group_name === 'group_video') {
     // The fieldset is the "review materials" hub on the badge page, not
     // just a video container — relabel so members understand that
-    // checklists, manuals, and transcripts also live here.
+    // checklists and transcripts also live here.
     $element['#title'] = (string) t('Review materials');
 
-    // Pull any manuals attached to the associated tool pages so members
-    // have all the prep material in one place. The manuals are file
-    // entities on `field_manuals` of the related item nodes. The helper
-    // returns an empty array for anonymous viewers — vendor manuals
-    // aren't meant to be publicly indexable.
-    $manuals = _appointment_facilitator_collect_tool_manuals($term);
-    // Per-user gate above — make sure the cache reflects that.
-    $element['#cache']['contexts'][] = 'user.roles:authenticated';
-    if (!empty($manuals)) {
-      $element['appointment_facilitator_tool_manuals'] = [
-        '#type' => 'container',
-        '#weight' => 5,
-        '#attributes' => ['class' => ['badge-tool-manuals']],
-        'heading' => [
-          '#type' => 'html_tag',
-          '#tag' => 'h3',
-          '#attributes' => ['class' => ['h5', 'badge-tool-manuals__heading']],
-          '#value' => t('Tool manuals'),
-        ],
-        'intro' => [
-          '#markup' => '<p class="badge-tool-manuals__intro">' . t('From the associated tool pages — members-only prep material.') . '</p>',
-        ],
-        'list' => $manuals,
-      ];
-    }
+    // Tool manuals used to be appended here. They now render as their own
+    // section after the quiz (_appointment_facilitator_attach_tool_manuals())
+    // so a long manuals list no longer pushes the quiz down the page.
     return;
   }
 
@@ -1337,6 +1316,13 @@ function _appointment_facilitator_replace_checkout_group_with_schedule(array &$e
   $eva_key = 'facilitator_schedules_facilitator_schedule_tool_eva';
   if (isset($element[$eva_key])) {
     $element[$eva_key]['#access'] = FALSE;
+  }
+
+  // Upcoming badge classes ("Earn this badge at an upcoming event") go above
+  // the checkout grid (-50): a scheduled class is the easier path when one
+  // exists (feedback 43085). The view renders nothing when there are none.
+  if (isset($element['event_upcoming_badging_badge_events'])) {
+    $element['event_upcoming_badging_badge_events']['#weight'] = -60;
   }
 
   $tool_offline = FALSE;
@@ -1744,8 +1730,8 @@ function _appointment_facilitator_prerequisite_status_meta(TermInterface $prereq
  *
  * 135 badges is overwhelming on first contact. This banner gives authenticated
  * members a one-click escape to /badges/complete (their personal progress
- * page) and surfaces their badge count + rank inline as a small nudge to
- * keep going. Anonymous visitors get a generic "see your progress after
+ * page) and surfaces their badge count inline as a small nudge to keep
+ * going. Anonymous visitors get a generic "see your progress after
  * login" pitch instead.
  */
 function _appointment_facilitator_build_badges_directory_callout(): string {
@@ -1783,37 +1769,12 @@ function _appointment_facilitator_build_badges_directory_callout(): string {
   $q->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'c');
   $my_count = (int) $q->execute()->fetchField();
 
-  // Rank: count members with strictly more equipment badges + 1.
-  $sub = $db->select('node__field_member_to_badge', 'm');
-  $sub->innerJoin('node__field_badge_status', 's', 's.entity_id = m.entity_id');
-  $sub->innerJoin('node__field_badge_requested', 'b', 'b.entity_id = m.entity_id');
-  $sub->innerJoin('node_field_data', 'n', 'n.nid = m.entity_id');
-  $sub->innerJoin('user__roles', 'r', 'r.entity_id = m.field_member_to_badge_target_id');
-  $sub->innerJoin('users_field_data', 'u', 'u.uid = m.field_member_to_badge_target_id');
-  $sub->condition('n.type', 'badge_request');
-  $sub->condition('n.status', 1);
-  $sub->condition('s.field_badge_status_value', 'active');
-  $sub->condition('b.field_badge_requested_target_id', $door_tid, '<>');
-  $sub->condition('r.roles_target_id', 'member');
-  $sub->condition('u.status', 1);
-  $sub->addField('m', 'field_member_to_badge_target_id', 'uid');
-  $sub->addExpression('COUNT(DISTINCT b.field_badge_requested_target_id)', 'badge_count');
-  $sub->groupBy('m.field_member_to_badge_target_id');
-  $rank = 1;
-  $total_ranked = 0;
-  foreach ($sub->execute()->fetchAll() as $row) {
-    $total_ranked++;
-    if ((int) $row->badge_count > $my_count) {
-      $rank++;
-    }
-  }
-
   $cta_label = $my_count === 0
     ? t('Find your first badge →')
     : t('See your progress →');
 
-  // Tiny stats strip — only render the rank fragment when the member has
-  // earned at least one badge.
+  // Tiny stats strip: the member's own badge count. A "Rank #x of y" fragment
+  // used to follow; members found it unclear (feedback 43641), so it is gone.
   $stats_parts = [];
   if ($my_count === 0) {
     $stats_parts[] = '<strong>0</strong> ' . t('equipment badges yet — pick one to start!');
@@ -1823,12 +1784,6 @@ function _appointment_facilitator_build_badges_directory_callout(): string {
   }
   else {
     $stats_parts[] = '<strong>' . $my_count . '</strong> ' . t('equipment badges');
-  }
-  if ($my_count > 0 && $total_ranked > 0) {
-    $stats_parts[] = t('Rank <strong>#@rank</strong> of @total members', [
-      '@rank' => $rank,
-      '@total' => $total_ranked,
-    ]);
   }
 
   $lead = $my_count === 0
@@ -1860,6 +1815,37 @@ function _appointment_facilitator_badge_checklist_is_blank(TermInterface $badge)
     }
   }
   return TRUE;
+}
+
+/**
+ * Lists manuals from the badge's tool pages in their own section.
+ *
+ * Weight 5.5 places it right after group_quiz (5) and before the checkout
+ * group (7): staff asked for the quiz to come before the manuals, which can
+ * run to a dozen PDFs (feedback 43212). Still shown when the quiz is hidden
+ * by the prerequisite gate, since the manuals are prep material.
+ */
+function _appointment_facilitator_attach_tool_manuals(array &$build, TermInterface $term): void {
+  // The helper returns an empty array for anonymous viewers — vendor
+  // manuals aren't meant to be publicly indexable.
+  $manuals = _appointment_facilitator_collect_tool_manuals($term);
+  $build['#cache']['contexts'][] = 'user.roles:authenticated';
+  if (empty($manuals)) {
+    return;
+  }
+  $build['appointment_facilitator_tool_manuals'] = [
+    '#type' => 'fieldset',
+    '#title' => t('Tool manuals'),
+    '#weight' => 5.5,
+    '#attributes' => ['class' => ['field-group-fieldset', 'badge-tool-manuals', 'mb-3']],
+    'intro' => [
+      '#markup' => '<p class="badge-tool-manuals__intro">' . t('From the associated tool pages — members-only reference material.') . '</p>',
+    ],
+    'list' => $manuals,
+    '#attached' => [
+      'library' => ['appointment_facilitator/badge_status_banner'],
+    ],
+  ];
 }
 
 /**

@@ -226,6 +226,16 @@ body.toolbar-fixed.toolbar-tray-open .mh-badge-status-banner {
   top: var(--drupal-displace-offset-top, 79px);
 }
 
+/* ── Short screens (phones held sideways, small laptops).
+   Wider than 768px, so the rule above leaves the banner sticky, but
+   the banner then fills most of the screen and sits over the badge
+   video. Let it scroll away with the page instead. ─────────── */
+@media (max-height: 600px) {
+  .mh-badge-status-banner {
+    position: static;
+  }
+}
+
 /* ── Detail page width cap (loads with the block so it applies in
        both barrio and gin themes) ──────────────────────────── */
 .path-taxonomy--badges main,
@@ -540,18 +550,7 @@ body.toolbar-fixed.toolbar-tray-open .mh-badge-status-banner {
   border-radius: 0.5rem;
 }
 
-/* ── Tool manuals inside the Review materials fieldset ───────── */
-.badge-tool-manuals {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px dashed var(--mh-color-border, #e5e7eb);
-}
-.badge-tool-manuals__heading {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--mh-color-brand-primary, #8b1919);
-}
+/* ── Tool manuals: own fieldset after the quiz ───────────────── */
 .badge-tool-manuals__intro {
   margin: 0 0 0.6rem;
   font-size: 0.9rem;
