@@ -19,6 +19,7 @@ use Drupal\Core\Render\Markup;
 use Drupal\Core\Url;
 use Drupal\node\Entity\Node;
 use Drupal\node\NodeInterface;
+use Drupal\profile\Entity\ProfileInterface;
 use Drupal\user\UserInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\taxonomy\TermInterface;
@@ -130,6 +131,11 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
     return;
   }
 
+  if ($entity instanceof ProfileInterface && $view_mode === 'full') {
+    _appointment_facilitator_attach_profile_schedule_cta($build, $entity);
+    return;
+  }
+
   if ($entity->getEntityTypeId() === 'taxonomy_term' && $entity instanceof TermInterface && $entity->bundle() === 'badges') {
     if ($display) {
       _appointment_facilitator_attach_badge_status_pseudo_fields($build, $entity, $display);
@@ -219,6 +225,61 @@ function appointment_facilitator_entity_view(array &$build, EntityInterface $ent
   if ($entity instanceof NodeInterface) {
     _appointment_facilitator_build_node_view($build, $entity, is_string($view_mode) ? $view_mode : NULL);
   }
+}
+
+/**
+ * Adds the booking button to a facilitator's profile page.
+ *
+ * The schedules page already offers "Request appointment" on each card, but a
+ * member who followed a card through to the profile (Lior, feedback sid 20795)
+ * had nowhere to book from. Same booking form, host prefilled; signed-out
+ * visitors are sent to log in and brought back here.
+ */
+function _appointment_facilitator_attach_profile_schedule_cta(array &$build, ProfileInterface $profile): void {
+  $bundle = \Drupal::config('appointment_facilitator.settings')->get('facilitator_profile_bundle') ?: 'coordinator';
+  if ($profile->bundle() !== $bundle) {
+    return;
+  }
+  $cache = CacheableMetadata::createFromRenderArray($build)
+    ->addCacheContexts(['user.roles:authenticated']);
+  $owner = $profile->getOwner();
+  if (!$owner instanceof UserInterface) {
+    $cache->applyTo($build);
+    return;
+  }
+  $cache->addCacheableDependency($owner);
+  if (!$owner->isActive() || !$owner->hasRole('facilitator')) {
+    $cache->applyTo($build);
+    return;
+  }
+
+  if (\Drupal::currentUser()->isAuthenticated()) {
+    $url = Url::fromRoute('node.add', ['node_type' => 'appointment'], [
+      'query' => ['host-uid' => $owner->id()],
+    ]);
+    $label = t('Schedule a session with @name', ['@name' => $owner->getDisplayName()]);
+    $class = 'btn btn-primary';
+  }
+  else {
+    $url = Url::fromRoute('user.login', [], [
+      'query' => ['destination' => $profile->toUrl()->toString()],
+    ]);
+    $label = t('Sign in to schedule a session');
+    $class = 'btn btn-outline-primary';
+  }
+
+  $build['appointment_facilitator_schedule_cta'] = [
+    '#type' => 'container',
+    '#attributes' => ['class' => ['facilitator-profile-schedule-cta', 'mb-3']],
+    '#weight' => -50,
+    'link' => [
+      '#type' => 'link',
+      '#title' => $label,
+      '#url' => $url,
+      '#attributes' => ['class' => explode(' ', $class)],
+    ],
+  ];
+  $cache->applyTo($build);
 }
 
 /**
