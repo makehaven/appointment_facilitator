@@ -3292,8 +3292,11 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
     }
   }
 
-  // --- Tool offline check ---
-  if ($gate && $gate->isBadgeOffline($badge)) {
+  // --- Retired badge / tool offline check ---
+  // A retired badge's tools are usually Gone, which also reads as "offline";
+  // say retired rather than "offline for maintenance" (feedback sid 20899).
+  $is_retired = $badge->hasField('field_badge_inactive') && !empty($badge->get('field_badge_inactive')->value);
+  if ($is_retired || ($gate && $gate->isBadgeOffline($badge))) {
     _appointment_facilitator_hide_badge_page_components($build, [
       'group_checkout',
       'field_badge_issuer_on_request',
@@ -3303,14 +3306,23 @@ function _appointment_facilitator_enforce_badge_page_flow(array &$build, TermInt
       'event_upcoming_badging_badge_events',
     ]);
 
-    $build['appointment_facilitator_offline_warning'] = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['messages', 'messages--error', 'badge-offline-notice']],
-      '#weight' => -200,
-      'message' => [
-        '#markup' => '<p>' . t('<strong>Tool currently out of service:</strong> The tool(s) required for this badge checkout are currently marked as offline for maintenance. Scheduling for this badge is temporarily unavailable.') . '</p>',
-      ],
-    ];
+    $build['appointment_facilitator_offline_warning'] = $is_retired
+      ? [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--status', 'badge-retired-notice']],
+        '#weight' => -200,
+        'message' => [
+          '#markup' => '<p>' . t('<strong>Retired badge:</strong> the tool for this badge is no longer in the shop, so it is no longer offered. Members who earned it keep it on their record.') . '</p>',
+        ],
+      ]
+      : [
+        '#type' => 'container',
+        '#attributes' => ['class' => ['messages', 'messages--error', 'badge-offline-notice']],
+        '#weight' => -200,
+        'message' => [
+          '#markup' => '<p>' . t('<strong>Tool currently out of service:</strong> The tool(s) required for this badge checkout are currently marked as offline for maintenance. Scheduling for this badge is temporarily unavailable.') . '</p>',
+        ],
+      ];
   }
 
   // Members who already hold the badge shouldn't see the prerequisite-gate
