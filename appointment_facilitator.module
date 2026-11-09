@@ -7499,3 +7499,21 @@ function appointment_facilitator_user_view_alter(array &$build, \Drupal\Core\Ent
     ],
   ];
 }
+
+/**
+ * Implements hook_mail().
+ */
+function appointment_facilitator_mail(string $key, array &$message, array $params): void {
+  if ($key !== 'issuer_granted') {
+    return;
+  }
+  $options = ['langcode' => $message['langcode']];
+  $message['subject'] = t('You can now sign off the @badge', ['@badge' => $params['badge_name']], $options);
+  $message['body'][] = t("Hi @name,\n\n@granter added you as an issuer for the @badge. You can now sign off members' checkouts for it.\n\nMembers can book you for this badge once you post facilitator hours. Your dashboard shows the badges you can issue:\n@dashboard\n\nThe badge page:\n@badge_url", [
+    '@name' => $params['target_name'],
+    '@granter' => $params['granter_name'],
+    '@badge' => $params['badge_name'],
+    '@dashboard' => $params['dashboard_url'],
+    '@badge_url' => $params['badge_url'],
+  ], $options);
+}

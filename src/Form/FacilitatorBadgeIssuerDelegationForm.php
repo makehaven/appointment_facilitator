@@ -8,18 +8,30 @@ use Drupal\Core\Entity\EntityAutocomplete;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Mail\MailManagerInterface;
 use Drupal\Core\Url;
 use Drupal\user\UserInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Lets facilitators delegate issuer access for badges they already issue.
+ *
+ * Staff who may edit badge terms can delegate any active badge: they have
+ * no badges of their own to issue, so the issuer-only list left them with
+ * nothing to pick, and they fell back to editing the term by hand (Kate,
+ * Quilter Badge, 2026-11-02).
  */
 class FacilitatorBadgeIssuerDelegationForm extends FormBase {
+
+  /**
+   * Permission that lets staff delegate any active badge.
+   */
+  public const STAFF_PERMISSION = 'edit terms in badges';
 
   public function __construct(
     protected readonly EntityTypeManagerInterface $entityTypeManagerService,
     protected readonly BadgePrerequisiteGate $badgeGate,
+    protected readonly MailManagerInterface $mailManager,
   ) {}
 
   /**
@@ -29,6 +41,7 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     return new static(
       $container->get('entity_type.manager'),
       $container->get('appointment_facilitator.badge_gate'),
+      $container->get('plugin.manager.mail'),
     );
   }
 
@@ -98,7 +111,10 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     $badge_tid = (int) $form_state->getValue('badge_tid');
 
     if (!isset($badge_options[$badge_tid])) {
-      $form_state->setErrorByName('badge_tid', $this->t('You can only delegate issuer access for badges you personally issue.'));
+      $message = $this->isStaff()
+        ? $this->t('Select an active badge.')
+        : $this->t('You can only delegate issuer access for badges you personally issue.');
+      $form_state->setErrorByName('badge_tid', $message);
       return;
     }
 
@@ -176,12 +192,42 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     $term->set('field_badge_issuer', $values);
     $term->save();
 
-    $this->messenger()->addStatus($this->t('@name can now sign off @badge checkouts. Members can book them for it once they post facilitator hours.', [
+    $granter = $this->currentUser();
+    $this->logger('appointment_facilitator')->notice('@granter granted @target issuer access for @badge (term @tid).', [
+      '@granter' => $granter->getAccountName(),
+      '@target' => $target->getAccountName(),
+      '@badge' => $term->label(),
+      '@tid' => $term->id(),
+    ]);
+
+    $emailed = FALSE;
+    if ($target->getEmail()) {
+      $result = $this->mailManager->mail('appointment_facilitator', 'issuer_granted', $target->getEmail(), $target->getPreferredLangcode(), [
+        'target_name' => $target->getDisplayName(),
+        'granter_name' => $granter->getDisplayName(),
+        'badge_name' => $term->label(),
+        'badge_url' => $term->toUrl('canonical', ['absolute' => TRUE])->toString(),
+        'dashboard_url' => Url::fromRoute('appointment_facilitator.dashboard', [], ['absolute' => TRUE])->toString(),
+      ]);
+      $emailed = !empty($result['result']);
+    }
+
+    $args = [
       '@name' => $target->getDisplayName(),
       '@badge' => $term->label(),
-    ]));
+    ];
+    $this->messenger()->addStatus($emailed
+      ? $this->t('@name can now sign off @badge checkouts, and we emailed them to let them know. Members can book them for it once they post facilitator hours.', $args)
+      : $this->t('@name can now sign off @badge checkouts. Members can book them for it once they post facilitator hours. The email to them did not send, so please tell them yourself.', $args));
 
     $form_state->setRedirect('appointment_facilitator.dashboard');
+  }
+
+  /**
+   * Whether the current user is staff who may delegate any badge.
+   */
+  protected function isStaff(): bool {
+    return $this->currentUser()->hasPermission(self::STAFF_PERMISSION);
   }
 
   /**
@@ -193,12 +239,14 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     }
 
     $storage = $this->entityTypeManagerService->getStorage('taxonomy_term');
-    $tids = $storage->getQuery()
+    $query = $storage->getQuery()
       ->accessCheck(FALSE)
       ->condition('vid', 'badges')
-      ->condition('field_badge_issuer.target_id', $uid)
-      ->sort('name', 'ASC')
-      ->execute();
+      ->sort('name', 'ASC');
+    if (!$this->isStaff()) {
+      $query->condition('field_badge_issuer.target_id', $uid);
+    }
+    $tids = $query->execute();
 
     if (!$tids) {
       return [];

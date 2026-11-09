@@ -2,6 +2,7 @@
 
 namespace Drupal\appointment_facilitator\Controller;
 
+use Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm;
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\appointment_facilitator\Service\AppointmentSlackService;
@@ -300,7 +301,9 @@ class FacilitatorDashboardController extends ControllerBase {
           'note' => [
             '#type' => 'html_tag',
             '#tag' => 'p',
-            '#value' => $this->t('Grant issuer access for one badge at a time. The person must already hold that badge, and this only affects badges you personally issue.'),
+            '#value' => $this->currentUser()->hasPermission(FacilitatorBadgeIssuerDelegationForm::STAFF_PERMISSION)
+              ? $this->t('Grant issuer access for one badge at a time. As staff you can pick any active badge. The person must already hold that badge, and they get an email.')
+              : $this->t('Grant issuer access for one badge at a time. The person must already hold that badge, and this only affects badges you personally issue. They get an email.'),
             '#attributes' => ['class' => ['afd-muted']],
           ],
           'form' => $this->formBuilderService->getForm('Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm'),

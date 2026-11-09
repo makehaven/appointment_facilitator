@@ -3,6 +3,7 @@
 namespace Drupal\Tests\appointment_facilitator\Kernel;
 
 use Drupal\Core\Form\FormState;
+use Drupal\Core\Test\AssertMailTrait;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\KernelTests\KernelTestBase;
@@ -19,6 +20,8 @@ use Drupal\user\Entity\User;
  * @group appointment_facilitator
  */
 class FacilitatorBadgeIssuerDelegationFormTest extends KernelTestBase {
+
+  use AssertMailTrait;
 
   /**
    * {@inheritdoc}
@@ -172,6 +175,68 @@ class FacilitatorBadgeIssuerDelegationFormTest extends KernelTestBase {
     ]);
     $form->validateForm($form_array, $member_state);
     $this->assertArrayHasKey('target_user', $member_state->getErrors(), 'A badge holder who cannot approve badges is not listed as an issuer.');
+  }
+
+  /**
+   * Staff who issue nothing can still delegate any badge, and the person is emailed.
+   */
+  public function testStaffCanDelegateAnyBadgeAndTargetIsEmailed(): void {
+    Role::create(['id' => 'manager', 'label' => 'Manager'])
+      ->grantPermission('edit terms in badges')
+      ->save();
+    Role::create(['id' => 'facilitator', 'label' => 'Facilitator'])
+      ->grantPermission('approve badge requests')
+      ->save();
+
+    // Placeholder so the staff account is not uid 1 (which bypasses checks).
+    User::create(['name' => 'placeholder', 'status' => 1])->save();
+
+    $staff = User::create(['name' => 'staff_user', 'mail' => 'staff@example.com', 'status' => 1, 'roles' => ['manager']]);
+    $staff->save();
+    $plain = User::create(['name' => 'plain_user', 'mail' => 'plain@example.com', 'status' => 1]);
+    $plain->save();
+    $target = User::create(['name' => 'rose', 'mail' => 'rose@example.com', 'status' => 1, 'roles' => ['facilitator']]);
+    $target->save();
+
+    // Nobody on staff issues this badge.
+    $badge = Term::create(['vid' => 'badges', 'name' => 'Quilter Badge']);
+    $badge->save();
+
+    Node::create([
+      'type' => 'badge_request',
+      'title' => 'Rose quilter',
+      'status' => 1,
+      'uid' => (int) $target->id(),
+      'field_badge_requested' => ['target_id' => $badge->id()],
+      'field_member_to_badge' => ['target_id' => $target->id()],
+      'field_badge_status' => 'active',
+    ])->save();
+
+    // A non-staff, non-issuer still sees nothing to delegate.
+    $this->container->get('current_user')->setAccount($plain);
+    $form = \Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm::create($this->container);
+    $built = $form->buildForm([], new FormState());
+    $this->assertArrayNotHasKey('badge_tid', $built, 'A member who issues nothing gets no badge list.');
+
+    $this->container->get('current_user')->setAccount($staff);
+    $form = \Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm::create($this->container);
+    $state = new FormState();
+    $state->setValues(['badge_tid' => (int) $badge->id(), 'target_user' => (string) $target->id()]);
+    $built = $form->buildForm([], $state);
+    $this->assertArrayHasKey((int) $badge->id(), $built['badge_tid']['#options'], 'Staff see badges they do not issue.');
+
+    $form->validateForm($built, $state);
+    $this->assertEmpty($state->getErrors());
+    $form->submitForm($built, $state);
+
+    $issuers = array_column(Term::load($badge->id())->get('field_badge_issuer')->getValue(), 'target_id');
+    $this->assertSame([(int) $target->id()], array_map('intval', $issuers));
+
+    $mails = $this->getMails(['id' => 'appointment_facilitator_issuer_granted']);
+    $this->assertCount(1, $mails);
+    $this->assertSame('rose@example.com', $mails[0]['to']);
+    $this->assertStringContainsString('Quilter Badge', (string) $mails[0]['subject']);
+    $this->assertStringContainsString('staff_user', (string) $mails[0]['body']);
   }
 
   /**
