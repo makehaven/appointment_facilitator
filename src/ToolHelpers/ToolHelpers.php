@@ -132,6 +132,18 @@ class ToolHelpers {
   }
 
   /**
+   * Whether Ask on Slack is switched on for a channel.
+   *
+   * Pilot gate: appointment_facilitator.settings:ask_on_slack_channels lists
+   * the channels where tool pages offer the form. A missing or empty list
+   * means nowhere, so an environment that never imported the key stays off.
+   */
+  public function askEnabled(string $channel): bool {
+    $allowed = (array) ($this->configFactory->get('appointment_facilitator.settings')->get('ask_on_slack_channels') ?? []);
+    return $channel !== '' && in_array($channel, array_map(static fn($c): string => ltrim((string) $c, '#'), $allowed), TRUE);
+  }
+
+  /**
    * Browser link that opens a channel in Slack.
    */
   public function channelUrl(string $channel): string {
@@ -445,6 +457,9 @@ class ToolHelpers {
     $channel = $this->channel($tool);
     if ($channel === '') {
       throw new \RuntimeException('no_channel');
+    }
+    if (!$this->askEnabled($channel)) {
+      throw new \RuntimeException('ask_not_enabled_for_channel');
     }
     $askerSlack = $this->slackIds([(int) $asker->id()])[(int) $asker->id()] ?? '';
     if ($askerSlack === '') {

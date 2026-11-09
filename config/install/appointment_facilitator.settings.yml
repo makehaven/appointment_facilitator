@@ -5,3 +5,4 @@ facilitator_profile_bundle: coordinator
 arrival_grace_minutes: 5
 arrival_pre_window_minutes: 240
 arrival_backfill_days: 60
+ask_on_slack_channels: {  }

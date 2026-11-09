@@ -70,7 +70,7 @@ class ToolQuestionForm extends FormBase {
     ];
     $form['note'] = [
       '#weight' => 100,
-      '#markup' => '<p class="mh-tool-helpers__fine">' . $this->t('Posted publicly in #@channel under your name, tagging the people above. Replies come to you in Slack.', ['@channel' => $channel]) . '</p>',
+      '#markup' => '<p class="mh-tool-helpers__fine">' . $this->t('Posted publicly in #@channel under your name, tagging up to three people who know this tool. Replies come to you in Slack.', ['@channel' => $channel]) . '</p>',
     ];
     return $form;
   }

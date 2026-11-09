@@ -689,6 +689,7 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
   $cache->addCacheContexts(['user']);
   $cache->addCacheTags($tool->getCacheTags());
   $cache->setCacheMaxAge(3600);
+  $cache->addCacheTags(['config:appointment_facilitator.settings']);
   $empty = [];
   $cache->applyTo($empty);
 
@@ -715,6 +716,12 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
   }
   $channel = $helpers->channel($tool);
   $can_manage = $viewer->hasPermission('manage tool helpers');
+  // Pilot scope: outside the Ask on Slack channels the panel shows only where
+  // staff or volunteers have listed people (the facilitator card already
+  // covers badge sign-off people), plus to staff so they can fill it.
+  if (!$listed && !$can_manage && !$helpers->askEnabled($channel)) {
+    return $empty;
+  }
   if (!$listed && !$issuers && $channel === '' && !$can_manage) {
     return $empty;
   }
@@ -746,7 +753,7 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
   $viewer_account = \Drupal::entityTypeManager()->getStorage('user')->load($viewer->id());
   $ask_form = NULL;
   $not_on_slack = FALSE;
-  if ($channel !== '' && $viewer_account) {
+  if ($channel !== '' && $viewer_account && $helpers->askEnabled($channel)) {
     if ($helpers->slackIds([(int) $viewer->id()])) {
       $ask_form = \Drupal::formBuilder()->getForm(\Drupal\appointment_facilitator\Form\ToolQuestionForm::class, $tool);
     }
