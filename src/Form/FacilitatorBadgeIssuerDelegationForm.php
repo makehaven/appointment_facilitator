@@ -70,7 +70,7 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
         'include_anonymous' => FALSE,
       ],
       '#required' => TRUE,
-      '#description' => $this->t('Pick an existing user who already holds the selected badge. Facilitators, instructors, and staff are all allowed.'),
+      '#description' => $this->t('Start typing a name and pick from the list. They must already hold the badge and be a facilitator, instructor or staff member.'),
     ];
 
     $form['actions'] = ['#type' => 'actions'];
@@ -116,6 +116,17 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     $target = $this->entityTypeManagerService->getStorage('user')->load($target_uid);
     if (!$target instanceof UserInterface || !$target->isActive()) {
       $form_state->setErrorByName('target_user', $this->t('The selected user account is not active.'));
+      return;
+    }
+
+    // Being listed as an issuer only lets someone sign off a checkout when
+    // they also hold "approve badge requests" (facilitators, instructors,
+    // staff). Listing anyone else showed "Granted" while changing nothing
+    // they could use (#46995, feedback sid 20944).
+    if (!$target->hasPermission('approve badge requests')) {
+      $form_state->setErrorByName('target_user', $this->t('@name cannot sign off badges yet: only facilitators, instructors and staff can. Ask staff to make them a facilitator first, then grant access here.', [
+        '@name' => $target->getDisplayName(),
+      ]));
       return;
     }
 
@@ -165,7 +176,7 @@ class FacilitatorBadgeIssuerDelegationForm extends FormBase {
     $term->set('field_badge_issuer', $values);
     $term->save();
 
-    $this->messenger()->addStatus($this->t('Granted @name issuer access for @badge.', [
+    $this->messenger()->addStatus($this->t('@name can now sign off @badge checkouts. Members can book them for it once they post facilitator hours.', [
       '@name' => $target->getDisplayName(),
       '@badge' => $term->label(),
     ]));

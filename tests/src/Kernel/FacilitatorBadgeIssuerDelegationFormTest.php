@@ -10,6 +10,7 @@ use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\taxonomy\Entity\Term;
 use Drupal\taxonomy\Entity\Vocabulary;
+use Drupal\user\Entity\Role;
 use Drupal\user\Entity\User;
 
 /**
@@ -80,12 +81,25 @@ class FacilitatorBadgeIssuerDelegationFormTest extends KernelTestBase {
     ]);
     $issuer->save();
 
+    Role::create(['id' => 'facilitator', 'label' => 'Facilitator'])
+      ->grantPermission('approve badge requests')
+      ->save();
+
     $target = User::create([
       'name' => 'target_user',
       'mail' => 'target@example.com',
       'status' => 1,
+      'roles' => ['facilitator'],
     ]);
     $target->save();
+
+    // Holds the badge but cannot approve anything (#46995).
+    $member = User::create([
+      'name' => 'member_user',
+      'mail' => 'member@example.com',
+      'status' => 1,
+    ]);
+    $member->save();
 
     $other = User::create([
       'name' => 'other_user',
@@ -108,6 +122,16 @@ class FacilitatorBadgeIssuerDelegationFormTest extends KernelTestBase {
       'uid' => (int) $target->id(),
       'field_badge_requested' => ['target_id' => $badge->id()],
       'field_member_to_badge' => ['target_id' => $target->id()],
+      'field_badge_status' => 'active',
+    ])->save();
+
+    Node::create([
+      'type' => 'badge_request',
+      'title' => 'Member badge request',
+      'status' => 1,
+      'uid' => (int) $member->id(),
+      'field_badge_requested' => ['target_id' => $badge->id()],
+      'field_member_to_badge' => ['target_id' => $member->id()],
       'field_badge_status' => 'active',
     ])->save();
 
@@ -140,6 +164,14 @@ class FacilitatorBadgeIssuerDelegationFormTest extends KernelTestBase {
     ]);
     $form->validateForm($form_array, $invalid_state);
     $this->assertArrayHasKey('target_user', $invalid_state->getErrors(), 'Users without the badge cannot receive issuer access.');
+
+    $member_state = new FormState();
+    $member_state->setValues([
+      'badge_tid' => (int) $badge->id(),
+      'target_user' => (string) $member->id(),
+    ]);
+    $form->validateForm($form_array, $member_state);
+    $this->assertArrayHasKey('target_user', $member_state->getErrors(), 'A badge holder who cannot approve badges is not listed as an issuer.');
   }
 
   /**
