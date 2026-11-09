@@ -4625,6 +4625,10 @@ function appointment_facilitator_form_node_form_alter(array &$form, FormStateInt
   // Add reservation conflict checking.
   $form['#validate'][] = '_appointment_facilitator_validate_reservation_conflicts';
 
+  if ($form_id === 'node_appointment_form') {
+    $form['#validate'][] = '_appointment_facilitator_validate_not_already_booked';
+  }
+
   if ($form_id === 'node_appointment_form' || $form_id === 'node_appointment_edit_form') {
     $form['#validate'][] = 'appointment_facilitator_validate_pending_badges';
     $form['#validate'][] = 'appointment_facilitator_validate_slot_coverage';
@@ -4979,6 +4983,71 @@ function _appointment_facilitator_validate_no_duplicates(array &$form, FormState
       );
     }
   }
+}
+
+/**
+ * Stops a member booking the same facilitator at the same time twice.
+ *
+ * #47004 (feedback sid 20978): a member booked the same four badges with the
+ * same facilitator at the same time twice, 3.5 hours apart. The facilitator
+ * got two emails with the same subject, which mail clients fold into one, and
+ * reported a booking email missing. About ten such pairs were made in 2026.
+ */
+function _appointment_facilitator_validate_not_already_booked(array &$form, FormStateInterface $form_state): void {
+  if ($form_state->hasAnyErrors()) {
+    return;
+  }
+  $form_object = $form_state->getFormObject();
+  if (!$form_object instanceof \Drupal\Core\Entity\ContentEntityFormInterface) {
+    return;
+  }
+  try {
+    $candidate = $form_object->buildEntity($form, $form_state);
+    _appointment_facilitator_populate_timerange_from_slots($candidate);
+  }
+  catch (\Throwable $e) {
+    return;
+  }
+  if (!$candidate->hasField('field_appointment_timerange') || $candidate->get('field_appointment_timerange')->isEmpty()
+    || !$candidate->hasField('field_appointment_host') || $candidate->get('field_appointment_host')->isEmpty()) {
+    return;
+  }
+  $existing = appointment_facilitator_find_same_slot_booking(
+    (int) \Drupal::currentUser()->id(),
+    (int) $candidate->get('field_appointment_host')->target_id,
+    (int) $candidate->get('field_appointment_timerange')->value,
+  );
+  if ($existing) {
+    $url = \Drupal\Core\Url::fromRoute('entity.node.canonical', ['node' => $existing])->toString();
+    $form_state->setErrorByName('field_appointment_slot', t('You already have this time booked with this facilitator (<a href=":url">see your booking</a>). To change the badges, edit that booking instead of making a second one.', [':url' => $url]));
+  }
+}
+
+/**
+ * Finds a member's live booking with a facilitator starting at a time.
+ *
+ * @return int|null
+ *   The appointment node id, or NULL when there is none.
+ */
+function appointment_facilitator_find_same_slot_booking(int $member_uid, int $host_uid, int $start, int $exclude_nid = 0): ?int {
+  if ($member_uid <= 0 || $host_uid <= 0 || $start <= 0) {
+    return NULL;
+  }
+  $query = \Drupal::entityQuery('node')
+    ->accessCheck(FALSE)
+    ->condition('type', 'appointment')
+    ->condition('uid', $member_uid)
+    ->condition('field_appointment_host', $host_uid)
+    ->condition('field_appointment_timerange.value', $start);
+  $not_canceled = $query->orConditionGroup()
+    ->notExists('field_appointment_status')
+    ->condition('field_appointment_status', 'canceled', '<>');
+  $query->condition($not_canceled);
+  if ($exclude_nid > 0) {
+    $query->condition('nid', $exclude_nid, '<>');
+  }
+  $nids = $query->range(0, 1)->execute();
+  return $nids ? (int) reset($nids) : NULL;
 }
 
 /**
