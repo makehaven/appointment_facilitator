@@ -732,7 +732,9 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
   $people = [];
   foreach ($people_accounts as $uid => $account) {
     $chips = [];
-    $chips[] = $account->hasRole('member') ? t('Member') : t('Outside expert');
+    if ($account->hasRole('member')) {
+      $chips[] = t('Member');
+    }
     if ($account->hasRole('facilitator')) {
       $chips[] = t('Facilitator');
     }

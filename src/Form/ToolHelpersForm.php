@@ -66,7 +66,7 @@ class ToolHelpersForm extends FormBase {
     $slack = $this->helpers->slackIds(array_keys($listed));
 
     $form['intro'] = [
-      '#markup' => '<p>' . $this->t('These people appear under “Who can help” on the tool page, and are tagged first when a member asks about it on Slack (up to three, rotating). Volunteers come first: staff are tagged only when no one else can be. Anyone with an account can be listed; non-members are shown as outside experts.') . '</p>',
+      '#markup' => '<p>' . $this->t('These people appear under “Who can help” on the tool page, and are tagged first when a member asks about it on Slack (up to three, rotating). Volunteers come first: staff are tagged only when no one else can be. Anyone with an account can be listed. Members show a Member label on the tool page.') . '</p>',
     ];
 
     if ($node->hasField('field_question_contact') && !$node->get('field_question_contact')->isEmpty()) {
@@ -91,7 +91,7 @@ class ToolHelpersForm extends FormBase {
       foreach ($listed as $uid => $account) {
         $rows[] = [
           $account->getDisplayName(),
-          $account->hasRole('member') ? $this->t('Member') : $this->t('Outside expert'),
+          $account->hasRole('member') ? $this->t('Member') : $this->t('Not a current member'),
           isset($slack[$uid]) ? $this->t('Yes') : $this->t('No: cannot be tagged'),
           $this->helpers->isStaff($account) ? $this->t('Staff: tagged last') : '',
         ];
