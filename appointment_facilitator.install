@@ -924,3 +924,51 @@ function appointment_facilitator_update_9025(): string {
 
   return "Re-synced recurring facilitator schedule rows for {$updated} facilitator Smart Date rule(s).";
 }
+
+/**
+ * Implements hook_schema().
+ */
+function appointment_facilitator_schema(): array {
+  return [
+    'appointment_facilitator_tool_question' => _appointment_facilitator_tool_question_schema(),
+  ];
+}
+
+/**
+ * Schema for questions members ask about a tool on Slack.
+ *
+ * One row per question: rotation reads who was tagged and when; the weekly
+ * count reads questions per area.
+ */
+function _appointment_facilitator_tool_question_schema(): array {
+  return [
+    'description' => 'Questions asked about a tool via Ask on Slack.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
+      'nid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'description' => 'Tool node.'],
+      'uid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'description' => 'Member asking.'],
+      'channel' => ['type' => 'varchar', 'length' => 80, 'not null' => TRUE, 'default' => ''],
+      'ts' => ['type' => 'varchar', 'length' => 32, 'not null' => TRUE, 'default' => '', 'description' => 'Slack message ts.'],
+      'tagged' => ['type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => '', 'description' => 'Comma-separated uids tagged.'],
+      'question' => ['type' => 'text', 'size' => 'normal', 'not null' => FALSE],
+      'created' => ['type' => 'int', 'not null' => TRUE, 'default' => 0],
+    ],
+    'primary key' => ['id'],
+    'indexes' => [
+      'nid' => ['nid'],
+      'created' => ['created'],
+    ],
+  ];
+}
+
+/**
+ * Creates the tool question log for Ask on Slack (ask_the_right_people).
+ */
+function appointment_facilitator_update_9026(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('appointment_facilitator_tool_question')) {
+    return 'Tool question log already exists.';
+  }
+  $schema->createTable('appointment_facilitator_tool_question', _appointment_facilitator_tool_question_schema());
+  return 'Created the tool question log.';
+}

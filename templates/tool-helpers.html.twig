@@ -1,0 +1,55 @@
+{#
+/**
+ * @file
+ * Tool page: "Who can help" — people to ask, the channel, Ask on Slack.
+ *
+ * Available variables:
+ * - tool_label: the tool's title.
+ * - people: list of {name, url, chips[], on_slack}.
+ * - more_people: non-empty when people are badge sign-off people rather than
+ *   people listed on the tool.
+ * - channel / channel_url: the tool's Slack channel (no '#') and a link to it.
+ * - ask_form: Ask on Slack form, or NULL.
+ * - not_on_slack: TRUE when the viewer has no linked Slack account.
+ * - volunteer_form: "I can answer questions" toggle, or NULL.
+ * - manage_url: staff link to the People to ask tab, or ''.
+ */
+#}
+<section class="mh-tool-helpers" id="who-can-help" aria-labelledby="mh-tool-helpers-title">
+  <h3 class="mh-tool-helpers__title" id="mh-tool-helpers-title">{{ 'Questions about this tool?'|t }}</h3>
+  {% if people %}
+    <p class="mh-tool-helpers__lead">
+      {% if more_people %}
+        {{ 'These people sign off this tool’s badge and can answer questions:'|t }}
+      {% else %}
+        {{ 'These people know this tool and are glad to answer questions:'|t }}
+      {% endif %}
+    </p>
+    <ul class="mh-tool-helpers__people">
+      {% for person in people %}
+        <li class="mh-tool-helpers__person">
+          <a href="{{ person.url }}" class="mh-tool-helpers__name">{{ person.name }}</a>
+          {% for chip in person.chips %}<span class="mh-tool-helpers__chip">{{ chip }}</span>{% endfor %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="mh-tool-helpers__lead">{{ 'Nobody is listed for this tool yet. Ask in its Slack channel and someone who knows it can answer.'|t }}</p>
+  {% endif %}
+
+  {% if ask_form %}
+    {{ ask_form }}
+  {% elseif channel %}
+    <p class="mh-tool-helpers__channel">
+      <a href="{{ channel_url }}">{{ 'Ask in #@channel on Slack'|t({'@channel': channel}) }}</a>
+      {% if not_on_slack %}<br><span class="mh-tool-helpers__fine">{{ 'We could not find you on MakeHaven’s Slack, so we cannot post for you. Join with the invite in your welcome email, using the same email address as your MakeHaven account.'|t }}</span>{% endif %}
+    </p>
+  {% endif %}
+
+  {% if volunteer_form or manage_url %}
+    <div class="mh-tool-helpers__footer">
+      {{ volunteer_form }}
+      {% if manage_url %}<a href="{{ manage_url }}" class="mh-tool-helpers__manage">{{ 'Edit people to ask'|t }}</a>{% endif %}
+    </div>
+  {% endif %}
+</section>

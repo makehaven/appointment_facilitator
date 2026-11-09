@@ -185,3 +185,9 @@ week_at_a_glance:
   css:
     theme:
       css/week-at-a-glance.css: {}
+
+tool_helpers:
+  version: 1.x
+  css:
+    theme:
+      css/tool-helpers.css: {}

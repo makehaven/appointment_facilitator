@@ -19,3 +19,7 @@ manage facilitator arrival fields:
 approve badge requests:
   title: 'Approve badge requests'
   description: 'Allow facilitators to activate pending badge instances without full node edit access.'
+
+manage tool helpers:
+  title: 'Manage People to ask on tools'
+  description: 'Choose who members are pointed to, and tagged on Slack, for questions about a tool.'

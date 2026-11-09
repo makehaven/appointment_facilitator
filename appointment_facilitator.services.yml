@@ -46,3 +46,13 @@ services:
     arguments:
       - '@entity_type.manager'
       - '@database'
+
+  appointment_facilitator.tool_helpers:
+    class: Drupal\appointment_facilitator\ToolHelpers\ToolHelpers
+    arguments:
+      - '@entity_type.manager'
+      - '@database'
+      - '@datetime.time'
+      - '@config.factory'
+      - '@logger.factory'
+      - '@?makehaven_tasks.slack_bot'

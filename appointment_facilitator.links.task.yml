@@ -1,0 +1,5 @@
+appointment_facilitator.tool_helpers:
+  route_name: appointment_facilitator.tool_helpers
+  base_route: entity.node.canonical
+  title: 'People to ask'
+  weight: 20

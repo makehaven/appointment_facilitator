@@ -1,0 +1,83 @@
+/* ── Tool page: "Who can help" panel (ask_the_right_people_20261109) ──
+   Sits beside the "Talk to a facilitator" card and shares its look. */
+
+.mh-tool-helpers {
+  margin: var(--mh-space-lg, 1.5rem) 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-left: 6px solid var(--mh-color-brand-primary, #8b1919);
+  border-radius: var(--mh-radius-lg, 0.9rem);
+  background: var(--mh-color-surface, #fff);
+}
+
+.mh-tool-helpers__title {
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+
+.mh-tool-helpers__lead {
+  margin: 0 0 0.5rem;
+  color: var(--mh-color-neutral-700, #374151);
+}
+
+.mh-tool-helpers__people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.mh-tool-helpers__person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mh-tool-helpers__name {
+  font-weight: 600;
+}
+
+.mh-tool-helpers__chip {
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--mh-color-neutral-100, #f3f4f6);
+  color: var(--mh-color-neutral-700, #374151);
+  font-size: 0.8rem;
+}
+
+.mh-tool-helpers__ask textarea {
+  width: 100%;
+  max-width: 40rem;
+}
+
+.mh-tool-helpers__ask .form-actions {
+  margin: 0.5rem 0 0;
+}
+
+.mh-tool-helpers__fine {
+  margin: 0.35rem 0 0;
+  color: var(--mh-color-neutral-600, #4b5563);
+  font-size: 0.85rem;
+}
+
+.mh-tool-helpers__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--mh-color-border, #e5e7eb);
+}
+
+.mh-tool-helpers__footer form {
+  margin: 0;
+}
+
+.mh-tool-helpers__manage {
+  font-size: 0.9rem;
+}

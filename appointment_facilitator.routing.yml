@@ -149,3 +149,17 @@ appointment_facilitator.badge_members:
     _entity_access: 'taxonomy_term.view'
     _role: 'administrator+manager+event_management+special+member+member_pending_approval'
     taxonomy_term: '\d+'
+
+appointment_facilitator.tool_helpers:
+  path: '/node/{node}/people-to-ask'
+  defaults:
+    _form: '\Drupal\appointment_facilitator\Form\ToolHelpersForm'
+    _title_callback: '\Drupal\appointment_facilitator\Form\ToolHelpersForm::title'
+  requirements:
+    _custom_access: '\Drupal\appointment_facilitator\Form\ToolHelpersForm::access'
+    node: \d+
+  options:
+    _admin_route: TRUE
+    parameters:
+      node:
+        type: entity:node

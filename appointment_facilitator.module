@@ -674,6 +674,113 @@ function _appointment_facilitator_tool_facilitators_panel(NodeInterface $tool): 
 }
 
 /**
+ * Builds the "Who can help" panel on a tool page.
+ *
+ * Track ask_the_right_people_20261109. Members only: the people listed on the
+ * tool (field_tool_helpers), else the people who sign off its badge; the
+ * tool's Slack channel (else its area's); an Ask on Slack form that posts in
+ * that channel and tags up to three of them; and, for members with the
+ * badge, "I can answer questions about this tool". Returns [] for anonymous
+ * viewers and for tools with neither people nor a channel.
+ */
+function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array {
+  $viewer = \Drupal::currentUser();
+  $cache = new CacheableMetadata();
+  $cache->addCacheContexts(['user']);
+  $cache->addCacheTags($tool->getCacheTags());
+  $cache->setCacheMaxAge(3600);
+  $empty = [];
+  $cache->applyTo($empty);
+
+  if (!$viewer->isAuthenticated() || !\Drupal::hasService('appointment_facilitator.tool_helpers')) {
+    return $empty;
+  }
+  /** @var \Drupal\appointment_facilitator\ToolHelpers\ToolHelpers $helpers */
+  $helpers = \Drupal::service('appointment_facilitator.tool_helpers');
+  if (!$helpers->applies($tool)) {
+    return $empty;
+  }
+  foreach ($helpers->badges($tool) as $term) {
+    $cache->addCacheTags($term->getCacheTags());
+  }
+
+  $listed = $helpers->listed($tool);
+  foreach ($listed as $account) {
+    $cache->addCacheTags($account->getCacheTags());
+  }
+  $issuers = [];
+  if (!$listed) {
+    $issuer_uids = array_slice($helpers->issuerUids($tool), 0, 4);
+    $issuers = $issuer_uids ? \Drupal::entityTypeManager()->getStorage('user')->loadMultiple($issuer_uids) : [];
+  }
+  $channel = $helpers->channel($tool);
+  $can_manage = $viewer->hasPermission('manage tool helpers');
+  if (!$listed && !$issuers && $channel === '' && !$can_manage) {
+    return $empty;
+  }
+
+  $people_accounts = $listed ?: $issuers;
+  $holders = array_flip($helpers->badgeHolders($tool, array_keys($people_accounts)));
+  $slack = $helpers->slackIds(array_keys($people_accounts));
+  $people = [];
+  foreach ($people_accounts as $uid => $account) {
+    $chips = [];
+    $chips[] = $account->hasRole('member') ? t('Member') : t('Outside expert');
+    if ($account->hasRole('facilitator')) {
+      $chips[] = t('Facilitator');
+    }
+    if (isset($holders[$uid])) {
+      $chips[] = t('Has the badge');
+    }
+    if ($helpers->isStaff($account)) {
+      $chips[] = t('Staff');
+    }
+    $people[] = [
+      'name' => $account->getDisplayName(),
+      'url' => $account->toUrl()->toString(),
+      'chips' => $chips,
+      'on_slack' => isset($slack[$uid]),
+    ];
+  }
+
+  $viewer_account = \Drupal::entityTypeManager()->getStorage('user')->load($viewer->id());
+  $ask_form = NULL;
+  $not_on_slack = FALSE;
+  if ($channel !== '' && $viewer_account) {
+    if ($helpers->slackIds([(int) $viewer->id()])) {
+      $ask_form = \Drupal::formBuilder()->getForm(\Drupal\appointment_facilitator\Form\ToolQuestionForm::class, $tool);
+    }
+    else {
+      $not_on_slack = TRUE;
+    }
+  }
+
+  $volunteer_form = NULL;
+  if ($viewer_account) {
+    $is_listed = isset($listed[(int) $viewer->id()]);
+    if ($is_listed || $helpers->canVolunteer($tool, $viewer_account)) {
+      $volunteer_form = \Drupal::formBuilder()->getForm(\Drupal\appointment_facilitator\Form\ToolHelperVolunteerForm::class, $tool, $is_listed);
+    }
+  }
+
+  $build = [
+    '#theme' => 'tool_helpers',
+    '#tool_label' => $tool->label(),
+    '#people' => $people,
+    '#more_people' => $listed ? [] : ($issuers ? ['issuers' => TRUE] : []),
+    '#channel' => $channel,
+    '#channel_url' => $channel !== '' ? $helpers->channelUrl($channel) : '',
+    '#ask_form' => $ask_form,
+    '#not_on_slack' => $not_on_slack,
+    '#volunteer_form' => $volunteer_form,
+    '#manage_url' => $can_manage ? Url::fromRoute('appointment_facilitator.tool_helpers', ['node' => $tool->id()])->toString() : '',
+    '#attached' => ['library' => ['appointment_facilitator/tool_helpers']],
+  ];
+  $cache->applyTo($build);
+  return $build;
+}
+
+/**
  * Swaps the tool-page embed's video thumbnail for a lightbox player.
  *
  * The badges.embedded display renders field_badge_video as a thumbnail that
@@ -2585,6 +2692,12 @@ function appointment_facilitator_entity_extra_field_info(): array {
     'node' => [
       'item' => [
         'display' => [
+          'mh_tool_helpers' => [
+            'label'       => t('Who can help (People to ask)'),
+            'description' => t('People to ask about the tool, its Slack channel, and an Ask on Slack form that tags them.'),
+            'weight'      => 7,
+            'visible'     => TRUE,
+          ],
           'mh_tool_facilitators' => [
             'label'       => t('Facilitators (schedule dialog)'),
             'description' => t('Compact "Talk to a facilitator" card with a button that opens the facilitator schedule for every badge this tool requires.'),
@@ -2657,6 +2770,14 @@ function appointment_facilitator_node_view(array &$build, NodeInterface $entity,
 
   if ($entity->bundle() === 'item' && $view_mode === 'full') {
     _appointment_facilitator_mark_tool_badge_roles($build, $entity);
+  }
+
+  if ($entity->bundle() === 'item' && ($component = $display->getComponent('mh_tool_helpers'))) {
+    $panel = _appointment_facilitator_tool_helpers_panel($entity);
+    if ($panel) {
+      $panel['#weight'] = $component['weight'] ?? 7;
+      $build['mh_tool_helpers'] = $panel;
+    }
   }
 
   if ($entity->bundle() === 'item' && ($component = $display->getComponent('mh_tool_facilitators'))) {
@@ -7276,6 +7397,19 @@ function appointment_facilitator_theme(): array {
         'schedule'      => [],
         'on_request'    => [],
         'schedules_url' => '',
+      ],
+    ],
+    'tool_helpers' => [
+      'variables' => [
+        'tool_label' => '',
+        'people' => [],
+        'more_people' => [],
+        'channel' => '',
+        'channel_url' => '',
+        'ask_form' => NULL,
+        'not_on_slack' => FALSE,
+        'volunteer_form' => NULL,
+        'manage_url' => '',
       ],
     ],
   ];
