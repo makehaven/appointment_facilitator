@@ -6967,6 +6967,63 @@ function _appointment_facilitator_initials(string $name): string {
 }
 
 /**
+ * Builds the "This week at a glance" panel for /facilitator/schedules.
+ *
+ * The page shows one card per facilitator, so who is in on a given day was
+ * only visible by reading every card (#47010, feedback sid 21005). This lists
+ * the next seven days, each with everyone's shift that day.
+ */
+function _appointment_facilitator_week_at_a_glance(ViewExecutable $view): array {
+  $facilitators = [];
+  foreach ($view->result as $row) {
+    $profile = $row->_entity ?? NULL;
+    if (!$profile || $profile->getEntityTypeId() !== 'profile' || !$profile->hasField('field_coordinator_hours')) {
+      continue;
+    }
+    $owner = method_exists($profile, 'getOwner') ? $profile->getOwner() : NULL;
+    $facilitators[] = [
+      'name' => $owner ? $owner->getDisplayName() : '',
+      'focus' => $profile->hasField('field_coordinator_focus') ? (string) $profile->get('field_coordinator_focus')->value : '',
+      'off' => $profile->hasField('field_coordinator_hours_display')
+        && (string) $profile->get('field_coordinator_hours_display')->value === 'hide',
+      'slots' => array_map(static fn(array $v): array => [
+        'start' => (int) ($v['value'] ?? 0),
+        'end' => (int) ($v['end_value'] ?? 0),
+      ], $profile->get('field_coordinator_hours')->getValue()),
+    ];
+  }
+  $timezone = \Drupal::config('system.date')->get('timezone.default') ?: date_default_timezone_get();
+  $days = \Drupal\appointment_facilitator\Schedule\WeekAtAGlance::build($facilitators, \Drupal::time()->getRequestTime(), $timezone);
+
+  $markup = '';
+  foreach ($days as $day) {
+    $items = '';
+    foreach ($day['shifts'] as $shift) {
+      $items .= '<li><span class="mh-week-glance__time">' . Html::escape($shift['time']) . '</span><strong>' . Html::escape($shift['name']) . '</strong>'
+        . ($shift['focus'] !== '' ? '<span class="mh-week-glance__focus">' . Html::escape($shift['focus']) . '</span>' : '') . '</li>';
+    }
+    if ($items === '') {
+      $items = '<li class="mh-week-glance__none">' . t('No one scheduled') . '</li>';
+    }
+    $label = $day['today'] ? t('Today, @day', ['@day' => $day['label']]) : $day['label'];
+    $markup .= '<section class="mh-week-glance__day' . ($day['today'] ? ' mh-week-glance__day--today' : '') . '"><h3>' . Html::escape((string) $label) . '</h3><ul>' . $items . '</ul></section>';
+  }
+
+  return [
+    '#type' => 'inline_template',
+    '#template' => '<details class="mh-week-glance" open><summary>{{ title }}</summary><div class="mh-week-glance__days">{{ days }}</div></details>',
+    '#context' => [
+      'title' => t('This week at a glance'),
+      'days' => ['#markup' => $markup],
+    ],
+    '#attached' => ['library' => ['appointment_facilitator/week_at_a_glance']],
+    '#weight' => -100,
+    // Shifts drop off as they end; profile saves invalidate it sooner.
+    '#cache' => ['max-age' => 900, 'tags' => ['profile_list']],
+  ];
+}
+
+/**
  * Implements hook_views_pre_render().
  *
  * Attaches the appointment table CSS library to all displays of the
@@ -6981,6 +7038,9 @@ function appointment_facilitator_views_pre_render(ViewExecutable $view): void {
     // The card markup branches on auth state; vary cache accordingly so anon
     // and authenticated users don't share a render result.
     $view->element['#cache']['contexts'][] = 'user.roles:authenticated';
+    if ($view->current_display === 'facilitator_schedule') {
+      $view->attachment_before['mh_week_at_a_glance'] = _appointment_facilitator_week_at_a_glance($view);
+    }
   }
 
   // Inject the filter-bar header into the /badges directory.

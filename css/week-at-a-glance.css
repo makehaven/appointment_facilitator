@@ -1,0 +1,53 @@
+/* "This week at a glance" on /facilitator/schedules (#47010). */
+.mh-week-glance {
+  margin: 0 0 var(--mh-space-lg, 1.5rem);
+  border: 1px solid var(--mh-color-border, #d9d9d9);
+  border-radius: var(--mh-radius-md, 8px);
+  background: var(--mh-color-surface, #fff);
+}
+.mh-week-glance > summary {
+  cursor: pointer;
+  padding: var(--mh-space-sm, 0.75rem) var(--mh-space-md, 1rem);
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+.mh-week-glance__days {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--mh-space-sm, 0.75rem);
+  padding: 0 var(--mh-space-md, 1rem) var(--mh-space-md, 1rem);
+}
+.mh-week-glance__day {
+  border-top: 3px solid var(--mh-color-neutral-300, #c4c4c4);
+  padding-top: var(--mh-space-2xs, 0.25rem);
+}
+.mh-week-glance__day--today {
+  border-top-color: var(--mh-color-brand-primary, #8b1919);
+}
+.mh-week-glance__day h3 {
+  font-size: 1rem;
+  margin: 0 0 var(--mh-space-2xs, 0.25rem);
+}
+.mh-week-glance__day ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.mh-week-glance__day li {
+  padding: 2px 0;
+  line-height: 1.35;
+}
+.mh-week-glance__time {
+  font-variant-numeric: tabular-nums;
+  color: var(--mh-color-neutral-700, #444);
+  margin-right: 0.35em;
+}
+.mh-week-glance__focus {
+  display: block;
+  font-size: 0.85em;
+  color: var(--mh-color-neutral-600, #666);
+}
+.mh-week-glance__none {
+  color: var(--mh-color-neutral-500, #888);
+  font-style: italic;
+}

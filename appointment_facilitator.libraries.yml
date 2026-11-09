@@ -179,3 +179,9 @@ tool_facilitators:
   dependencies:
     - core/drupal
     - core/once
+
+week_at_a_glance:
+  version: 1.x
+  css:
+    theme:
+      css/week-at-a-glance.css: {}
