@@ -2453,7 +2453,11 @@ function _appointment_facilitator_mark_tool_badge_roles(array &$build, NodeInter
     $build['field_member_badges']['#cache']['tags'][] = 'taxonomy_term_list:badges';
   }
 
-  if (!empty($build['field_additional_badges'])) {
+  // An empty field still arrives as a render array (cache metadata only), and
+  // a reference to a deleted or unpublished badge renders no item. Only frame
+  // the field when it shows a badge; otherwise the box sat empty on every
+  // tool page (staff report 2026-11-10).
+  if (!empty($build['field_additional_badges']) && \Drupal\Core\Render\Element::children($build['field_additional_badges'])) {
     $note = $has_required
       ? t('Not required to use this tool. Earn it to show you have learned the skill.')
       : t('No badge is required to use this tool. Earn this one to show you have learned the skill.');
