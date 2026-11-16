@@ -18,6 +18,12 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  */
 class AppointmentDashboardController extends ControllerBase {
 
+  /**
+   * Past appointments per page on /appointments/all.
+   */
+  private const PAST_PER_PAGE = 100;
+
+
   public function __construct(
     protected readonly EntityTypeManagerInterface $entityTypeManagerService,
     protected readonly DateFormatterInterface $dateFormatterService,
@@ -69,21 +75,28 @@ class AppointmentDashboardController extends ControllerBase {
    */
   public function allAppointments(): array {
     $now      = \Drupal::time()->getRequestTime();
-    $upcoming = $this->loadAllByTime($now, TRUE);
-    $past     = $this->loadAllByTime($now, FALSE);
+    // Past appointments are paged so the whole history can be reached: the
+    // page used to stop at the newest 200, about seven weeks. Upcoming ones
+    // show on the first page only.
+    $first_page = \Drupal::service('pager.parameters')->findPage() === 0;
+    $upcoming = $first_page ? $this->loadAllByTime($now, TRUE) : [];
+    $past     = $this->loadAllByTime($now, FALSE, self::PAST_PER_PAGE);
 
     [$today, $later] = $this->splitToday($upcoming, $now);
 
     return [
-      '#theme'    => 'appointment_dashboard',
-      '#today'    => $today,
-      '#upcoming' => $later,
-      '#past'     => $past,
-      '#context'  => 'all',
-      '#can_see_all' => TRUE,
-      '#attached' => ['library' => ['appointment_facilitator/appointments']],
+      'dashboard' => [
+        '#theme'    => 'appointment_dashboard',
+        '#today'    => $today,
+        '#upcoming' => $later,
+        '#past'     => $past,
+        '#context'  => 'all',
+        '#can_see_all' => TRUE,
+        '#attached' => ['library' => ['appointment_facilitator/appointments']],
+      ],
+      'pager' => ['#type' => 'pager'],
       '#cache'    => [
-        'contexts' => ['user.permissions'],
+        'contexts' => ['user.permissions', 'url.query_args.pagers'],
         'tags'     => ['node_list:appointment'],
         'max-age'  => 0,
       ],
@@ -93,7 +106,7 @@ class AppointmentDashboardController extends ControllerBase {
   /**
    * Loads all appointments site-wide for a given time window.
    */
-  protected function loadAllByTime(int $now, bool $upcoming): array {
+  protected function loadAllByTime(int $now, bool $upcoming, int $per_page = 0): array {
     $storage  = $this->entityTypeManagerService->getStorage('node');
     $op       = $upcoming ? '>=' : '<';
     $sort_dir = $upcoming ? 'ASC' : 'DESC';
@@ -103,8 +116,14 @@ class AppointmentDashboardController extends ControllerBase {
       ->condition('type', 'appointment')
       ->condition('status', 1)
       ->condition('field_appointment_timerange.value', $now, $op)
-      ->sort('field_appointment_timerange.value', $sort_dir)
-      ->range(0, 200);
+      ->sort('field_appointment_timerange.value', $sort_dir);
+    // A page size means "page through everything"; without one, a fixed cap.
+    if ($per_page) {
+      $query->pager($per_page);
+    }
+    else {
+      $query->range(0, 200);
+    }
 
     if ($this->fieldExists('field_appointment_status')) {
       $orGroup = $query->orConditionGroup()
