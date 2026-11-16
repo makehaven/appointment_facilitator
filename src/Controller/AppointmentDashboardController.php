@@ -23,6 +23,13 @@ class AppointmentDashboardController extends ControllerBase {
    */
   private const PAST_PER_PAGE = 100;
 
+  /**
+   * Uids with a pending badge request, loaded once per request.
+   *
+   * @var array<int, true>|null
+   */
+  private ?array $pendingMembers = NULL;
+
 
   public function __construct(
     protected readonly EntityTypeManagerInterface $entityTypeManagerService,
@@ -360,9 +367,29 @@ class AppointmentDashboardController extends ControllerBase {
     // appointment (past or upcoming) that has badge terms — facilitators
     // commonly approve right after the in-person checkout, when the
     // appointment is already in the past.
+    // Only when one of its members really has a pending request: the button
+    // used to show on every appointment with a badge, so it could not be read
+    // as "this one was never signed off".
+    $participants = array_filter([$owner_uid !== $host_entity_uid ? $owner_uid : 0]);
+    if ($node->hasField('field_appointment_attendees')) {
+      foreach ($node->get('field_appointment_attendees')->getValue() as $item) {
+        $participants[] = (int) ($item['target_id'] ?? 0);
+      }
+    }
     $show_pending = $this->currentUser()->hasPermission('approve badge requests')
       && in_array($role, ['hosting', 'hosted', 'all'], TRUE)
       && !empty($badges);
+    $pending_uid = 0;
+    if ($show_pending) {
+      $this->pendingMembers ??= \Drupal::service('appointment_facilitator.pending_badge_reminder')->membersWithPendingRequests();
+      foreach ($participants as $participant) {
+        if (isset($this->pendingMembers[$participant])) {
+          $pending_uid = $participant;
+          break;
+        }
+      }
+      $show_pending = $pending_uid !== 0;
+    }
 
     // Join link: show when the appointment has available joiner slots and the
     // current user is not already in it.
@@ -417,8 +444,8 @@ class AppointmentDashboardController extends ControllerBase {
       '#members'      => $members,
       '#member_uid'   => $member_uid,
       '#faces'        => $faces,
-      '#pending_url'  => ($show_pending && $member_uid)
-        ? '/badges/pending/user/' . $member_uid
+      '#pending_url'  => ($show_pending && $pending_uid)
+        ? '/badges/pending/user/' . $pending_uid
         : '',
       '#join_url'     => $join_url,
       '#purpose'      => $purpose,

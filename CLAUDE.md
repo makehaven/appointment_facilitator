@@ -151,3 +151,19 @@ The field itself is site config (`config/field.*.field_appointment_open_to_join.
 ## Update Hooks
 
 Updates 9007-9016 handle field migrations, Smart Date configuration, and menu link icon normalization. All are idempotent and safe to re-run.
+
+### Pending badges after an appointment
+
+`PendingBadgeReminder` (service `appointment_facilitator.pending_badge_reminder`)
+emails each facilitator once a day about appointments they hosted, ended at
+least `pending_badge_reminder_after_hours` (24) ago and within
+`pending_badge_reminder_window_days` (7), where the booker or a joiner still has
+a pending `badge_request` for a badge the appointment lists. One reminder per
+appointment, ever (key-value `appointment_facilitator.pending_badge_reminded`).
+Cron only sends while `pending_badge_reminder_enabled` is true (ships off).
+Preview or send by hand: `drush appointment-facilitator:pending-badge-reminders [--send]`.
+Wording is `PendingBadgeReminder::compose()` (pure, unit-tested).
+
+The "Approve pending badges" button on appointment cards shows only when a
+participant has a pending request (`membersWithPendingRequests()`, one query
+per page). `/appointments/all` pages past appointments, 100 a page.

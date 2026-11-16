@@ -28,3 +28,18 @@ appointment_facilitator.settings:
     arrival_backfill_days:
       type: integer
       label: 'Days to backfill arrival status on cron'
+    pending_badge_reminder_enabled:
+      type: boolean
+      label: 'Email facilitators about badges still pending after their appointment'
+    pending_badge_reminder_after_hours:
+      type: integer
+      label: 'Hours after an appointment ends before the facilitator is reminded'
+    pending_badge_reminder_window_days:
+      type: integer
+      label: 'Days back the pending-badge reminder looks'
+    pending_badge_reminder_hour:
+      type: integer
+      label: 'Site-time hour from which the daily pending-badge reminder may send'
+    pending_badge_reminder_base_url:
+      type: string
+      label: 'Site address used in pending-badge reminder links (empty = the request address)'

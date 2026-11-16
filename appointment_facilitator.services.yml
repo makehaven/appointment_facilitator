@@ -34,6 +34,22 @@ services:
       - '@entity_type.manager'
       - '@cache.default'
 
+  appointment_facilitator.pending_badge_reminder:
+    class: Drupal\appointment_facilitator\Service\PendingBadgeReminder
+    arguments:
+      - '@database'
+      - '@entity_type.manager'
+      - '@plugin.manager.mail'
+      - '@keyvalue'
+      - '@config.factory'
+      - '@state'
+      - '@datetime.time'
+      - '@logger.channel.appointment_facilitator'
+
+  logger.channel.appointment_facilitator:
+    parent: logger.channel_base
+    arguments: ['appointment_facilitator']
+
   appointment_facilitator.slack:
     class: Drupal\appointment_facilitator\Service\AppointmentSlackService
     arguments:

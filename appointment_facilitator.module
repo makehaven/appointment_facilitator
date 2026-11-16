@@ -4225,6 +4225,15 @@ function appointment_facilitator_node_predelete(NodeInterface $node): void {
  * Implements hook_cron().
  */
 function appointment_facilitator_cron(): void {
+  // Before the arrival backfill, which returns early on sites without the
+  // access log. A failure here must not stop the rest of cron.
+  try {
+    \Drupal::service('appointment_facilitator.pending_badge_reminder')->processDaily();
+  }
+  catch (\Throwable $e) {
+    \Drupal::logger('appointment_facilitator')->error('Pending-badge reminders failed: @message', ['@message' => $e->getMessage()]);
+  }
+
   if (!\Drupal::entityTypeManager()->hasDefinition('access_control_log')) {
     return;
   }
@@ -7508,6 +7517,12 @@ function appointment_facilitator_user_view_alter(array &$build, \Drupal\Core\Ent
  * Implements hook_mail().
  */
 function appointment_facilitator_mail(string $key, array &$message, array $params): void {
+  if ($key === 'pending_badges_reminder') {
+    // Wording is PendingBadgeReminder::compose().
+    $message['subject'] = (string) $params['subject'];
+    $message['body'][] = (string) $params['body'];
+    return;
+  }
   if ($key !== 'issuer_granted') {
     return;
   }

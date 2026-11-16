@@ -33,6 +33,42 @@ class BadgeHealthCommands extends DrushCommands {
   }
 
   /**
+   * Shows (or sends) the reminders to facilitators about pending badges.
+   *
+   * Lists each facilitator and the appointments they hosted, ended at least a
+   * day ago, where the member still has a pending request for a badge the
+   * appointment was for. Without --send nothing is emailed or recorded.
+   * --send works even while the daily cron switch is off.
+   *
+   * @command appointment-facilitator:pending-badge-reminders
+   * @option send Email the facilitators and record the appointments as reminded.
+   * @usage drush appointment-facilitator:pending-badge-reminders
+   *   Dry run: who would be emailed about what.
+   */
+  public function pendingBadgeReminders(array $options = ['send' => FALSE]): int {
+    $reminder = \Drupal::service('appointment_facilitator.pending_badge_reminder');
+    $due = $reminder->due();
+    if (!$due) {
+      $this->output()->writeln('Nothing due: no facilitator has an unreminded appointment with a badge still pending.');
+      return self::EXIT_SUCCESS;
+    }
+    $users = $this->entityTypeManager->getStorage('user')->loadMultiple(array_keys($due));
+    foreach ($due as $uid => $items) {
+      $this->output()->writeln(sprintf('%s (uid %d): %d', isset($users[$uid]) ? $users[$uid]->getDisplayName() : '?', $uid, count($items)));
+      foreach ($items as $item) {
+        $this->output()->writeln(sprintf('  - appointment %d, %s: %s (%s)', $item['nid'], $item['member'], implode(', ', $item['badges']), date('D j M', $item['ended'])));
+      }
+    }
+    $this->output()->writeln(sprintf('Cron switch (pending_badge_reminder_enabled): %s', $reminder->enabled() ? 'on' : 'off'));
+    if (empty($options['send'])) {
+      $this->output()->writeln('Dry run. Nothing sent. Use --send to email them.');
+      return self::EXIT_SUCCESS;
+    }
+    $this->output()->writeln(sprintf('Sent %d email(s).', $reminder->send($due)));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
    * Lists checkout badges no member can actually book.
    *
    * A badge is bookable only when all three of these line up on the same
