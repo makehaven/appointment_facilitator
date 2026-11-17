@@ -1412,9 +1412,8 @@ TWIG,
     // checklists and transcripts also live here.
     $element['#title'] = (string) t('Review materials');
 
-    // Tool manuals used to be appended here. They now render as their own
-    // section after the quiz (_appointment_facilitator_attach_tool_manuals())
-    // so a long manuals list no longer pushes the quiz down the page.
+    // Tool manuals render as their own section just above the "reviewed"
+    // button (_appointment_facilitator_attach_tool_manuals()), not in here.
     return;
   }
 
@@ -1997,10 +1996,11 @@ function _appointment_facilitator_badge_checklist_is_blank(TermInterface $badge)
 /**
  * Lists manuals from the badge's tool pages in their own section.
  *
- * Weight 5.5 places it right after group_quiz (5) and before the checkout
- * group (7): staff asked for the quiz to come before the manuals, which can
- * run to a dozen PDFs (feedback 43212). Still shown when the quiz is hidden
- * by the prerequisite gate, since the manuals are prep material.
+ * Weight 4.5: after group_documentation (4), right above the "I've reviewed
+ * the materials" button (4.6) and the quiz (5). The manuals are part of
+ * what the member says they reviewed (JR, feedback sid 21111). This reverses
+ * 43212, which had put them after the quiz so a dozen PDFs did not push it
+ * down. Still shown when the quiz is hidden by the prerequisite gate.
  */
 function _appointment_facilitator_attach_tool_manuals(array &$build, TermInterface $term): void {
   // The helper returns an empty array for anonymous viewers — vendor
@@ -2013,7 +2013,7 @@ function _appointment_facilitator_attach_tool_manuals(array &$build, TermInterfa
   $build['appointment_facilitator_tool_manuals'] = [
     '#type' => 'fieldset',
     '#title' => t('Tool manuals'),
-    '#weight' => 5.5,
+    '#weight' => 4.5,
     '#attributes' => ['class' => ['field-group-fieldset', 'badge-tool-manuals', 'mb-3']],
     'intro' => [
       '#markup' => '<p class="badge-tool-manuals__intro">' . t('From the associated tool pages — members-only reference material.') . '</p>',
@@ -2029,8 +2029,9 @@ function _appointment_facilitator_attach_tool_manuals(array &$build, TermInterfa
  * Renders the "I've watched the video" toggle below the video iframe.
  *
  * Skipped when the badge has no video — the step is moot in that case.
- * The form lives just after group_video and before group_documentation so it
- * reads as a transition out of the watching phase.
+ * Weight 4.6: after every review material (video 3, documentation 4, tool
+ * manuals 4.5) and right before the quiz (5), so "I've reviewed the
+ * materials" comes after the materials it refers to (JR, feedback 21111).
  *
  * Weights come from core.entity_view_display.taxonomy_term.badges.full:
  * group_prerequisite=2, group_video=3, group_documentation=4, group_quiz=5.
@@ -2056,7 +2057,7 @@ function _appointment_facilitator_attach_video_watched_form(array &$build, TermI
   }
   $build['appointment_facilitator_video_watched'] = [
     '#type' => 'container',
-    '#weight' => 3.5,
+    '#weight' => 4.6,
     '#attributes' => ['class' => ['badge-video-watched']],
     'form' => $form,
     '#cache' => [
