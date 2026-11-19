@@ -10,6 +10,9 @@
  * books a checkout while the tool-level button books whatever the server
  * decided for this viewer. Without <dialog> support (or without a dialog on
  * the page) the opener is a normal link and simply navigates.
+ *
+ * A link to the tool page ending in #book-a-facilitator opens the schedule on
+ * arrival: the station screen's "Book a time" QR code (JR 11-19).
  */
 (function (Drupal, once) {
   'use strict';
@@ -61,6 +64,8 @@
       }
     }
 
+    dialog.mhToolFacilitatorsOpen = supported ? open : null;
+
     dialog.addEventListener('close', function () {
       document.documentElement.classList.remove('mh-tool-facilitators-open');
     });
@@ -103,6 +108,11 @@
         return;
       }
       once('mh-tool-facilitators-open', '[data-mh-facilitators-open]', context).forEach(dialog.mhToolFacilitatorsBind);
+      if (window.location.hash === '#book-a-facilitator' && dialog.mhToolFacilitatorsOpen) {
+        once('mh-tool-facilitators-hash', dialog).forEach(function () {
+          dialog.mhToolFacilitatorsOpen(dialog.parentNode.getAttribute('data-mh-facilitators-purpose') || '');
+        });
+      }
     }
   };
 })(Drupal, once);
