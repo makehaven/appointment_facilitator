@@ -49,6 +49,7 @@ final class PendingBadgeReminder {
     private readonly TimeInterface $time,
     private readonly LoggerInterface $logger,
     private readonly ?AppointmentDoorEvidence $doorEvidence = NULL,
+    private readonly ?AppointmentOutcomes $outcomes = NULL,
   ) {}
 
   /**
@@ -121,12 +122,21 @@ final class PendingBadgeReminder {
    * Adds the door-log evidence to each grouped appointment.
    */
   private function withDoor(array $grouped): array {
-    if (!$this->doorEvidence) {
-      return $grouped;
+    $nids = [];
+    foreach ($grouped as $items) {
+      $nids = array_merge($nids, array_column($items, 'nid'));
     }
+    $reports = $this->outcomes ? $this->outcomes->memberReports($nids) : [];
     foreach ($grouped as &$items) {
       foreach ($items as &$item) {
-        $item['door'] = $this->doorEvidence->forAppointment($item['nid'], $item['member_uid']);
+        if ($this->doorEvidence) {
+          $item['door'] = $this->doorEvidence->forAppointment($item['nid'], $item['member_uid']);
+        }
+        // The booker's own report applies only to the booker.
+        $report = $reports[$item['nid']] ?? NULL;
+        if ($report && $report['member_uid'] === $item['member_uid'] && AppointmentOutcomes::reportLabel($report['result']) !== '') {
+          $item['report'] = $report['result'];
+        }
       }
     }
     return $grouped;
@@ -253,11 +263,14 @@ final class PendingBadgeReminder {
       if (isset($item['door'])) {
         $body[] = '  ' . AppointmentDoorEvidence::describe($item['door'], $item['member'], static fn (int $t): string => date('g:ia', $t));
       }
+      if (!empty($item['report'])) {
+        $body[] = '  ' . AppointmentOutcomes::reportLabel($item['report']) . '.';
+      }
       $body[] = '  ' . $base . '/badges/pending/user/' . (int) $item['member_uid'];
     }
     $body[] = '';
     $body[] = 'If the checkout went well, approve the badge at the link so they can use the tool. If the door log does not show them coming in, check before you approve.';
-    $body[] = 'If they did not come or need another session, leave it as it is. You will not be reminded about that appointment again.';
+    $body[] = 'If they did not come, need another session, or the session did not happen, mark that on your dashboard so it leaves your list. The badge stays pending so they can book again. You will not be emailed about that appointment again.';
     $body[] = '';
     $body[] = 'Everything still waiting on you is at the top of your facilitator dashboard:';
     $body[] = $base . '/facilitator/dashboard';
@@ -364,11 +377,17 @@ final class PendingBadgeReminder {
     if ($hasAttendees) {
       $rows = array_merge($rows, $build(TRUE));
     }
+    // A facilitator already said what happened (no-show, another session,
+    // did not happen): nothing left to sign off, so neither listed nor emailed.
+    $recorded = $this->outcomes ? $this->outcomes->forAppointments(array_column($rows, 'nid')) : [];
     // The booker can also be listed as an attendee: keep one of each.
     $seen = [];
     $out = [];
     foreach ($rows as $row) {
       $key = $row['nid'] . ':' . $row['member_uid'] . ':' . $row['tid'];
+      if (isset($recorded[$row['nid'] . ':' . $row['member_uid']])) {
+        continue;
+      }
       if (!isset($seen[$key])) {
         $seen[$key] = TRUE;
         $out[] = $row;

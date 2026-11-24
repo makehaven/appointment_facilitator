@@ -46,6 +46,13 @@ services:
       - '@datetime.time'
       - '@logger.channel.appointment_facilitator'
       - '@appointment_facilitator.door_evidence'
+      - '@appointment_facilitator.outcomes'
+
+  appointment_facilitator.outcomes:
+    class: Drupal\appointment_facilitator\Service\AppointmentOutcomes
+    arguments:
+      - '@database'
+      - '@datetime.time'
 
   appointment_facilitator.door_evidence:
     class: Drupal\appointment_facilitator\Service\AppointmentDoorEvidence

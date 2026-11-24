@@ -2,6 +2,7 @@
 
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
 use Drupal\appointment_facilitator\Service\AppointmentDoorEvidence;
+use Drupal\appointment_facilitator\Service\AppointmentOutcomes;
 use Drupal\appointment_facilitator\Badge\VideoChapters;
 use Drupal\Component\Utility\Html;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
@@ -4434,6 +4435,23 @@ function _appointment_facilitator_badge_request_door_check(NodeInterface $reques
     Html::escape($name),
     static fn (int $t): string => $formatter->format($t, 'custom', 'g:ia')
   );
+  // The member's own report on the appointment, and anything a facilitator
+  // already recorded about it.
+  $outcomes = \Drupal::service('appointment_facilitator.outcomes');
+  $extra = '';
+  $report = $outcomes->memberReports([$appointment['nid']])[$appointment['nid']] ?? NULL;
+  if ($report && $report['member_uid'] === $member_uid && AppointmentOutcomes::reportLabel($report['result']) !== '') {
+    $extra .= ' ' . AppointmentOutcomes::reportLabel($report['result']) . '.';
+  }
+  $recorded = $outcomes->forAppointments([$appointment['nid']])[$appointment['nid'] . ':' . $member_uid] ?? NULL;
+  if ($recorded) {
+    $by = \Drupal::entityTypeManager()->getStorage('user')->load($recorded['uid']);
+    $extra .= ' ' . t('Marked "@outcome" by @by on @date.', [
+      '@outcome' => AppointmentOutcomes::labels()[$recorded['outcome']] ?? $recorded['outcome'],
+      '@by' => $by ? $by->getDisplayName() : t('a facilitator'),
+      '@date' => $formatter->format($recorded['created'], 'custom', 'M j'),
+    ]);
+  }
   return [
     'appointment' => $appointment,
     'door' => $door,
@@ -4441,7 +4459,7 @@ function _appointment_facilitator_badge_request_door_check(NodeInterface $reques
     'message' => (string) t('Checkout appointment: @when with @host.', [
       '@when' => $when,
       '@host' => $host ? $host->getDisplayName() : t('a facilitator'),
-    ]) . ' ' . $line,
+    ]) . ' ' . $line . Html::escape($extra),
   ];
 }
 

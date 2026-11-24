@@ -172,8 +172,25 @@ record) and `/badges/pending/user/{uid}`. All appointments from the last
 `pending_badge_dashboard_days` (90) are listed. Older ones, back to
 `pending_badge_older_days` (365), only when the member scanned in during the
 appointment; the rest are counted, not listed. A row leaves the card when the
-badge stops being pending or ages out. "No-show / needs another session" still
-cannot be recorded (track facilitator_badging_ux sub-task 3.0/5.1).
+badge stops being pending, ages out, or gets an outcome (below).
+
+### Outcomes when a badge is not approved
+
+Each card row has "Not approving?" buttons: No-show, Needs another session,
+Didn't happen (`AppointmentOutcomes`, table
+`appointment_facilitator_badge_outcome`, update 9027; one row per appointment
+and member, with who recorded it). Route
+`/facilitator/badge-outcome/{member}/{outcome}?nids=` (CSRF token; host of
+each appointment or staff with `view appointment facilitator reports`; `undo`
+deletes). The badge request stays pending so the member can rebook; the row
+leaves the card and the email (`pendingRows()` filters recorded pairs). Undo
+lives in "You marked recently" (14 days) on the card: a token generated in
+the controller's status message did not validate, so do not put the undo link
+there. Cache tag `appointment_facilitator_badge_outcome` is invalidated on
+record/clear. The approval page box shows a recorded outcome ("Marked No-show
+by X on Nov 24") and the booker's own `field_appointment_result` report
+("Member reported: met, session went well"), which also shows on the card and
+in the email. Only the booker can file that report, never joiners.
 
 ### Door log as evidence for a checkout
 

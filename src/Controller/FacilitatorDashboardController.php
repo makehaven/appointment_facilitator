@@ -5,6 +5,7 @@ namespace Drupal\appointment_facilitator\Controller;
 use Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm;
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
 use Drupal\appointment_facilitator\Service\AppointmentDoorEvidence;
+use Drupal\appointment_facilitator\Service\AppointmentOutcomes;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\appointment_facilitator\Service\AppointmentSlackService;
 use Drupal\appointment_facilitator\Service\BadgeUserStatusResolver;
@@ -143,6 +144,7 @@ class FacilitatorDashboardController extends ControllerBase {
           'taxonomy_term_list',
           'config:appointment_facilitator.settings',
           'access_control_log_list',
+          AppointmentOutcomes::CACHE_TAG,
         ],
         'max-age' => 300,
       ],
@@ -892,7 +894,7 @@ class FacilitatorDashboardController extends ControllerBase {
       $card['note'] = [
         '#type' => 'html_tag',
         '#tag' => 'p',
-        '#value' => $this->t('These members had a badge appointment with you in the last @days days and the badge is still pending. The door log shows whether they came in. Open their profile to check their history, then approve the badge if the checkout went well. If the door log does not show them, check before you approve: they may not have come.', ['@days' => $days]),
+        '#value' => $this->t('These members had a badge appointment with you in the last @days days and the badge is still pending. The door log, and the member\'s own report when they gave one, show whether they came. Approve the badge if the checkout went well. If they did not come, need another session, or the session did not happen, say so with the buttons: the row leaves your list and the badge stays pending so they can book again.', ['@days' => $days]),
         '#attributes' => ['class' => ['afd-muted']],
       ];
       $card['table'] = $this->buildSignoffTable($recent, $now);
@@ -927,6 +929,7 @@ class FacilitatorDashboardController extends ControllerBase {
         '#attributes' => ['class' => ['afd-muted', 'afd-signoff-hidden']],
       ];
     }
+    $card['recent_marks'] = $this->buildRecentMarks($now);
     if ($count || $older) {
       $card['more'] = [
         '#type' => 'link',
@@ -957,10 +960,16 @@ class FacilitatorDashboardController extends ControllerBase {
         'came' => FALSE,
       ];
       $row['badges'] = array_values(array_unique(array_merge($row['badges'], $item['badges'])));
-      $row['appointments'][$item['nid']] = ['ended' => $item['ended'], 'door' => $item['door'] ?? NULL];
+      $row['appointments'][$item['nid']] = [
+        'ended' => $item['ended'],
+        'door' => $item['door'] ?? NULL,
+        'report' => $item['report'] ?? NULL,
+      ];
       $row['oldest'] = min($row['oldest'], $item['ended']);
       $row['newest'] = max($row['newest'], $item['ended']);
-      $row['came'] = $row['came'] || (($item['door']['status'] ?? '') === AppointmentDoorEvidence::IN_WINDOW);
+      $row['came'] = $row['came']
+        || (($item['door']['status'] ?? '') === AppointmentDoorEvidence::IN_WINDOW)
+        || (($item['report'] ?? '') === 'met_successful');
       unset($row);
     }
     uasort($members, static fn (array $a, array $b): int => [$b['came'], $b['newest']] <=> [$a['came'], $a['newest']]);
@@ -991,6 +1000,7 @@ class FacilitatorDashboardController extends ControllerBase {
             '#url' => Url::fromRoute('entity.node.canonical', ['node' => $nid]),
           ],
           'door' => $this->buildDoorPill($appt['door']),
+          'report' => $this->buildReportPill($appt['report']),
         ];
       }
       $rows[] = [
@@ -1009,10 +1019,13 @@ class FacilitatorDashboardController extends ControllerBase {
           : (string) $this->formatPlural($waiting, '1 day', '@count days'),
         'action' => [
           'data' => [
-            '#type' => 'link',
-            '#title' => $this->t('Review'),
-            '#url' => Url::fromUri('internal:/badges/pending/user/' . $item['member_uid']),
-            '#attributes' => ['class' => ['btn', 'btn-sm', $item['came'] ? 'btn-primary' : 'btn-outline-primary']],
+            'review' => [
+              '#type' => 'link',
+              '#title' => $this->t('Review and approve'),
+              '#url' => Url::fromUri('internal:/badges/pending/user/' . $item['member_uid']),
+              '#attributes' => ['class' => ['btn', 'btn-sm', $item['came'] ? 'btn-primary' : 'btn-outline-primary']],
+            ],
+            'outcomes' => $this->buildOutcomeLinks($item['member_uid'], array_keys($item['appointments'])),
           ],
         ],
       ];
@@ -1028,6 +1041,104 @@ class FacilitatorDashboardController extends ControllerBase {
       ],
       '#rows' => $rows,
       '#attributes' => ['class' => ['afd-table', 'afd-signoff-table']],
+    ];
+  }
+
+  /**
+   * What this facilitator marked in the last 14 days, each with Undo.
+   */
+  protected function buildRecentMarks(int $now): array {
+    $outcomes = \Drupal::service('appointment_facilitator.outcomes');
+    $marks = $outcomes->recordedBy((int) $this->currentUser()->id(), $now - 14 * 86400);
+    if (!$marks) {
+      return [];
+    }
+    $users = $this->entityTypeManagerService->getStorage('user')->loadMultiple(array_unique(array_column($marks, 'member_uid')));
+    $labels = AppointmentOutcomes::labels();
+    $items = [];
+    foreach ($marks as $mark) {
+      $member = $users[$mark['member_uid']] ?? NULL;
+      $items[] = [
+        '#type' => 'inline_template',
+        '#template' => '{{ who }}: {{ what }} ({{ when }}) {{ undo }}',
+        '#context' => [
+          'who' => $member ? $member->getDisplayName() : $this->t('Unknown member'),
+          'what' => $this->t($labels[$mark['outcome']] ?? $mark['outcome']),
+          'when' => $this->dateFormatterService->format($mark['created'], 'custom', 'M j'),
+          'undo' => [
+            '#type' => 'link',
+            '#title' => $this->t('Undo'),
+            '#url' => Url::fromRoute('appointment_facilitator.badge_outcome', [
+              'member' => $mark['member_uid'],
+              'outcome' => 'undo',
+            ], ['query' => ['nids' => (string) $mark['nid']]]),
+            '#attributes' => ['class' => ['afd-outcome-link']],
+          ],
+        ],
+      ];
+    }
+    return [
+      '#type' => 'details',
+      '#title' => $this->formatPlural(count($items), 'You marked recently (1)', 'You marked recently (@count)'),
+      '#attributes' => ['class' => ['afd-recent-marks']],
+      'list' => [
+        '#theme' => 'item_list',
+        '#items' => $items,
+      ],
+    ];
+  }
+
+  /**
+   * "Not approving" buttons: No-show, Needs another session, Didn't happen.
+   *
+   * @param int $member_uid
+   *   The member.
+   * @param int[] $nids
+   *   Their appointments in this row (back-to-back sessions are one visit).
+   */
+  protected function buildOutcomeLinks(int $member_uid, array $nids): array {
+    $build = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['afd-outcomes']],
+      'label' => [
+        '#type' => 'html_tag',
+        '#tag' => 'span',
+        '#value' => $this->t('Not approving?'),
+        '#attributes' => ['class' => ['afd-outcomes__label']],
+      ],
+    ];
+    foreach (AppointmentOutcomes::labels() as $outcome => $label) {
+      $build[$outcome] = [
+        '#type' => 'link',
+        '#title' => $this->t($label),
+        '#url' => Url::fromRoute('appointment_facilitator.badge_outcome', [
+          'member' => $member_uid,
+          'outcome' => $outcome,
+        ], ['query' => ['nids' => implode(',', $nids)]]),
+        '#attributes' => ['class' => ['afd-outcome-link']],
+      ];
+    }
+    return $build;
+  }
+
+  /**
+   * The booker's own report on the appointment, when they gave one.
+   */
+  protected function buildReportPill(?string $result): array {
+    $label = $result ? AppointmentOutcomes::reportLabel($result) : '';
+    if ($label === '') {
+      return [];
+    }
+    return [
+      '#type' => 'html_tag',
+      '#tag' => 'span',
+      '#value' => $this->t($label),
+      '#attributes' => [
+        'class' => [
+          'afd-door',
+          $result === 'met_successful' ? 'afd-door--in' : 'afd-door--day',
+        ],
+      ],
     ];
   }
 

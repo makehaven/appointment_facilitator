@@ -414,3 +414,45 @@
 .appointment-facilitator-dashboard .afd-signoff h4 {
   margin-top: 1.4rem;
 }
+
+.appointment-facilitator-dashboard .afd-outcomes {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  white-space: normal;
+  text-align: right;
+}
+
+.appointment-facilitator-dashboard .afd-outcomes__label {
+  color: var(--afd-muted);
+  margin-right: 0.25rem;
+}
+
+.appointment-facilitator-dashboard .afd-outcome-link {
+  display: inline-block;
+  margin: 0.15rem 0 0 0.3rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--afd-line);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--afd-text);
+  background: #fff;
+}
+
+.appointment-facilitator-dashboard .afd-outcome-link:hover {
+  border-color: var(--afd-primary);
+}
+
+.appointment-facilitator-dashboard .afd-signoff-appt .afd-door + .afd-door {
+  margin-left: 0.3rem;
+}
+
+.appointment-facilitator-dashboard .afd-signoff-table td:last-child {
+  white-space: normal;
+  min-width: 13rem;
+}
+
+@media (max-width: 640px) {
+  .appointment-facilitator-dashboard .afd-outcomes {
+    text-align: left;
+  }
+}

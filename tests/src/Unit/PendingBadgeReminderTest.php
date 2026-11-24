@@ -62,7 +62,8 @@ final class PendingBadgeReminderTest extends UnitTestCase {
     $this->assertStringContainsString('Hi Fay Facilitator,', $mail['body']);
     $this->assertStringContainsString('- Mo Member: Laser Cutter (' . date('D j M', self::ENDED) . ')', $mail['body']);
     $this->assertStringContainsString('https://www.example.org/badges/pending/user/20', $mail['body']);
-    $this->assertStringContainsString('You will not be reminded about that appointment again.', $mail['body']);
+    $this->assertStringContainsString('mark that on your dashboard', $mail['body']);
+    $this->assertStringContainsString('You will not be emailed about that appointment again.', $mail['body']);
     $this->assertStringContainsString('https://www.example.org/facilitator/dashboard', $mail['body']);
   }
 
@@ -71,6 +72,13 @@ final class PendingBadgeReminderTest extends UnitTestCase {
     $due[7][0]['door'] = ['status' => 'none', 'time' => NULL];
     $mail = PendingBadgeReminder::compose('Fay Facilitator', $due[7], 'https://www.example.org');
     $this->assertStringContainsString('Door log: no scan for Mo Member that day.', $mail['body']);
+  }
+
+  public function testEmailShowsTheMembersOwnReport(): void {
+    $due = PendingBadgeReminder::group([$this->row()], self::NAMES, self::LABELS, self::OK);
+    $due[7][0]['report'] = 'met_successful';
+    $mail = PendingBadgeReminder::compose('Fay Facilitator', $due[7], 'https://www.example.org');
+    $this->assertStringContainsString('Member reported: met, session went well.', $mail['body']);
   }
 
   public function testEmailForSeveralCountsThem(): void {

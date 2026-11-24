@@ -931,6 +931,7 @@ function appointment_facilitator_update_9025(): string {
 function appointment_facilitator_schema(): array {
   return [
     'appointment_facilitator_tool_question' => _appointment_facilitator_tool_question_schema(),
+    'appointment_facilitator_badge_outcome' => _appointment_facilitator_badge_outcome_schema(),
   ];
 }
 
@@ -971,4 +972,37 @@ function appointment_facilitator_update_9026(): string {
   }
   $schema->createTable('appointment_facilitator_tool_question', _appointment_facilitator_tool_question_schema());
   return 'Created the tool question log.';
+}
+
+/**
+ * Schema for what happened at a badge appointment when it was not approved.
+ */
+function _appointment_facilitator_badge_outcome_schema(): array {
+  return [
+    'description' => 'Facilitator-recorded outcome for a member at a badge appointment (no-show, needs another session, did not happen).',
+    'fields' => [
+      'nid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'description' => 'Appointment node.'],
+      'member_uid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'description' => 'Member the outcome is about.'],
+      'outcome' => ['type' => 'varchar', 'length' => 32, 'not null' => TRUE, 'default' => ''],
+      'uid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0, 'description' => 'Who recorded it.'],
+      'created' => ['type' => 'int', 'not null' => TRUE, 'default' => 0],
+    ],
+    'primary key' => ['nid', 'member_uid'],
+    'indexes' => [
+      'member_uid' => ['member_uid'],
+      'outcome' => ['outcome'],
+    ],
+  ];
+}
+
+/**
+ * Creates the badge appointment outcome table (no-show / another session).
+ */
+function appointment_facilitator_update_9027(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('appointment_facilitator_badge_outcome')) {
+    return 'Badge appointment outcome table already exists.';
+  }
+  $schema->createTable('appointment_facilitator_badge_outcome', _appointment_facilitator_badge_outcome_schema());
+  return 'Created the badge appointment outcome table.';
 }
