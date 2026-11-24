@@ -162,7 +162,17 @@ a pending `badge_request` for a badge the appointment lists. One reminder per
 appointment, ever (key-value `appointment_facilitator.pending_badge_reminded`).
 Cron only sends while `pending_badge_reminder_enabled` is true (ships off).
 Preview or send by hand: `drush appointment-facilitator:pending-badge-reminders [--send]`.
-Wording is `PendingBadgeReminder::compose()` (pure, unit-tested).
+Wording is `PendingBadgeReminder::compose()` (pure, unit-tested). The email
+links to the dashboard.
+
+`/facilitator/dashboard` opens with a sign-off card (`buildSignoffCard()`, data
+from `PendingBadgeReminder::forHost()`): the same match, but every appointment
+the facilitator hosted in the last `pending_badge_dashboard_days` (90), emailed
+or not, one row per member with links to their profile, each appointment and
+`/badges/pending/user/{uid}`. A row leaves the card when the badge stops being
+pending or the appointment ages past the window. There is still no way to
+record "no-show / needs another session", so those rows stay until they age out
+(track facilitator_badging_ux sub-task 3.0/5.1).
 
 The "Approve pending badges" button on appointment cards shows only when a
 participant has a pending request (`membersWithPendingRequests()`, one query

@@ -40,6 +40,9 @@ appointment_facilitator.settings:
     pending_badge_reminder_hour:
       type: integer
       label: 'Site-time hour from which the daily pending-badge reminder may send'
+    pending_badge_dashboard_days:
+      type: integer
+      label: 'Days back the facilitator dashboard lists badges still pending after an appointment'
     pending_badge_reminder_base_url:
       type: string
       label: 'Site address used in pending-badge reminder links (empty = the request address)'

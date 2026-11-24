@@ -63,6 +63,7 @@ final class PendingBadgeReminderTest extends UnitTestCase {
     $this->assertStringContainsString('- Mo Member: Laser Cutter (' . date('D j M', self::ENDED) . ')', $mail['body']);
     $this->assertStringContainsString('https://www.example.org/badges/pending/user/20', $mail['body']);
     $this->assertStringContainsString('You will not be reminded about that appointment again.', $mail['body']);
+    $this->assertStringContainsString('https://www.example.org/facilitator/dashboard', $mail['body']);
   }
 
   public function testEmailForSeveralCountsThem(): void {

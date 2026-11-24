@@ -119,6 +119,7 @@ class FacilitatorDashboardController extends ControllerBase {
       ]);
     }
 
+    $signoff = \Drupal::service('appointment_facilitator.pending_badge_reminder')->forHost($uid, $now);
     $upcoming_appointments = $this->loadUpcomingAppointments($uid, $now, 8);
     $qualified_badges = $this->loadQualifiedBadges($uid, 12);
     $feedback_items = $this->loadAnonymizedFeedbackItems($uid);
@@ -158,6 +159,7 @@ class FacilitatorDashboardController extends ControllerBase {
           '#value' => $this->t('Action-first view for your scheduling, appointments, and badge follow-up work.'),
         ],
       ],
+      'signoff' => $this->buildSignoffCard($signoff, $now),
       'quick_actions' => [
         '#type' => 'container',
         '#attributes' => ['class' => ['afd-card', 'afd-actions']],
@@ -494,83 +496,6 @@ class FacilitatorDashboardController extends ControllerBase {
           'data' => $this->buildActionLinks($actions),
         ],
       ];
-    }
-
-    return $rows;
-  }
-
-  /**
-   * Loads appointments that likely still need post-session follow-up.
-   */
-  protected function loadPendingFollowUps(int $uid, int $now, int $limit): array {
-    $storage = $this->entityTypeManagerService->getStorage('node');
-    $query = $storage->getQuery()
-      ->accessCheck(FALSE)
-      ->condition('type', 'appointment')
-      ->condition('status', 1)
-      ->condition('field_appointment_host.target_id', $uid)
-      ->range(0, 50);
-
-    if ($this->appointmentFieldExists('field_appointment_status')) {
-      $query->condition('field_appointment_status.value', 'canceled', '<>');
-    }
-
-    if ($this->appointmentFieldExists('field_appointment_timerange')) {
-      $query
-        ->condition('field_appointment_timerange.value', $now, '<=')
-        ->sort('field_appointment_timerange.value', 'DESC');
-    }
-    elseif ($this->appointmentFieldExists('field_appointment_date')) {
-      $today = $this->dateFormatterService->format($now, 'custom', 'Y-m-d');
-      $query
-        ->condition('field_appointment_date.value', $today, '<=')
-        ->sort('field_appointment_date.value', 'DESC');
-    }
-    else {
-      $query->sort('created', 'DESC');
-    }
-
-    $nids = $query->execute();
-    if (!$nids) {
-      return [];
-    }
-
-    $appointments = $storage->loadMultiple($nids);
-    $rows = [];
-    foreach ($appointments as $appointment) {
-      if (!$this->needsFollowUp($appointment)) {
-        continue;
-      }
-
-      $member = $appointment->getOwner();
-      $member_id = $member ? (int) $member->id() : NULL;
-      $actions = [
-        'view' => [
-          'title' => $this->t('Review appointment'),
-          'url' => $appointment->toUrl(),
-        ],
-      ];
-      if ($member_id) {
-        $actions['pending'] = [
-          'title' => $this->t('Pending badges'),
-          'url' => Url::fromUri('internal:/badges/pending/user/' . $member_id),
-        ];
-      }
-      $rows[] = [
-        'time' => $this->formatAppointmentDate($appointment),
-        'member' => $member ? $member->getDisplayName() : $this->t('Unknown member'),
-        'issue' => $this->describeFollowUpIssue($appointment),
-        'actions' => [
-          'data' => [
-            '#type' => 'operations',
-            '#links' => $actions,
-          ],
-        ],
-      ];
-
-      if (count($rows) >= $limit) {
-        break;
-      }
     }
 
     return $rows;
@@ -932,25 +857,118 @@ class FacilitatorDashboardController extends ControllerBase {
   }
 
   /**
-   * Renders pending follow-ups table.
+   * Card at the top: badges still pending after this facilitator's sessions.
+   *
+   * @param array<int, array{nid: int, member_uid: int, member: string, badges: string[], ended: int, reminded: int|null}> $items
+   *   From PendingBadgeReminder::forHost(), newest first.
+   * @param int $now
+   *   Request time, for the days-waiting column.
    */
-  protected function buildPendingTable(array $rows): array {
-    if (!$rows) {
-      return [
-        '#markup' => $this->t('No pending follow-ups right now.'),
+  protected function buildSignoffCard(array $items, int $now): array {
+    $days = max(1, (int) ($this->config('appointment_facilitator.settings')->get('pending_badge_dashboard_days') ?? 90));
+    // One row per member: back-to-back sessions for one person are one
+    // sign-off visit, and the approve page lists all their pending badges.
+    $members = [];
+    foreach ($items as $item) {
+      $row = &$members[$item['member_uid']];
+      $row ??= [
+        'member_uid' => $item['member_uid'],
+        'member' => $item['member'],
+        'badges' => [],
+        'appointments' => [],
+        'oldest' => $item['ended'],
+      ];
+      $row['badges'] = array_values(array_unique(array_merge($row['badges'], $item['badges'])));
+      $row['appointments'][$item['nid']] = $item['ended'];
+      $row['oldest'] = min($row['oldest'], $item['ended']);
+      unset($row);
+    }
+    $count = count($members);
+    $card = [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['afd-card', 'afd-signoff', $count ? 'afd-signoff--waiting' : 'afd-signoff--clear']],
+      'title' => [
+        '#type' => 'html_tag',
+        '#tag' => 'h3',
+        '#value' => $count
+          ? $this->formatPlural($count, '1 member is waiting for your badge sign-off', '@count members are waiting for your badge sign-off')
+          : $this->t('Badge sign-offs: all caught up'),
+      ],
+    ];
+    if (!$count) {
+      $card['note'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $this->t('No one from your appointments in the last @days days still has a badge pending.', ['@days' => $days]),
+        '#attributes' => ['class' => ['afd-muted']],
+      ];
+      return $card;
+    }
+    $card['note'] = [
+      '#type' => 'html_tag',
+      '#tag' => 'p',
+      '#value' => $this->t('These members had a badge appointment with you in the last @days days and the badge is still pending. Open their profile to check their history, then approve the badge if the checkout went well. If they did not come or need another session, leave it pending.', ['@days' => $days]),
+      '#attributes' => ['class' => ['afd-muted']],
+    ];
+    $rows = [];
+    foreach ($members as $item) {
+      $waiting = max(0, (int) floor(($now - $item['oldest']) / 86400));
+      $dates = [];
+      $per_day = [];
+      asort($item['appointments']);
+      foreach ($item['appointments'] as $nid => $ended) {
+        $day = $this->dateFormatterService->format($ended, 'custom', 'D M j');
+        $per_day[$day] = ($per_day[$day] ?? 0) + 1;
+        $dates[] = [
+          '#type' => 'link',
+          '#title' => $per_day[$day] === 1 ? $day : $this->t('session @n', ['@n' => $per_day[$day]]),
+          '#url' => Url::fromRoute('entity.node.canonical', ['node' => $nid]),
+          '#prefix' => $dates ? ($per_day[$day] === 1 ? '<br>' : ', ') : '',
+        ];
+      }
+      $rows[] = [
+        'member' => [
+          'data' => [
+            '#type' => 'link',
+            '#title' => $item['member'],
+            '#url' => Url::fromRoute('entity.user.canonical', ['user' => $item['member_uid']]),
+            '#attributes' => ['class' => ['afd-inline-link'], 'title' => (string) $this->t('Open full profile')],
+          ],
+        ],
+        'badges' => implode(', ', $item['badges']),
+        'appointment' => ['data' => $dates],
+        'waiting' => $waiting < 1
+          ? (string) $this->t('Today')
+          : (string) $this->formatPlural($waiting, '1 day', '@count days'),
+        'action' => [
+          'data' => [
+            '#type' => 'link',
+            '#title' => $this->t('Review and approve'),
+            '#url' => Url::fromUri('internal:/badges/pending/user/' . $item['member_uid']),
+            '#attributes' => ['class' => ['btn', 'btn-sm', 'btn-primary']],
+          ],
+        ],
       ];
     }
-    return [
+    $card['table'] = [
       '#type' => 'table',
       '#header' => [
-        $this->t('Appointment'),
         $this->t('Member'),
-        $this->t('Needs attention'),
-        $this->t('Actions'),
+        $this->t('Badge pending'),
+        $this->t('Appointment'),
+        $this->t('Waiting'),
+        '',
       ],
       '#rows' => $rows,
-      '#attributes' => ['class' => ['afd-table']],
+      '#attributes' => ['class' => ['afd-table', 'afd-signoff-table']],
     ];
+    $card['more'] = [
+      '#type' => 'link',
+      '#title' => $this->t('See all my past appointments'),
+      '#url' => Url::fromRoute('appointment_facilitator.appointments_dashboard'),
+      '#attributes' => ['class' => ['afd-inline-link']],
+    ];
+    return $card;
   }
 
   /**
@@ -1255,31 +1273,6 @@ class FacilitatorDashboardController extends ControllerBase {
     }
 
     return implode('; ', $parts);
-  }
-
-  /**
-   * True when appointment appears to need follow-up.
-   */
-  protected function needsFollowUp($appointment): bool {
-    $missing_result = $appointment->hasField('field_appointment_result')
-      && trim((string) $appointment->get('field_appointment_result')->value) === '';
-    $missing_feedback = $appointment->hasField('field_appointment_feedback')
-      && trim((string) $appointment->get('field_appointment_feedback')->value) === '';
-    return $missing_result || $missing_feedback;
-  }
-
-  /**
-   * Human summary of follow-up issue.
-   */
-  protected function describeFollowUpIssue($appointment): string {
-    $issues = [];
-    if ($appointment->hasField('field_appointment_result') && trim((string) $appointment->get('field_appointment_result')->value) === '') {
-      $issues[] = (string) $this->t('Missing result');
-    }
-    if ($appointment->hasField('field_appointment_feedback') && trim((string) $appointment->get('field_appointment_feedback')->value) === '') {
-      $issues[] = (string) $this->t('Missing feedback');
-    }
-    return $issues ? implode(', ', $issues) : (string) $this->t('—');
   }
 
   /**

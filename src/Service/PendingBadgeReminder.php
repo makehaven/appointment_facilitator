@@ -117,6 +117,42 @@ final class PendingBadgeReminder {
   }
 
   /**
+   * Badges still pending after one facilitator's appointments (dashboard).
+   *
+   * Same match as the email, but for any appointment that ended in the last
+   * `pending_badge_dashboard_days` (90) and including ones already emailed:
+   * the email is a nudge, the dashboard is the full list until it is cleared.
+   *
+   * @return array<int, array{nid: int, member_uid: int, member: string, badges: string[], ended: int, reminded: int|null}>
+   *   Newest appointment first.
+   */
+  public function forHost(int $hostUid, ?int $now = NULL): array {
+    $now ??= $this->time->getCurrentTime();
+    $days = max(1, (int) ($this->configFactory->get('appointment_facilitator.settings')->get('pending_badge_dashboard_days') ?? 90));
+    $rows = $this->pendingRows($now - $days * 86400, $now, $hostUid);
+    if (!$rows) {
+      return [];
+    }
+    $users = $this->entityTypeManager->getStorage('user')->loadMultiple(array_unique(array_column($rows, 'member_uid')));
+    $terms = $this->entityTypeManager->getStorage('taxonomy_term')->loadMultiple(array_unique(array_column($rows, 'tid')));
+    $names = [];
+    foreach ($users as $user) {
+      $names[(int) $user->id()] = (string) $user->getDisplayName();
+    }
+    $labels = [];
+    foreach ($terms as $term) {
+      $labels[(int) $term->id()] = (string) $term->label();
+    }
+    $items = self::group($rows, $names, $labels, [$hostUid => TRUE])[$hostUid] ?? [];
+    $reminded = $this->keyValue->get(self::REMINDED)->getMultiple(array_map(static fn (array $i): string => (string) $i['nid'], $items));
+    foreach ($items as &$item) {
+      $item['reminded'] = isset($reminded[(string) $item['nid']]) ? (int) $reminded[(string) $item['nid']] : NULL;
+    }
+    unset($item);
+    return array_reverse($items);
+  }
+
+  /**
    * Groups raw rows into one list per facilitator. Pure, so it is tested.
    *
    * @param array<int, array{nid: int|string, host_uid: int|string, member_uid: int|string, tid: int|string, ended: int|string}> $rows
@@ -192,6 +228,9 @@ final class PendingBadgeReminder {
     $body[] = 'If the checkout went well, approve the badge at the link so they can use the tool.';
     $body[] = 'If they did not come or need another session, leave it as it is. You will not be reminded about that appointment again.';
     $body[] = '';
+    $body[] = 'Everything still waiting on you is at the top of your facilitator dashboard:';
+    $body[] = $base . '/facilitator/dashboard';
+    $body[] = '';
     $body[] = 'Thank you for facilitating.';
     return [
       'subject' => $count === 1
@@ -246,7 +285,7 @@ final class PendingBadgeReminder {
    * @return array<int, array{nid: string, host_uid: string, member_uid: string, tid: string, ended: string}>
    *   One row per appointment, member and badge.
    */
-  private function pendingRows(int $endedFrom, int $endedTo): array {
+  private function pendingRows(int $endedFrom, int $endedTo, ?int $hostUid = NULL): array {
     $schema = $this->database->schema();
     foreach (['node__field_appointment_badges', 'node__field_appointment_host', 'node__field_appointment_timerange', 'node__field_member_to_badge', 'node__field_badge_status', 'node__field_badge_requested'] as $table) {
       if (!$schema->tableExists($table)) {
@@ -256,7 +295,7 @@ final class PendingBadgeReminder {
     $hasAttendees = $schema->tableExists('node__field_appointment_attendees');
     $hasStatus = $schema->tableExists('node__field_appointment_status');
 
-    $build = function (bool $viaAttendees) use ($endedFrom, $endedTo, $hasStatus) {
+    $build = function (bool $viaAttendees) use ($endedFrom, $endedTo, $hasStatus, $hostUid) {
       $q = $this->database->select('node__field_appointment_badges', 'ab');
       $q->innerJoin('node_field_data', 'n', 'n.nid = ab.entity_id AND n.status = 1 AND n.type = :appt', [':appt' => 'appointment']);
       $q->innerJoin('node__field_appointment_host', 'h', 'h.entity_id = ab.entity_id');
@@ -278,6 +317,9 @@ final class PendingBadgeReminder {
         $q->condition($or);
       }
       $q->condition('t.field_appointment_timerange_end_value', [$endedFrom, $endedTo], 'BETWEEN');
+      if ($hostUid !== NULL) {
+        $q->condition('h.field_appointment_host_target_id', $hostUid);
+      }
       $q->addField('ab', 'entity_id', 'nid');
       $q->addField('h', 'field_appointment_host_target_id', 'host_uid');
       $q->addExpression($member, 'member_uid');
