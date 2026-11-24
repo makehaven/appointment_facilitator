@@ -48,6 +48,7 @@ final class PendingBadgeReminder {
     private readonly StateInterface $state,
     private readonly TimeInterface $time,
     private readonly LoggerInterface $logger,
+    private readonly ?AppointmentDoorEvidence $doorEvidence = NULL,
   ) {}
 
   /**
@@ -113,25 +114,45 @@ final class PendingBadgeReminder {
     foreach ($terms as $term) {
       $labels[(int) $term->id()] = (string) $term->label();
     }
-    return self::group($rows, $names, $labels, $active);
+    return $this->withDoor(self::group($rows, $names, $labels, $active));
+  }
+
+  /**
+   * Adds the door-log evidence to each grouped appointment.
+   */
+  private function withDoor(array $grouped): array {
+    if (!$this->doorEvidence) {
+      return $grouped;
+    }
+    foreach ($grouped as &$items) {
+      foreach ($items as &$item) {
+        $item['door'] = $this->doorEvidence->forAppointment($item['nid'], $item['member_uid']);
+      }
+    }
+    return $grouped;
   }
 
   /**
    * Badges still pending after one facilitator's appointments (dashboard).
    *
-   * Same match as the email, but for any appointment that ended in the last
-   * `pending_badge_dashboard_days` (90) and including ones already emailed:
-   * the email is a nudge, the dashboard is the full list until it is cleared.
+   * Same match as the email, emailed or not. Recent appointments (last
+   * `pending_badge_dashboard_days`, 90) are all listed. Older ones, back to
+   * `pending_badge_older_days` (365), only when the door log shows the member
+   * scanned in during the appointment: that is what makes a late sign-off
+   * reasonable. The rest are only counted.
    *
-   * @return array<int, array{nid: int, member_uid: int, member: string, badges: string[], ended: int, reminded: int|null}>
-   *   Newest appointment first.
+   * @return array{recent: array, older: array, older_hidden: int}
+   *   Lists of {nid, member_uid, member, badges, ended, door}, newest first.
    */
   public function forHost(int $hostUid, ?int $now = NULL): array {
     $now ??= $this->time->getCurrentTime();
-    $days = max(1, (int) ($this->configFactory->get('appointment_facilitator.settings')->get('pending_badge_dashboard_days') ?? 90));
-    $rows = $this->pendingRows($now - $days * 86400, $now, $hostUid);
+    $settings = $this->configFactory->get('appointment_facilitator.settings');
+    $recentDays = max(1, (int) ($settings->get('pending_badge_dashboard_days') ?? 90));
+    $olderDays = max($recentDays, (int) ($settings->get('pending_badge_older_days') ?? 365));
+    $out = ['recent' => [], 'older' => [], 'older_hidden' => 0];
+    $rows = $this->pendingRows($now - $olderDays * 86400, $now, $hostUid);
     if (!$rows) {
-      return [];
+      return $out;
     }
     $users = $this->entityTypeManager->getStorage('user')->loadMultiple(array_unique(array_column($rows, 'member_uid')));
     $terms = $this->entityTypeManager->getStorage('taxonomy_term')->loadMultiple(array_unique(array_column($rows, 'tid')));
@@ -143,13 +164,20 @@ final class PendingBadgeReminder {
     foreach ($terms as $term) {
       $labels[(int) $term->id()] = (string) $term->label();
     }
-    $items = self::group($rows, $names, $labels, [$hostUid => TRUE])[$hostUid] ?? [];
-    $reminded = $this->keyValue->get(self::REMINDED)->getMultiple(array_map(static fn (array $i): string => (string) $i['nid'], $items));
-    foreach ($items as &$item) {
-      $item['reminded'] = isset($reminded[(string) $item['nid']]) ? (int) $reminded[(string) $item['nid']] : NULL;
+    $grouped = $this->withDoor(self::group($rows, $names, $labels, [$hostUid => TRUE]));
+    $cutoff = $now - $recentDays * 86400;
+    foreach (array_reverse($grouped[$hostUid] ?? []) as $item) {
+      if ($item['ended'] >= $cutoff) {
+        $out['recent'][] = $item;
+      }
+      elseif (($item['door']['status'] ?? '') === AppointmentDoorEvidence::IN_WINDOW) {
+        $out['older'][] = $item;
+      }
+      else {
+        $out['older_hidden']++;
+      }
     }
-    unset($item);
-    return array_reverse($items);
+    return $out;
   }
 
   /**
@@ -222,10 +250,13 @@ final class PendingBadgeReminder {
     ];
     foreach ($items as $item) {
       $body[] = sprintf('- %s: %s (%s)', $item['member'], implode(', ', $item['badges']), date('D j M', (int) $item['ended']));
+      if (isset($item['door'])) {
+        $body[] = '  ' . AppointmentDoorEvidence::describe($item['door'], $item['member'], static fn (int $t): string => date('g:ia', $t));
+      }
       $body[] = '  ' . $base . '/badges/pending/user/' . (int) $item['member_uid'];
     }
     $body[] = '';
-    $body[] = 'If the checkout went well, approve the badge at the link so they can use the tool.';
+    $body[] = 'If the checkout went well, approve the badge at the link so they can use the tool. If the door log does not show them coming in, check before you approve.';
     $body[] = 'If they did not come or need another session, leave it as it is. You will not be reminded about that appointment again.';
     $body[] = '';
     $body[] = 'Everything still waiting on you is at the top of your facilitator dashboard:';

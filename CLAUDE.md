@@ -166,13 +166,29 @@ Wording is `PendingBadgeReminder::compose()` (pure, unit-tested). The email
 links to the dashboard.
 
 `/facilitator/dashboard` opens with a sign-off card (`buildSignoffCard()`, data
-from `PendingBadgeReminder::forHost()`): the same match, but every appointment
-the facilitator hosted in the last `pending_badge_dashboard_days` (90), emailed
-or not, one row per member with links to their profile, each appointment and
-`/badges/pending/user/{uid}`. A row leaves the card when the badge stops being
-pending or the appointment ages past the window. There is still no way to
-record "no-show / needs another session", so those rows stay until they age out
-(track facilitator_badging_ux sub-task 3.0/5.1).
+from `PendingBadgeReminder::forHost()`): the same match, emailed or not, one
+row per member with links to their profile, each appointment (with its door
+record) and `/badges/pending/user/{uid}`. All appointments from the last
+`pending_badge_dashboard_days` (90) are listed. Older ones, back to
+`pending_badge_older_days` (365), only when the member scanned in during the
+appointment; the rest are counted, not listed. A row leaves the card when the
+badge stops being pending or ages out. "No-show / needs another session" still
+cannot be recorded (track facilitator_badging_ux sub-task 3.0/5.1).
+
+### Door log as evidence for a checkout
+
+`AppointmentDoorEvidence` (service `appointment_facilitator.door_evidence`)
+reads the member's `access_control_log` scans on the appointment's day:
+`in_window` (from an hour before the start to the end), `same_day`, `none`, or
+`unknown` (no log table / no time). Evidence, not proof: a scan is not a pass,
+and a member can walk in behind someone. It is shown in the reminder email,
+on the dashboard, and above each pending request on the badge approval page
+(`_appointment_facilitator_badge_request_door_check()` finds the member's latest
+past appointment for that badge, any host). When the log disagrees
+(`same_day`/`none`), setting Active there needs the "I checked this member out
+in person" box, and the quick Approve link needs `?door_confirmed=1` (the
+button is relabelled "Approve anyway"); both log a notice. No appointment on
+record = nothing to compare, no extra step.
 
 The "Approve pending badges" button on appointment cards shows only when a
 participant has a pending request (`membersWithPendingRequests()`, one query

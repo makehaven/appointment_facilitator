@@ -45,6 +45,13 @@ services:
       - '@state'
       - '@datetime.time'
       - '@logger.channel.appointment_facilitator'
+      - '@appointment_facilitator.door_evidence'
+
+  appointment_facilitator.door_evidence:
+    class: Drupal\appointment_facilitator\Service\AppointmentDoorEvidence
+    arguments:
+      - '@database'
+      - '@config.factory'
 
   logger.channel.appointment_facilitator:
     parent: logger.channel_base

@@ -4,6 +4,7 @@ namespace Drupal\appointment_facilitator\Controller;
 
 use Drupal\appointment_facilitator\Form\FacilitatorBadgeIssuerDelegationForm;
 use Drupal\appointment_facilitator\Service\BadgePrerequisiteGate;
+use Drupal\appointment_facilitator\Service\AppointmentDoorEvidence;
 use Drupal\appointment_facilitator\Service\AppointmentStats;
 use Drupal\appointment_facilitator\Service\AppointmentSlackService;
 use Drupal\appointment_facilitator\Service\BadgeUserStatusResolver;
@@ -859,15 +860,90 @@ class FacilitatorDashboardController extends ControllerBase {
   /**
    * Card at the top: badges still pending after this facilitator's sessions.
    *
-   * @param array<int, array{nid: int, member_uid: int, member: string, badges: string[], ended: int, reminded: int|null}> $items
-   *   From PendingBadgeReminder::forHost(), newest first.
+   * @param array{recent: array, older: array, older_hidden: int} $data
+   *   From PendingBadgeReminder::forHost().
    * @param int $now
    *   Request time, for the days-waiting column.
    */
-  protected function buildSignoffCard(array $items, int $now): array {
-    $days = max(1, (int) ($this->config('appointment_facilitator.settings')->get('pending_badge_dashboard_days') ?? 90));
-    // One row per member: back-to-back sessions for one person are one
-    // sign-off visit, and the approve page lists all their pending badges.
+  protected function buildSignoffCard(array $data, int $now): array {
+    $settings = $this->config('appointment_facilitator.settings');
+    $days = max(1, (int) ($settings->get('pending_badge_dashboard_days') ?? 90));
+    $recent = $this->groupSignoffByMember($data['recent']);
+    $older = $this->groupSignoffByMember($data['older']);
+    $count = count($recent);
+    $card = [
+      '#type' => 'container',
+      '#attributes' => [
+        'class' => [
+          'afd-card',
+          'afd-signoff',
+          ($count || $older) ? 'afd-signoff--waiting' : 'afd-signoff--clear',
+        ],
+      ],
+      'title' => [
+        '#type' => 'html_tag',
+        '#tag' => 'h3',
+        '#value' => $count
+          ? $this->formatPlural($count, '1 member is waiting for your badge sign-off', '@count members are waiting for your badge sign-off')
+          : $this->t('Badge sign-offs: all caught up'),
+      ],
+    ];
+    if ($count) {
+      $card['note'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $this->t('These members had a badge appointment with you in the last @days days and the badge is still pending. The door log shows whether they came in. Open their profile to check their history, then approve the badge if the checkout went well. If the door log does not show them, check before you approve: they may not have come.', ['@days' => $days]),
+        '#attributes' => ['class' => ['afd-muted']],
+      ];
+      $card['table'] = $this->buildSignoffTable($recent, $now);
+    }
+    else {
+      $card['note'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $this->t('No one from your appointments in the last @days days still has a badge pending.', ['@days' => $days]),
+        '#attributes' => ['class' => ['afd-muted']],
+      ];
+    }
+    if ($older) {
+      $card['older_title'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'h4',
+        '#value' => $this->formatPlural(count($older), 'Earlier: 1 member came in for the appointment, badge still pending', 'Earlier: @count members came in for the appointment, badges still pending'),
+      ];
+      $card['older_note'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $this->t('From more than @days days ago. The door log shows each of them scanning in during the appointment. Approve only if you remember the checkout went well. If you are not sure, leave it and ask them to book a short session.', ['@days' => $days]),
+        '#attributes' => ['class' => ['afd-muted']],
+      ];
+      $card['older_table'] = $this->buildSignoffTable($older, $now);
+    }
+    if (!empty($data['older_hidden'])) {
+      $card['older_hidden'] = [
+        '#type' => 'html_tag',
+        '#tag' => 'p',
+        '#value' => $this->formatPlural((int) $data['older_hidden'], '1 older appointment with a badge still pending is not listed because the door log does not show the member coming in.', '@count older appointments with a badge still pending are not listed because the door log does not show the member coming in.'),
+        '#attributes' => ['class' => ['afd-muted', 'afd-signoff-hidden']],
+      ];
+    }
+    if ($count || $older) {
+      $card['more'] = [
+        '#type' => 'link',
+        '#title' => $this->t('See all my past appointments'),
+        '#url' => Url::fromRoute('appointment_facilitator.appointments_dashboard'),
+        '#attributes' => ['class' => ['afd-inline-link']],
+      ];
+    }
+    return $card;
+  }
+
+  /**
+   * One row per member: back-to-back sessions are one sign-off visit.
+   *
+   * Members the door log shows arriving come first, then newest first.
+   */
+  protected function groupSignoffByMember(array $items): array {
     $members = [];
     foreach ($items as $item) {
       $row = &$members[$item['member_uid']];
@@ -877,53 +953,44 @@ class FacilitatorDashboardController extends ControllerBase {
         'badges' => [],
         'appointments' => [],
         'oldest' => $item['ended'],
+        'newest' => $item['ended'],
+        'came' => FALSE,
       ];
       $row['badges'] = array_values(array_unique(array_merge($row['badges'], $item['badges'])));
-      $row['appointments'][$item['nid']] = $item['ended'];
+      $row['appointments'][$item['nid']] = ['ended' => $item['ended'], 'door' => $item['door'] ?? NULL];
       $row['oldest'] = min($row['oldest'], $item['ended']);
+      $row['newest'] = max($row['newest'], $item['ended']);
+      $row['came'] = $row['came'] || (($item['door']['status'] ?? '') === AppointmentDoorEvidence::IN_WINDOW);
       unset($row);
     }
-    $count = count($members);
-    $card = [
-      '#type' => 'container',
-      '#attributes' => ['class' => ['afd-card', 'afd-signoff', $count ? 'afd-signoff--waiting' : 'afd-signoff--clear']],
-      'title' => [
-        '#type' => 'html_tag',
-        '#tag' => 'h3',
-        '#value' => $count
-          ? $this->formatPlural($count, '1 member is waiting for your badge sign-off', '@count members are waiting for your badge sign-off')
-          : $this->t('Badge sign-offs: all caught up'),
-      ],
-    ];
-    if (!$count) {
-      $card['note'] = [
-        '#type' => 'html_tag',
-        '#tag' => 'p',
-        '#value' => $this->t('No one from your appointments in the last @days days still has a badge pending.', ['@days' => $days]),
-        '#attributes' => ['class' => ['afd-muted']],
-      ];
-      return $card;
-    }
-    $card['note'] = [
-      '#type' => 'html_tag',
-      '#tag' => 'p',
-      '#value' => $this->t('These members had a badge appointment with you in the last @days days and the badge is still pending. Open their profile to check their history, then approve the badge if the checkout went well. If they did not come or need another session, leave it pending.', ['@days' => $days]),
-      '#attributes' => ['class' => ['afd-muted']],
-    ];
+    uasort($members, static fn (array $a, array $b): int => [$b['came'], $b['newest']] <=> [$a['came'], $a['newest']]);
+    return $members;
+  }
+
+  /**
+   * Table of members, their appointments with the door record, and actions.
+   */
+  protected function buildSignoffTable(array $members, int $now): array {
     $rows = [];
     foreach ($members as $item) {
       $waiting = max(0, (int) floor(($now - $item['oldest']) / 86400));
-      $dates = [];
+      $lines = [];
       $per_day = [];
-      asort($item['appointments']);
-      foreach ($item['appointments'] as $nid => $ended) {
-        $day = $this->dateFormatterService->format($ended, 'custom', 'D M j');
+      uasort($item['appointments'], static fn (array $a, array $b): int => $a['ended'] <=> $b['ended']);
+      foreach ($item['appointments'] as $nid => $appt) {
+        $day = $this->dateFormatterService->format($appt['ended'], 'custom', 'D M j');
         $per_day[$day] = ($per_day[$day] ?? 0) + 1;
-        $dates[] = [
-          '#type' => 'link',
-          '#title' => $per_day[$day] === 1 ? $day : $this->t('session @n', ['@n' => $per_day[$day]]),
-          '#url' => Url::fromRoute('entity.node.canonical', ['node' => $nid]),
-          '#prefix' => $dates ? ($per_day[$day] === 1 ? '<br>' : ', ') : '',
+        $lines[] = [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['afd-signoff-appt']],
+          'link' => [
+            '#type' => 'link',
+            '#title' => $per_day[$day] === 1
+              ? $day
+              : $this->t('@day, session @n', ['@day' => $day, '@n' => $per_day[$day]]),
+            '#url' => Url::fromRoute('entity.node.canonical', ['node' => $nid]),
+          ],
+          'door' => $this->buildDoorPill($appt['door']),
         ];
       }
       $rows[] = [
@@ -936,39 +1003,55 @@ class FacilitatorDashboardController extends ControllerBase {
           ],
         ],
         'badges' => implode(', ', $item['badges']),
-        'appointment' => ['data' => $dates],
+        'appointment' => ['data' => $lines],
         'waiting' => $waiting < 1
           ? (string) $this->t('Today')
           : (string) $this->formatPlural($waiting, '1 day', '@count days'),
         'action' => [
           'data' => [
             '#type' => 'link',
-            '#title' => $this->t('Review and approve'),
+            '#title' => $this->t('Review'),
             '#url' => Url::fromUri('internal:/badges/pending/user/' . $item['member_uid']),
-            '#attributes' => ['class' => ['btn', 'btn-sm', 'btn-primary']],
+            '#attributes' => ['class' => ['btn', 'btn-sm', $item['came'] ? 'btn-primary' : 'btn-outline-primary']],
           ],
         ],
       ];
     }
-    $card['table'] = [
+    return [
       '#type' => 'table',
       '#header' => [
         $this->t('Member'),
         $this->t('Badge pending'),
-        $this->t('Appointment'),
+        $this->t('Appointment and door log'),
         $this->t('Waiting'),
         '',
       ],
       '#rows' => $rows,
       '#attributes' => ['class' => ['afd-table', 'afd-signoff-table']],
     ];
-    $card['more'] = [
-      '#type' => 'link',
-      '#title' => $this->t('See all my past appointments'),
-      '#url' => Url::fromRoute('appointment_facilitator.appointments_dashboard'),
-      '#attributes' => ['class' => ['afd-inline-link']],
+  }
+
+  /**
+   * Short door-log label for one appointment.
+   */
+  protected function buildDoorPill(?array $door): array {
+    $status = $door['status'] ?? AppointmentDoorEvidence::UNKNOWN;
+    $time = !empty($door['time']) ? $this->dateFormatterService->format((int) $door['time'], 'custom', 'g:ia') : '';
+    [$label, $class] = match ($status) {
+      AppointmentDoorEvidence::IN_WINDOW => [$this->t('Scanned in @time', ['@time' => $time]), 'afd-door--in'],
+      AppointmentDoorEvidence::SAME_DAY => [
+        $this->t('Here that day (@time), not at the appointment', ['@time' => $time]),
+        'afd-door--day',
+      ],
+      AppointmentDoorEvidence::NONE => [$this->t('No door scan that day'), 'afd-door--none'],
+      default => [$this->t('Door log not available'), 'afd-door--unknown'],
+    };
+    return [
+      '#type' => 'html_tag',
+      '#tag' => 'span',
+      '#value' => $label,
+      '#attributes' => ['class' => ['afd-door', $class]],
     ];
-    return $card;
   }
 
   /**

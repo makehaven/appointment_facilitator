@@ -43,6 +43,9 @@ appointment_facilitator.settings:
     pending_badge_dashboard_days:
       type: integer
       label: 'Days back the facilitator dashboard lists badges still pending after an appointment'
+    pending_badge_older_days:
+      type: integer
+      label: 'Days back the dashboard lists older pending badges where the door log shows the member came in'
     pending_badge_reminder_base_url:
       type: string
       label: 'Site address used in pending-badge reminder links (empty = the request address)'

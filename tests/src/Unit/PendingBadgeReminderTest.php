@@ -66,6 +66,13 @@ final class PendingBadgeReminderTest extends UnitTestCase {
     $this->assertStringContainsString('https://www.example.org/facilitator/dashboard', $mail['body']);
   }
 
+  public function testEmailShowsTheDoorLog(): void {
+    $due = PendingBadgeReminder::group([$this->row()], self::NAMES, self::LABELS, self::OK);
+    $due[7][0]['door'] = ['status' => 'none', 'time' => NULL];
+    $mail = PendingBadgeReminder::compose('Fay Facilitator', $due[7], 'https://www.example.org');
+    $this->assertStringContainsString('Door log: no scan for Mo Member that day.', $mail['body']);
+  }
+
   public function testEmailForSeveralCountsThem(): void {
     $due = PendingBadgeReminder::group([$this->row(), $this->row(['nid' => 101, 'member_uid' => 21])], self::NAMES, self::LABELS, self::OK);
     $mail = PendingBadgeReminder::compose('Fay Facilitator', $due[7], 'https://www.example.org');

@@ -57,6 +57,22 @@ class BadgeRequestApprovalController extends ControllerBase {
       return $this->redirectToNode($node);
     }
 
+    // The door log does not show the member at their checkout: approving
+    // needs the explicit "I checked them out in person" link.
+    $check = _appointment_facilitator_badge_request_door_check($node);
+    if ($check && !$check['agrees']) {
+      if (!\Drupal::request()->query->get('door_confirmed')) {
+        $this->messenger()->addWarning($this->t('Not approved yet. The door log does not show this member at their checkout appointment. Check with them, then use "Approve anyway" if you checked them out in person.'));
+        return $this->redirectToNode($node);
+      }
+      $this->getLogger('appointment_facilitator')->notice('Badge request @nid approved by uid @uid with the door log disagreeing (@status, appointment @appt); confirmed in person.', [
+        '@nid' => $node->id(),
+        '@uid' => $this->currentUser()->id(),
+        '@status' => $check['door']['status'] ?? '?',
+        '@appt' => $check['appointment']['nid'] ?? '?',
+      ]);
+    }
+
     $node->set('field_badge_status', 'active');
     $node->setNewRevision(TRUE);
     $node->setRevisionUserId((int) $this->currentUser()->id());

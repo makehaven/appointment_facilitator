@@ -56,7 +56,7 @@ class BadgeHealthCommands extends DrushCommands {
     foreach ($due as $uid => $items) {
       $this->output()->writeln(sprintf('%s (uid %d): %d', isset($users[$uid]) ? $users[$uid]->getDisplayName() : '?', $uid, count($items)));
       foreach ($items as $item) {
-        $this->output()->writeln(sprintf('  - appointment %d, %s: %s (%s)', $item['nid'], $item['member'], implode(', ', $item['badges']), date('D j M', $item['ended'])));
+        $this->output()->writeln(sprintf('  - appointment %d, %s: %s (%s) door: %s', $item['nid'], $item['member'], implode(', ', $item['badges']), date('D j M', $item['ended']), $item['door']['status'] ?? '-'));
       }
     }
     $this->output()->writeln(sprintf('Cron switch (pending_badge_reminder_enabled): %s', $reminder->enabled() ? 'on' : 'off'));

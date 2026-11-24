@@ -1,6 +1,7 @@
 <?php
 
 use Drupal\appointment_facilitator\Controller\BadgeNextStepsController;
+use Drupal\appointment_facilitator\Service\AppointmentDoorEvidence;
 use Drupal\appointment_facilitator\Badge\VideoChapters;
 use Drupal\Component\Utility\Html;
 use Drupal\appointment_facilitator\Form\JoinAppointmentForm;
@@ -3116,17 +3117,26 @@ function _appointment_facilitator_build_node_view(array &$build, NodeInterface $
     return;
   }
 
+  $check = _appointment_facilitator_badge_request_door_check($entity);
+  if ($check) {
+    $build['appointment_facilitator_door_check'] = _appointment_facilitator_door_check_box($check, 88);
+    $build['#cache']['max-age'] = 300;
+  }
+
   $build['appointment_facilitator_badge_actions'] = [
     '#type' => 'container',
     '#attributes' => ['class' => ['badge-request-quick-actions']],
     '#weight' => 90,
     'approve' => [
       '#type' => 'link',
-      '#title' => t('Approve badge'),
+      '#title' => ($check && !$check['agrees']) ? t('Approve anyway: I checked them out in person') : t('Approve badge'),
       '#url' => Url::fromRoute(
         'appointment_facilitator.badge_request_approve',
         ['node' => $entity->id()],
-        ['query' => ['destination' => \Drupal::service('path.current')->getPath()]]
+        ['query' => array_filter([
+          'destination' => \Drupal::service('path.current')->getPath(),
+          'door_confirmed' => ($check && !$check['agrees']) ? 1 : NULL,
+        ])]
       ),
       '#attributes' => [
         'class' => ['button', 'button--small', 'button--primary'],
@@ -3969,6 +3979,27 @@ function _appointment_facilitator_get_editablefields_badge_request(FormStateInte
 }
 
 /**
+ * Blocks Active without confirmation when the door log disagrees.
+ */
+function appointment_facilitator_editablefields_door_validate(array &$form, FormStateInterface $form_state): void {
+  if ((string) $form_state->getValue(['field_badge_status', 0, 'value']) !== 'active') {
+    return;
+  }
+  if ($form_state->getValue('appointment_facilitator_door_confirm')) {
+    $node = _appointment_facilitator_get_editablefields_badge_request($form_state);
+    $check = $form_state->get('appointment_facilitator_door_check');
+    \Drupal::logger('appointment_facilitator')->notice('Badge request @nid approved by uid @uid with the door log disagreeing (@status, appointment @appt); confirmed in person.', [
+      '@nid' => $node ? $node->id() : '?',
+      '@uid' => \Drupal::currentUser()->id(),
+      '@status' => $check['door']['status'] ?? '?',
+      '@appt' => $check['appointment']['nid'] ?? '?',
+    ]);
+    return;
+  }
+  $form_state->setErrorByName('appointment_facilitator_door_confirm', t('The door log does not show this member at their checkout appointment. Check with them first, then tick the box to confirm you checked them out in person.'));
+}
+
+/**
  * Adds a save-time warning for inline editable badge approvals.
  */
 function appointment_facilitator_editablefields_badge_request_submit(array &$form, FormStateInterface $form_state): void {
@@ -4358,6 +4389,81 @@ function appointment_facilitator_validate_badge_prerequisites(array &$form, Form
 }
 
 /**
+ * What the door log says about the checkout behind a pending badge request.
+ *
+ * Finds the member's latest past appointment for this badge (any host) and
+ * classifies their door scans against it. "agrees" is TRUE when there is no
+ * appointment to compare (nothing to disagree with) or the member scanned in
+ * during it; FALSE means whoever approves should check first.
+ *
+ * @return array{appointment: array|null, door: array|null, agrees: bool, message: string}|null
+ *   NULL when the request has no member or badge.
+ */
+function _appointment_facilitator_badge_request_door_check(NodeInterface $request): ?array {
+  if (!$request->hasField('field_member_to_badge') || !$request->hasField('field_badge_requested')) {
+    return NULL;
+  }
+  $member_uid = (int) $request->get('field_member_to_badge')->target_id;
+  $tid = (int) $request->get('field_badge_requested')->target_id;
+  if ($member_uid <= 0 || $tid <= 0) {
+    return NULL;
+  }
+  /** @var \Drupal\appointment_facilitator\Service\AppointmentDoorEvidence $evidence */
+  $evidence = \Drupal::service('appointment_facilitator.door_evidence');
+  $formatter = \Drupal::service('date.formatter');
+  $member = \Drupal::entityTypeManager()->getStorage('user')->load($member_uid);
+  $name = $member ? $member->getDisplayName() : (string) t('the member');
+
+  $appointment = $evidence->latestAppointment($member_uid, $tid, \Drupal::time()->getRequestTime());
+  if (!$appointment) {
+    return [
+      'appointment' => NULL,
+      'door' => NULL,
+      'agrees' => TRUE,
+      'message' => (string) t('No checkout appointment for this badge is on record for @name, so there is no door log to compare.', ['@name' => $name]),
+    ];
+  }
+  $door = $evidence->forAppointment($appointment['nid'], $member_uid);
+  $host = \Drupal::entityTypeManager()->getStorage('user')->load($appointment['host_uid']);
+  $when = Link::fromTextAndUrl(
+    $formatter->format($appointment['start'], 'custom', 'D M j, Y g:ia'),
+    Url::fromRoute('entity.node.canonical', ['node' => $appointment['nid']])
+  )->toString();
+  $line = AppointmentDoorEvidence::describe(
+    $door,
+    Html::escape($name),
+    static fn (int $t): string => $formatter->format($t, 'custom', 'g:ia')
+  );
+  return [
+    'appointment' => $appointment,
+    'door' => $door,
+    'agrees' => in_array($door['status'], [AppointmentDoorEvidence::IN_WINDOW, AppointmentDoorEvidence::UNKNOWN], TRUE),
+    'message' => (string) t('Checkout appointment: @when with @host.', [
+      '@when' => $when,
+      '@host' => $host ? $host->getDisplayName() : t('a facilitator'),
+    ]) . ' ' . $line,
+  ];
+}
+
+/**
+ * Render array for the door check, as a status or warning message box.
+ */
+function _appointment_facilitator_door_check_box(array $check, int $weight): array {
+  return [
+    '#type' => 'container',
+    '#weight' => $weight,
+    '#attributes' => [
+      'class' => [
+        'messages',
+        $check['agrees'] ? 'messages--status' : 'messages--warning',
+        'badge-request-door-check',
+      ],
+    ],
+    'content' => ['#markup' => Markup::create($check['message'])],
+  ];
+}
+
+/**
  * Implements hook_form_BASE_FORM_ID_alter() for editablefields forms.
  */
 function appointment_facilitator_form_editablefields_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
@@ -4367,7 +4473,33 @@ function appointment_facilitator_form_editablefields_form_alter(array &$form, Fo
   }
 
   $account = \Drupal::currentUser();
-  if (!$account->isAuthenticated() || _appointment_facilitator_is_badge_request_issuer($node, $account)) {
+  if (!$account->isAuthenticated()) {
+    return;
+  }
+
+  // Door log beside every pending request; when it does not show the member
+  // at their checkout, setting Active needs an explicit confirmation.
+  $check = _appointment_facilitator_badge_request_door_check($node);
+  if ($check) {
+    $form['appointment_facilitator_door_check'] = _appointment_facilitator_door_check_box($check, -25);
+    if (!$check['agrees']) {
+      $form['appointment_facilitator_door_confirm'] = [
+        '#type' => 'checkbox',
+        '#title' => t('To set Active: I checked this member out in person, even though the door log does not show them at the appointment.'),
+        '#weight' => 50,
+      ];
+      // Above the Update button (editablefields puts it at $form['submit']).
+      foreach (['submit', 'actions'] as $key) {
+        if (isset($form[$key])) {
+          $form[$key]['#weight'] = 100;
+        }
+      }
+      $form['#validate'][] = 'appointment_facilitator_editablefields_door_validate';
+      $form_state->set('appointment_facilitator_door_check', $check);
+    }
+  }
+
+  if (_appointment_facilitator_is_badge_request_issuer($node, $account)) {
     return;
   }
 
