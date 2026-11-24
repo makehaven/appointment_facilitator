@@ -81,3 +81,30 @@
 .mh-tool-helpers__manage {
   font-size: 0.9rem;
 }
+
+/* Check-first step (JR 11-24): what the manual and earlier questions say. */
+.mh-tool-helpers__found {
+  max-width: 40rem;
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--mh-radius-md, 0.5rem);
+  background: var(--mh-color-neutral-100, #f3f4f6);
+}
+
+.mh-tool-helpers__found-lead {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+.mh-tool-helpers__answer > :last-child {
+  margin-bottom: 0;
+}
+
+.mh-tool-helpers__earlier {
+  margin: 0 0 0.25rem;
+  padding-left: 1.25rem;
+}
+
+.mh-tool-helpers__ask .form-actions .btn + .btn {
+  margin-left: 0.5rem;
+}

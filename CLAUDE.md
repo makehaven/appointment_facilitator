@@ -210,3 +210,20 @@ record = nothing to compare, no extra step.
 The "Approve pending badges" button on appointment cards shows only when a
 participant has a pending request (`membersWithPendingRequests()`, one query
 per page). `/appointments/all` pages past appointments, 100 a page.
+
+### Tool page question box: check first, then Slack
+
+`ToolQuestionForm` (in the "Questions about this tool?" panel, only for
+channels in `ask_on_slack_channels`) has two steps (JR 11-24: do not send
+members to Slack without checking what has been said). "Check for an answer"
+asks the tool page's assistant (`makerspace_ai_tool_context.tool_answer_fallback`
+→ `answerOnToolPage()`: manual, status, approved Slack-harvest answers; a
+"not sure" counts as no answer; skipped for members with
+`field_hide_ai_chatbots`, whose question never goes to the AI) and lists
+earlier questions on the same tool
+from `appointment_facilitator_tool_question` that share keywords
+(`HelperRanker::similarQuestions()`, unit-tested), linked to their Slack
+threads. Then "That answers it" (logged, nothing posted) or "post in
+#channel". Checks are AJAX, flood-limited to 20 an hour per member. Watchdog
+lines "Tool question check on…" and "…answered without posting" measure how
+often the check spares a post.

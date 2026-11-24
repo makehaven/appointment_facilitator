@@ -500,4 +500,41 @@ class ToolHelpers {
     return ['channel' => $channel, 'ts' => $ts, 'permalink' => $permalink, 'tagged' => array_keys($tag)];
   }
 
+  /**
+   * Earlier questions on this tool that look like a new one, with links.
+   *
+   * @return array<int, array{question: string, created: int, url: string}>
+   *   Up to $limit matches; url is the Slack thread, or '' if Slack is out.
+   */
+  public function earlierQuestions(NodeInterface $tool, string $question, int $limit = 3): array {
+    if (!$this->database->schema()->tableExists(self::TABLE)) {
+      return [];
+    }
+    $rows = $this->database->select(self::TABLE, 'q')
+      ->fields('q', ['channel', 'ts', 'question', 'created'])
+      ->condition('nid', (int) $tool->id())
+      ->orderBy('created', 'DESC')
+      ->range(0, 200)
+      ->execute()
+      ->fetchAll(\PDO::FETCH_ASSOC);
+    $out = [];
+    foreach (HelperRanker::similarQuestions($question, $rows, $limit) as $row) {
+      $url = '';
+      if ($this->slackBot && $row['ts'] !== '' && method_exists($this->slackBot, 'permalink')) {
+        try {
+          $url = (string) $this->slackBot->permalink((string) $this->slackBot->resolveChannelId((string) $row['channel']), (string) $row['ts']);
+        }
+        catch (\Throwable $e) {
+          $url = '';
+        }
+      }
+      $out[] = [
+        'question' => (string) $row['question'],
+        'created' => (int) $row['created'],
+        'url' => $url,
+      ];
+    }
+    return $out;
+  }
+
 }

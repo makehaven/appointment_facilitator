@@ -67,4 +67,33 @@ class HelperRankerTest extends TestCase {
     $this->assertStringNotContainsString('you are listed', HelperRanker::message('T', 'u', 'U1', 'q', []));
   }
 
+  /**
+   * Keywords drop common words and plurals.
+   */
+  public function testKeywords(): void {
+    $this->assertSame(['mic', 'record', 'podcast', 'two', 'people'], HelperRanker::keywords('Which mics should I use to record a podcast with two people?'));
+  }
+
+  /**
+   * An earlier question about the same thing is found; an unrelated one is not.
+   */
+  public function testSimilarQuestions(): void {
+    $earlier = [
+      ['question' => 'How do I book the podcast room?', 'created' => 1],
+      ['question' => 'What mic is best for recording a podcast?', 'created' => 2],
+      ['question' => 'Is the green screen working?', 'created' => 3],
+    ];
+    $found = HelperRanker::similarQuestions('Which mic should I use to record a podcast with two people?', $earlier);
+    $this->assertSame([2], array_column($found, 'created'));
+  }
+
+  /**
+   * A short question matches on one shared keyword; nothing matches nothing.
+   */
+  public function testSimilarQuestionsShort(): void {
+    $earlier = [['question' => 'Where are the SD cards kept?', 'created' => 1]];
+    $this->assertCount(1, HelperRanker::similarQuestions('SD card?', $earlier));
+    $this->assertSame([], HelperRanker::similarQuestions('?', $earlier));
+  }
+
 }

@@ -104,4 +104,75 @@ final class HelperRanker {
     return $text;
   }
 
+  /**
+   * Words too common to say two questions are about the same thing.
+   */
+  private const STOPWORDS = [
+    'and', 'any', 'are', 'can', 'did', 'for', 'get', 'got', 'has', 'how',
+    'its', 'not', 'one', 'the', 'use', 'was', 'way', 'who', 'why', 'you',
+    'about', 'after', 'also', 'anyone', 'been', 'before', 'best', 'call',
+    'could', 'does', 'doing', 'from', 'good', 'have', 'help', 'here', 'into',
+    'just', 'know', 'like', 'make', 'more', 'need', 'only', 'other', 'please',
+    'should', 'some', 'tell', 'than', 'thanks', 'that', 'there', 'them',
+    'they', 'thing', 'this', 'tool', 'trying', 'using', 'want', 'what',
+    'when', 'where', 'which', 'while', 'with', 'would', 'your',
+  ];
+
+  /**
+   * The words of a question that say what it is about.
+   *
+   * @return string[]
+   *   Lowercase words of three letters or more, minus common ones, with a
+   *   trailing plural "s" dropped so "mics" matches "mic".
+   */
+  public static function keywords(string $text): array {
+    preg_match_all('/[\p{L}\p{N}]+/u', mb_strtolower($text), $m);
+    $out = [];
+    foreach ($m[0] as $word) {
+      if (mb_strlen($word) < 3 || in_array($word, self::STOPWORDS, TRUE)) {
+        continue;
+      }
+      if (mb_strlen($word) > 3 && str_ends_with($word, 's') && !str_ends_with($word, 'ss')) {
+        $word = mb_substr($word, 0, -1);
+      }
+      $out[$word] = TRUE;
+    }
+    return array_keys($out);
+  }
+
+  /**
+   * Earlier questions on the same tool that look like this one.
+   *
+   * Two shared keywords make a match; one is enough when either question
+   * has only one or two keywords. Best match first, newer first on a tie.
+   *
+   * @param string $question
+   *   What the member typed.
+   * @param array<int, array{question: string, created: int}> $earlier
+   *   Earlier questions, any extra keys kept.
+   * @param int $limit
+   *   Most matches to return.
+   *
+   * @return array<int, array>
+   *   The matching rows.
+   */
+  public static function similarQuestions(string $question, array $earlier, int $limit = 3): array {
+    $mine = self::keywords($question);
+    if (!$mine) {
+      return [];
+    }
+    $scored = [];
+    foreach ($earlier as $row) {
+      $theirs = self::keywords((string) ($row['question'] ?? ''));
+      $shared = count(array_intersect($mine, $theirs));
+      $needed = min(count($mine), count($theirs)) <= 2 ? 1 : 2;
+      if ($shared >= $needed && $shared > 0) {
+        $scored[] = ['score' => $shared, 'row' => $row];
+      }
+    }
+    usort($scored, static fn(array $a, array $b): int =>
+      [$b['score'], (int) ($b['row']['created'] ?? 0)] <=> [$a['score'], (int) ($a['row']['created'] ?? 0)]);
+    return array_map(static fn(array $s): array => $s['row'], array_slice($scored, 0, $limit));
+  }
+
 }
