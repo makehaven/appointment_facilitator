@@ -191,3 +191,8 @@ tool_helpers:
   css:
     theme:
       css/tool-helpers.css: {}
+  js:
+    js/tool-helpers.js: {}
+  dependencies:
+    - core/drupal
+    - core/once

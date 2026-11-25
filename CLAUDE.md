@@ -211,19 +211,21 @@ The "Approve pending badges" button on appointment cards shows only when a
 participant has a pending request (`membersWithPendingRequests()`, one query
 per page). `/appointments/all` pages past appointments, 100 a page.
 
-### Tool page question box: check first, then Slack
+### Tool page "Questions about this tool?" card
 
-`ToolQuestionForm` (in the "Questions about this tool?" panel, only for
-channels in `ask_on_slack_channels`) has two steps (JR 11-24: do not send
-members to Slack without checking what has been said). "Check for an answer"
-asks the tool page's assistant (`makerspace_ai_tool_context.tool_answer_fallback`
-→ `answerOnToolPage()`: manual, status, approved Slack-harvest answers; a
-"not sure" counts as no answer; skipped for members with
-`field_hide_ai_chatbots`, whose question never goes to the AI) and lists
-earlier questions on the same tool
-from `appointment_facilitator_tool_question` that share keywords
-(`HelperRanker::similarQuestions()`, unit-tested), linked to their Slack
-threads. Then "That answers it" (logged, nothing posted) or "post in
-#channel". Checks are AJAX, flood-limited to 20 an hour per member. Watchdog
-lines "Tool question check on…" and "…answered without posting" measure how
-often the check spares a post.
+The card (`_appointment_facilitator_tool_helpers_panel()`, template
+`tool-helpers.html.twig`) shows the people to ask, "I can answer questions
+about this tool", and an "Ask the tool assistant" button that opens the tool
+chat already on the page (`js/tool-helpers.js`; without it the link goes to
+`/tool-chat/{nid}`). Members with `field_hide_ai_chatbots` get the plain
+channel link instead.
+
+JR 11-25: the card used to have its own question box (`ToolQuestionForm`, 11-24)
+that asked the same assistant as the chat. It was removed as a duplicate. The
+Slack post now lives in the chat: its "Ask a person" sheet
+(makerspace_ai_tool_context `ChatFeedbackController`) calls `ToolHelpers::ask()`
+when the tool's channel is in `ask_on_slack_channels` and the member has a
+Slack ID, so volunteers are tagged first and staff email is the fallback.
+`ToolHelpers::earlierQuestions()` and `HelperRanker::similarQuestions()` have
+no caller after the removal; they are kept for the chat if it later lists
+earlier Slack questions.

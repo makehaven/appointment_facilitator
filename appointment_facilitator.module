@@ -680,8 +680,9 @@ function _appointment_facilitator_tool_facilitators_panel(NodeInterface $tool): 
  *
  * Track ask_the_right_people_20261109. Members only: the people listed on the
  * tool (field_tool_helpers), else the people who sign off its badge; the
- * tool's Slack channel (else its area's); an Ask on Slack form that posts in
- * that channel and tags up to three of them; and, for members with the
+ * tool's Slack channel (else its area's); a button that opens the tool chat,
+ * whose "Ask a person" posts in that channel and tags up to three of them
+ * (pilot channels); and, for members with the
  * badge, "I can answer questions about this tool". Returns [] for anonymous
  * viewers and for tools with neither people nor a channel.
  */
@@ -755,16 +756,17 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
   }
 
   $viewer_account = \Drupal::entityTypeManager()->getStorage('user')->load($viewer->id());
-  $ask_form = NULL;
-  $not_on_slack = FALSE;
-  if ($channel !== '' && $viewer_account && $helpers->askEnabled($channel)) {
-    if ($helpers->slackIds([(int) $viewer->id()])) {
-      $ask_form = \Drupal::formBuilder()->getForm(\Drupal\appointment_facilitator\Form\ToolQuestionForm::class, $tool);
-    }
-    else {
-      $not_on_slack = TRUE;
-    }
+  // Questions go to the tool page's chat (JR 11-25: the separate question box
+  // asked the same assistant). The chat's "Ask a person" posts in the channel
+  // and tags these people when the channel is in the pilot. Members who turned
+  // AI off get the plain channel link instead.
+  $hides_ai = $viewer_account && $viewer_account->hasField('field_hide_ai_chatbots') && $viewer_account->get('field_hide_ai_chatbots')->value;
+  $ask_chat_url = '';
+  if (!$hides_ai && $viewer->hasPermission('access deepchat api') && \Drupal::moduleHandler()->moduleExists('makerspace_ai_tool_context')) {
+    $ask_chat_url = Url::fromRoute('makerspace_ai_tool_context.tool_chat', ['tool' => $tool->id()])->toString();
   }
+  $ask_slack = $channel !== '' && $helpers->askEnabled($channel) && $helpers->slackIds([(int) $viewer->id()]);
+  $not_on_slack = $channel !== '' && $helpers->askEnabled($channel) && !$ask_slack;
 
   $volunteer_form = NULL;
   if ($viewer_account) {
@@ -781,12 +783,14 @@ function _appointment_facilitator_tool_helpers_panel(NodeInterface $tool): array
     '#more_people' => $listed ? [] : ($issuers ? ['issuers' => TRUE] : []),
     '#channel' => $channel,
     '#channel_url' => $channel !== '' ? $helpers->channelUrl($channel) : '',
-    '#ask_form' => $ask_form,
+    '#ask_chat_url' => $ask_chat_url,
+    '#ask_slack' => (bool) $ask_slack,
     '#not_on_slack' => $not_on_slack,
     '#volunteer_form' => $volunteer_form,
     '#manage_url' => $can_manage ? Url::fromRoute('appointment_facilitator.tool_helpers', ['node' => $tool->id()])->toString() : '',
     '#attached' => ['library' => ['appointment_facilitator/tool_helpers']],
   ];
+  $cache->addCacheContexts(['user.permissions']);
   $cache->applyTo($build);
   return $build;
 }
@@ -7579,7 +7583,8 @@ function appointment_facilitator_theme(): array {
         'more_people' => [],
         'channel' => '',
         'channel_url' => '',
-        'ask_form' => NULL,
+        'ask_chat_url' => '',
+        'ask_slack' => FALSE,
         'not_on_slack' => FALSE,
         'volunteer_form' => NULL,
         'manage_url' => '',

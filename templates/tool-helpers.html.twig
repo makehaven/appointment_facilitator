@@ -1,7 +1,7 @@
 {#
 /**
  * @file
- * Tool page: "Who can help" — people to ask, the channel, Ask on Slack.
+ * Tool page: "Who can help" — people to ask, the tool chat, the channel.
  *
  * Available variables:
  * - tool_label: the tool's title.
@@ -9,8 +9,11 @@
  * - more_people: non-empty when people are badge sign-off people rather than
  *   people listed on the tool.
  * - channel / channel_url: the tool's Slack channel (no '#') and a link to it.
- * - ask_form: Ask on Slack form, or NULL.
- * - not_on_slack: TRUE when the viewer has no linked Slack account.
+ * - ask_chat_url: the tool chat page; the button opens the chat on this page
+ *   instead when it is there (tool-helpers.js). '' when the viewer turned AI
+ *   off or cannot use the chat.
+ * - ask_slack: TRUE when the chat's "Ask a person" posts in the channel.
+ * - not_on_slack: TRUE when posting is on but the viewer has no Slack link.
  * - volunteer_form: "I can answer questions" toggle, or NULL.
  * - manage_url: staff link to the People to ask tab, or ''.
  */
@@ -34,16 +37,33 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p class="mh-tool-helpers__lead">{{ 'Nobody is listed for this tool yet. Ask below: we check the manual and earlier answers first, then you can post it in its Slack channel.'|t }}</p>
+    <p class="mh-tool-helpers__lead">{{ 'Nobody is listed for this tool yet.'|t }}</p>
   {% endif %}
 
-  {% if ask_form %}
-    {{ ask_form }}
+  {% if ask_chat_url %}
+    <p class="mh-tool-helpers__ask">
+      <a href="{{ ask_chat_url }}" class="btn btn-primary mh-tool-helpers__ask-chat" data-mh-open-tool-chat>{{ 'Ask the tool assistant'|t }}</a>
+    </p>
+    <p class="mh-tool-helpers__fine">
+      {% if ask_slack %}
+        {% if people %}
+          {{ 'It answers from the manual and earlier answers. If it can’t help, choose “Ask a person” in the chat’s ⋯ menu: your question is posted in #@channel and up to three of these people are tagged.'|t({'@channel': channel}) }}
+        {% else %}
+          {{ 'It answers from the manual and earlier answers. If it can’t help, choose “Ask a person” in the chat’s ⋯ menu to post your question in #@channel.'|t({'@channel': channel}) }}
+        {% endif %}
+      {% elseif channel %}
+        {{ 'It answers from the manual and earlier answers.'|t }} <a href="{{ channel_url }}">{{ 'Or ask in #@channel on Slack'|t({'@channel': channel}) }}</a>.
+      {% else %}
+        {{ 'It answers from the manual and earlier answers.'|t }}
+      {% endif %}
+    </p>
   {% elseif channel %}
     <p class="mh-tool-helpers__channel">
       <a href="{{ channel_url }}">{{ 'Ask in #@channel on Slack'|t({'@channel': channel}) }}</a>
-      {% if not_on_slack %}<br><span class="mh-tool-helpers__fine">{{ 'We could not find you on MakeHaven’s Slack, so we cannot post for you. Join with the invite in your welcome email, using the same email address as your MakeHaven account.'|t }}</span>{% endif %}
     </p>
+  {% endif %}
+  {% if not_on_slack %}
+    <p class="mh-tool-helpers__fine">{{ 'We could not find you on MakeHaven’s Slack, so questions you send from here go to staff by email. To post in Slack yourself, join with the invite in your welcome email, using the same email address as your MakeHaven account.'|t }}</p>
   {% endif %}
 
   {% if volunteer_form or manage_url %}
